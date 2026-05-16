@@ -2,6 +2,10 @@
 
 This file is the source-of-truth TODO list for the first usable version of `what-ttft`.
 
+## Agent execution instructions
+
+Implement exactly one TODO task at a time. After completing that task, update this file to mark the task as done, commit the changes, and then print a detailed summary of what you implemented, including files changed, validation commands run, and any follow-up work.
+
 Goal for v0.1: a Go library plus a small CLI that benchmarks OpenAI-compatible **Chat Completions streaming** endpoints and reports client-observed latency allocation: HTTP/network timing, first response byte, first SSE event, first non-empty output delta, end-to-end latency, chunk cadence, token usage, cache metadata, and aggregate percentiles.
 
 Non-goals for v0.1:
