@@ -969,7 +969,7 @@ Definition of done:
 
 ---
 
-### [ ] 9. Implement sequential runner with warmup and measured phases
+### [x] 9. Implement sequential runner with warmup and measured phases
 
 Implement the first end-to-end runner mode: one request at a time.
 
@@ -1009,6 +1009,15 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
     return &RunResult{Records: records, Summary: summary}, nil
 }
 ```
+
+Implemented details:
+
+- Added `Runner`, `RunResult`, `RunSummary`, and `NewRunner` with a sequential `Run` implementation that executes warmup requests before measured requests.
+- Added per-request prompt planning, scheduled-at recording, request IDs, attempt numbers, warmup flags, provider/model/scenario metadata, usage/cache/HTTP capture, derived metric calculation, and redacted error records.
+- Added a concurrency-safe provider observer that timestamps semantic output hooks, updates TTFT/E2E timeline events, and optionally captures output/usage chunks when `SaveChunks` is true.
+- Added initial measured-only run summary counts so warmup successes/errors are preserved as records but excluded from default summary success/error counts.
+- Added validation for request counts, unsupported fixed concurrency, cache mode, connection mode, and nil providers.
+- Added fake-provider tests for warmup exclusion, continuation after per-request errors, context cancellation, and validation failures.
 
 Definition of done:
 
