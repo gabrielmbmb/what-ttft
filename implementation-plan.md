@@ -143,7 +143,7 @@ Definition of done:
 
 ---
 
-### [ ] 2. Define public domain model and result schema
+### [x] 2. Define public domain model and result schema
 
 Implement the public types that all packages will share. This must happen before provider code so the provider emits standardized events and records.
 
@@ -370,6 +370,13 @@ Hook semantics:
 - `OnCache` normalizes prompt/KV cache information, including cached prompt tokens and explicit cache IDs.
 - `OnHTTP` stores HTTP status, protocol, connection reuse, TLS, and other transport data captured by shared HTTP tracing.
 - Providers may include raw provider-specific metadata in `Extra map[string]any` fields, but summaries must group by standardized fields first.
+
+Implemented details:
+
+- Added public run configuration, scenario, cache mode, connection mode, timeline, request record, chunk record, cache, HTTP, usage, error, and derived metric schema types under `pkg/whatttft`.
+- Added the shared provider interface, provider capabilities, provider request, observer hooks, and standardized stream/output/token/finish event types.
+- Documented all exported symbols and JSON fields with units, nil/zero semantics, and redaction notes where relevant.
+- Added JSON round-trip tests for request records, chunk records, and provider event shapes.
 
 Definition of done:
 
