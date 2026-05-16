@@ -1145,7 +1145,7 @@ Definition of done:
 
 ---
 
-### [ ] 12. Implement report writers
+### [x] 12. Implement report writers
 
 Write raw and summarized results to disk.
 
@@ -1197,6 +1197,14 @@ summary.md
 |---|---:|---:|---:|---:|---:|---:|
 | ttft_delta_ms | 50 | 312.4 | 299.1 | 410.7 | 590.3 | 590.3 |
 ```
+
+Implemented details:
+
+- Added `internal/report` with `WriteRun`, `RunMetadata`, `WriteOptions`, and URL redaction for provider base URLs in `run.json`.
+- Writer creates the output directory, protects existing non-empty directories unless `Overwrite` is true, and writes `run.json`, `requests.jsonl`, optional `chunks.jsonl`, `summary.json`, and `summary.md`.
+- Runtime metadata fields are filled automatically when omitted, including benchmark version, Go version, OS, architecture, and best-effort git SHA.
+- Added Markdown summary rendering with run counts, grouped metric tables, and key p50/p95/p99-focused metric rows.
+- Added one-file/one-test-file coverage for parseable JSON/JSONL output, overwrite behavior, chunk omission, required option validation, URL redaction, and Markdown metric names.
 
 Definition of done:
 
