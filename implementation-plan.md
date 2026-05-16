@@ -386,7 +386,7 @@ Definition of done:
 
 ---
 
-### [ ] 3. Implement monotonic timeline recorder and clock abstraction
+### [x] 3. Implement monotonic timeline recorder and clock abstraction
 
 Create a small timing utility that ensures every duration is calculated using Go monotonic time.
 
@@ -443,6 +443,13 @@ Important details:
 - `MarkFirst(name)` should exist for events that should only be recorded once, e.g. `first_sse_event` and `first_output_delta`.
 - `MarkLast(name)` can just overwrite, e.g. `last_output_delta`.
 - Recorder must be concurrency-safe because `httptrace` callbacks can be invoked asynchronously.
+
+Implemented details:
+
+- Added `Clock` and `RealClock` to abstract timestamp reads while preserving Go monotonic duration behavior.
+- Added a concurrency-safe `Recorder` with `Mark`, `MarkFirst`, `MarkLast`, `ElapsedNS`, and `Timeline` snapshot methods.
+- Rebased previously recorded events when `request_start` is marked so `scheduled_at` and other pre-start events can be negative relative to the real request start.
+- Added one-file/one-test-file coverage for `clock.go` and `recorder.go`, including fake-clock tests with no sleeps.
 
 Definition of done:
 
