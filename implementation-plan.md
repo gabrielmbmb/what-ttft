@@ -862,7 +862,7 @@ Definition of done:
 
 ---
 
-### [ ] 7. Implement derived metrics calculation
+### [x] 7. Implement derived metrics calculation
 
 Convert raw timeline events into named metrics.
 
@@ -899,6 +899,13 @@ Rules:
 - `e2e_output_tps = completion_tokens / e2e_delta_seconds` when completion tokens are known.
 - Do not compute token TPOT in v0.1 unless true token timestamps are implemented.
 - Compute `chunk_itl_ms` summary later from chunks; keep it separate from token ITL.
+
+Implemented details:
+
+- Added `CalculateDerivedMetrics` to compute standardized request-level latency and throughput fields from monotonic-relative `Timeline` events.
+- Metrics return nil when required endpoint events are absent, while observed zero-duration event pairs return non-nil `0` values.
+- Added `e2e_output_tps` calculation from provider-reported completion tokens and positive `e2e_delta` duration.
+- Added one-file/one-test-file coverage for complete timelines, missing endpoint events, zero-duration metrics, and zero completion-token throughput.
 
 Definition of done:
 
