@@ -585,7 +585,7 @@ Definition of done:
 
 ---
 
-### [ ] 5. Implement SSE parser
+### [x] 5. Implement SSE parser
 
 Implement a small Server-Sent Events parser instead of relying on provider SDKs.
 
@@ -657,6 +657,13 @@ Test cases:
 - EOF after a complete event.
 - EOF with partial event.
 - Large JSON chunk over 64 KiB.
+
+Implemented details:
+
+- Added `internal/sse.Parser` and `Event` for provider-independent Server-Sent Events parsing from any `io.Reader`.
+- Supports LF/CRLF, multi-line `data:` joining with `\n`, comments/heartbeat skipping, `event`, `id`, and `retry` fields, EOF with a partial event, and explicit empty data events.
+- Uses `bufio.Reader.ReadBytes('\n')` instead of `bufio.Scanner`, so large JSON/data lines over 64 KiB are supported.
+- Preserves raw byte counts for returned event blocks, including comments inside the same block.
 
 Definition of done:
 
