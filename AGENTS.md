@@ -322,6 +322,8 @@ Raw request records should include failures. Summaries may compute percentiles o
 
 No unit test should call a real external provider.
 
+Use a one-file/one-test-file convention for Go code: each non-test `.go` implementation file that contains behavior should have a matching `*_test.go` file in the same package, named after the implementation file (for example, `cache.go` -> `cache_test.go`). Keep tests for behavior in that matching file instead of broad catch-all test files, except for package documentation files, generated files, shared test helpers, and explicit integration/e2e test files.
+
 Use `httptest.Server` and deterministic fake streams to test:
 
 - delayed headers / first byte;
