@@ -1215,7 +1215,7 @@ Definition of done:
 
 ---
 
-### [ ] 13. Implement CLI `run` command
+### [x] 13. Implement CLI `run` command
 
 Build a minimal CLI around the library.
 
@@ -1272,6 +1272,13 @@ e2e_delta_ms          980.0    1300.4   1601.2   1005.1
 
 wrote results to runs/openai-gpt-5.5-short-cold
 ```
+
+Implemented details:
+
+- Reworked the CLI dispatcher to support top-level help, unknown-command handling, and a `run` subcommand while keeping the process exit behavior testable.
+- Added `what-ttft run` using standard-library `flag` with OpenAI v0.1 flags for base URL, API key/env, model, prompt, warmup/samples, concurrency, cache/connection modes, generation parameters, timeout, output directory, chunks, usage, and legacy max-token compatibility.
+- The run command constructs the OpenAI provider with an explicit benchmark HTTP client, executes the shared runner, writes reports through `internal/report`, redacts inline API keys in recorded args, and prints a concise metric summary without printing secrets.
+- Added CLI tests for top-level help, run help, invalid provider validation, and an end-to-end fake OpenAI streaming server that writes `run.json`, `requests.jsonl`, `chunks.jsonl`, `summary.json`, and `summary.md`.
 
 Definition of done:
 

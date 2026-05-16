@@ -4,7 +4,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"io"
 	"os"
 )
 
@@ -12,33 +12,57 @@ const usageText = `what-ttft benchmarks AI provider latency.
 
 Usage:
   what-ttft --help
+  what-ttft run [flags]
 
-The benchmark implementation is under active development. See implementation-plan.md.
+Commands:
+  run    benchmark an OpenAI-compatible streaming Chat Completions endpoint
 `
 
 func main() {
-	flag.Usage = printUsage
+	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
+}
 
-	if len(os.Args) == 1 {
-		printUsage()
-		return
+func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		printUsage(stdout)
+		return 0
 	}
 
-	if os.Args[1] == "--help" || os.Args[1] == "-h" {
-		printUsage()
-		return
-	}
-
-	flag.Parse()
-
-	if flag.NArg() > 0 {
-		log.Printf("unknown command %q", flag.Arg(0))
-		os.Exit(2)
+	switch args[0] {
+	case "run":
+		return runCommand(args[1:], stdout, stderr)
+	default:
+		writeFormatted(stderr, "unknown command %q\n", args[0])
+		printUsage(stderr)
+		return 2
 	}
 }
 
-func printUsage() {
-	if _, err := fmt.Fprint(flag.CommandLine.Output(), usageText); err != nil {
-		log.Printf("write usage: %v", err)
+func printUsage(output io.Writer) {
+	writeText(output, usageText)
+}
+
+func writeText(output io.Writer, text string) {
+	if _, err := fmt.Fprint(output, text); err != nil {
+		return
 	}
+}
+
+func writeFormatted(output io.Writer, format string, args ...any) {
+	//nolint:gosec // CLI call sites pass constant format strings; user values are provided only as arguments.
+	if _, err := fmt.Fprintf(output, format, args...); err != nil {
+		return
+	}
+}
+
+func writeLine(output io.Writer, text string) {
+	if _, err := fmt.Fprintln(output, text); err != nil {
+		return
+	}
+}
+
+func newFlagSet(name string, output io.Writer) *flag.FlagSet {
+	set := flag.NewFlagSet(name, flag.ContinueOnError)
+	set.SetOutput(output)
+	return set
 }
