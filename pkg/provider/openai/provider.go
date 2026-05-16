@@ -153,13 +153,14 @@ func (p *Provider) chatRequest(req whatttft.ProviderRequest) chatCompletionReque
 	messages = append(messages, chatMessage{Role: "user", Content: req.Prompt})
 
 	chatReq := chatCompletionRequest{
-		Model:       p.cfg.Model,
-		Messages:    messages,
-		Stream:      true,
-		Temperature: req.Scenario.Temperature,
-		TopP:        req.Scenario.TopP,
-		Stop:        req.Scenario.Stop,
-		Seed:        req.Scenario.Seed,
+		Model:           p.cfg.Model,
+		Messages:        messages,
+		Stream:          true,
+		Temperature:     req.Scenario.Temperature,
+		TopP:            req.Scenario.TopP,
+		Stop:            req.Scenario.Stop,
+		Seed:            req.Scenario.Seed,
+		ReasoningEffort: req.Scenario.ReasoningEffort,
 	}
 
 	if p.cfg.IncludeUsage {

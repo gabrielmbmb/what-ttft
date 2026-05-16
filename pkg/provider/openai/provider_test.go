@@ -87,6 +87,7 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 			TopP:            &topP,
 			Stop:            []string{"END"},
 			Seed:            &seed,
+			ReasoningEffort: "none",
 		},
 		Prompt: "Say hello.",
 	}, obs)
@@ -243,6 +244,9 @@ func assertChatRequest(t *testing.T, req chatCompletionRequest) {
 	}
 	if req.MaxCompletionTokens == nil || *req.MaxCompletionTokens != 64 {
 		t.Fatalf("max_completion_tokens = %v, want 64", req.MaxCompletionTokens)
+	}
+	if req.ReasoningEffort != "none" {
+		t.Fatalf("reasoning_effort = %q, want none", req.ReasoningEffort)
 	}
 	if req.MaxTokens != nil {
 		t.Fatalf("max_tokens = %v, want nil", *req.MaxTokens)

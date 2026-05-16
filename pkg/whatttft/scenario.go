@@ -26,6 +26,9 @@ type Scenario struct {
 	// Seed is the optional deterministic seed requested from providers that support seeding; nil means no seed is requested.
 	Seed *int64
 
+	// ReasoningEffort is the optional provider reasoning/thinking effort setting, such as "none", "minimal", "low", "medium", "high", or "xhigh"; empty means the provider default is used.
+	ReasoningEffort string
+
 	// Extra contains provider-independent JSON-compatible scenario metadata; values must not contain secrets unless the caller handles redaction before reporting.
 	Extra map[string]any
 }

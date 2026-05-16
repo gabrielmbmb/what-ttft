@@ -69,6 +69,8 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet.IntVar(&cfg.concurrency, "concurrency", 1, "fixed concurrency")
 	flagSet.StringVar(&cfg.cacheMode, "cache-mode", string(whatttft.CacheBust), "cache-bust|cache-reuse|provider-explicit-cache|unknown")
 	flagSet.StringVar(&cfg.connectionMode, "connection-mode", string(whatttft.WarmConnections), "warm|cold")
+	flagSet.StringVar(&cfg.reasoningEffort, "reasoning-effort", "", "optional reasoning/thinking effort: none|minimal|low|medium|high|xhigh")
+	flagSet.StringVar(&cfg.reasoningEffort, "thinking-effort", "", "alias for --reasoning-effort")
 	flagSet.IntVar(&cfg.maxOutputTokens, "max-output-tokens", 64, "maximum output tokens")
 	flagSet.Var(&cfg.temperature, "temperature", "optional sampling temperature, e.g. 0")
 	flagSet.Var(&cfg.topP, "top-p", "optional nucleus sampling value, e.g. 1")
@@ -111,6 +113,8 @@ Common flags:
   --concurrency N
   --cache-mode cache-bust|cache-reuse|provider-explicit-cache|unknown
   --connection-mode warm|cold
+  --reasoning-effort none|minimal|low|medium|high|xhigh
+  --thinking-effort none|minimal|low|medium|high|xhigh
   --max-output-tokens N
   --temperature FLOAT
   --top-p FLOAT
@@ -129,6 +133,7 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 		Prompt:          cfg.prompt,
 		SystemPrompt:    cfg.systemPrompt,
 		MaxOutputTokens: cfg.maxOutputTokens,
+		ReasoningEffort: cfg.reasoningEffort,
 	}
 	if cfg.temperature.set {
 		scenario.Temperature = &cfg.temperature.value
@@ -260,6 +265,7 @@ type runCLIConfig struct {
 	concurrency     int
 	cacheMode       string
 	connectionMode  string
+	reasoningEffort string
 	maxOutputTokens int
 	temperature     optionalFloat
 	topP            optionalFloat
@@ -311,6 +317,9 @@ func (c runCLIConfig) validate() error {
 	if !validConnectionMode(whatttft.ConnectionMode(c.connectionMode)) {
 		return fmt.Errorf("unsupported connection mode %q", c.connectionMode)
 	}
+	if !validReasoningEffort(c.reasoningEffort) {
+		return fmt.Errorf("unsupported reasoning effort %q", c.reasoningEffort)
+	}
 
 	return nil
 }
@@ -327,6 +336,15 @@ func validCacheMode(mode whatttft.CacheMode) bool {
 func validConnectionMode(mode whatttft.ConnectionMode) bool {
 	switch mode {
 	case whatttft.WarmConnections, whatttft.ColdConnections:
+		return true
+	default:
+		return false
+	}
+}
+
+func validReasoningEffort(effort string) bool {
+	switch effort {
+	case "", "none", "minimal", "low", "medium", "high", "xhigh":
 		return true
 	default:
 		return false

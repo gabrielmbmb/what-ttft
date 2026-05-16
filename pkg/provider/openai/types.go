@@ -25,6 +25,9 @@ type chatCompletionRequest struct {
 	// Seed is the optional deterministic seed for providers that support seeding; nil omits the field.
 	Seed *int64 `json:"seed,omitempty"`
 
+	// ReasoningEffort is the optional reasoning/thinking effort for reasoning-capable models; empty omits the field.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
 	// MaxCompletionTokens is the modern maximum output token field; nil omits the field.
 	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
 

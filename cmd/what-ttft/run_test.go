@@ -55,8 +55,9 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 		}
 
 		var body struct {
-			Model  string `json:"model"`
-			Stream bool   `json:"stream"`
+			Model           string `json:"model"`
+			Stream          bool   `json:"stream"`
+			ReasoningEffort string `json:"reasoning_effort"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request body: %v", err)
@@ -68,6 +69,9 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 		}
 		if !body.Stream {
 			t.Error("stream should be true")
+		}
+		if body.ReasoningEffort != "none" {
+			t.Errorf("reasoning_effort = %q, want none", body.ReasoningEffort)
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -95,6 +99,7 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 		"--concurrency", "1",
 		"--cache-mode", "cache-reuse",
 		"--connection-mode", "warm",
+		"--reasoning-effort", "none",
 		"--max-output-tokens", "8",
 		"--temperature", "0",
 		"--top-p", "1",
