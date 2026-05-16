@@ -21,26 +21,8 @@ type RunResult struct {
 	// Chunks contains optional per-request output chunks captured only when RunConfig.SaveChunks is true; values may include sensitive generated content.
 	Chunks []ChunkRecord `json:"chunks,omitempty"`
 
-	// Summary contains aggregate counts over Records, with success and error counts excluding warmup requests.
+	// Summary contains aggregate counts and grouped measured-request statistics over Records, with success and error counts excluding warmup requests.
 	Summary RunSummary `json:"summary"`
-}
-
-// RunSummary contains initial aggregate counts for a run.
-type RunSummary struct {
-	// TotalRequests is the count of all request records, including warmup and measured attempts; units are requests.
-	TotalRequests int `json:"total_requests"`
-
-	// WarmupRequests is the count of warmup request records excluded from default success/error summaries; units are requests.
-	WarmupRequests int `json:"warmup_requests"`
-
-	// MeasuredRequests is the count of non-warmup request records included in default summaries; units are requests.
-	MeasuredRequests int `json:"measured_requests"`
-
-	// SuccessfulRequests is the count of measured request records without an error; units are requests and warmup successes are excluded.
-	SuccessfulRequests int `json:"successful_requests"`
-
-	// ErrorRequests is the count of measured request records with an error; units are requests and warmup errors are excluded.
-	ErrorRequests int `json:"error_requests"`
 }
 
 // NewRunner creates a Runner for provider and cfg.
@@ -75,7 +57,7 @@ func (r *Runner) runSequential(ctx context.Context, cfg RunConfig) (*RunResult, 
 
 	for attempt := 0; attempt < total; attempt++ {
 		if err := ctx.Err(); err != nil {
-			result.Summary = summarizeRun(result.Records)
+			result.Summary = Summarize(result.Records)
 			return result, err
 		}
 
@@ -84,12 +66,12 @@ func (r *Runner) runSequential(ctx context.Context, cfg RunConfig) (*RunResult, 
 		appendRunOutput(result, record, chunks, cfg.SaveChunks)
 
 		if err := ctx.Err(); err != nil {
-			result.Summary = summarizeRun(result.Records)
+			result.Summary = Summarize(result.Records)
 			return result, err
 		}
 	}
 
-	result.Summary = summarizeRun(result.Records)
+	result.Summary = Summarize(result.Records)
 	return result, nil
 }
 
@@ -190,25 +172,6 @@ func newScheduledRecorder() *Recorder {
 	recorder := NewRecorder(nil)
 	recorder.Mark(EventScheduledAt)
 	return recorder
-}
-
-func summarizeRun(records []RequestRecord) RunSummary {
-	summary := RunSummary{TotalRequests: len(records)}
-	for _, record := range records {
-		if record.Warmup {
-			summary.WarmupRequests++
-			continue
-		}
-
-		summary.MeasuredRequests++
-		if record.Error == nil {
-			summary.SuccessfulRequests++
-		} else {
-			summary.ErrorRequests++
-		}
-	}
-
-	return summary
 }
 
 func newErrorRecord(err error, atNS int64) *ErrorRecord {

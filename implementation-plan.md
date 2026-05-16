@@ -1070,7 +1070,7 @@ Definition of done:
 
 ---
 
-### [ ] 11. Implement statistics and aggregate summaries
+### [x] 11. Implement statistics and aggregate summaries
 
 Compute useful aggregate metrics over successful measured requests.
 
@@ -1127,6 +1127,15 @@ Percentile method:
 - Sort values ascending.
 - Use nearest-rank or linear interpolation; document which one.
 - Keep it simple and deterministic. Recommended: nearest-rank for v0.1.
+
+Implemented details:
+
+- Added `internal/stats` with deterministic nearest-rank percentile distributions, arithmetic mean, min/max, and population standard deviation.
+- Added public summary schema types for distributions, run summaries, grouped summaries, metric distributions, cache summaries, and connection summaries.
+- Added `Summarize` to aggregate measured requests while excluding warmups from default success/error counts and metric distributions.
+- Summary groups are split by provider, model, scenario, cache mode, and connection mode so cache-bust and cache-reuse records are never combined.
+- Added measured error category/status-code counts, successful measured metric distributions, completion token totals, system TPS, RPS, cache-hit/cached-token summaries, reused-connection counts, and protocol counts.
+- Added one-file/one-test-file coverage for percentile behavior, warmup exclusion, cache-mode grouping, status/error counts, throughput behavior, cache summaries, and connection summaries.
 
 Definition of done:
 

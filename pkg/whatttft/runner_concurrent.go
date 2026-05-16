@@ -23,16 +23,16 @@ func (r *Runner) runConcurrent(ctx context.Context, cfg RunConfig) (*RunResult, 
 	result := newRunResult(total, cfg.SaveChunks)
 
 	if err := r.appendConcurrentPhase(ctx, cfg, result, 0, cfg.WarmupRequests, true); err != nil {
-		result.Summary = summarizeRun(result.Records)
+		result.Summary = Summarize(result.Records)
 		return result, err
 	}
 
 	if err := r.appendConcurrentPhase(ctx, cfg, result, cfg.WarmupRequests, cfg.MeasuredRequests, false); err != nil {
-		result.Summary = summarizeRun(result.Records)
+		result.Summary = Summarize(result.Records)
 		return result, err
 	}
 
-	result.Summary = summarizeRun(result.Records)
+	result.Summary = Summarize(result.Records)
 	return result, nil
 }
 
