@@ -150,6 +150,48 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 	}
 }
 
+// TestRunCommandChecksOutputDirBeforeProviderRun verifies non-empty outputs fail before any provider request starts.
+func TestRunCommandChecksOutputDirBeforeProviderRun(t *testing.T) {
+	var requestCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	outputDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outputDir, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+	t.Setenv("WHAT_TTFT_TEST_API_KEY", "placeholder")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "openai",
+		"--base-url", server.URL,
+		"--api-key-env", "WHAT_TTFT_TEST_API_KEY",
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "1",
+		"--warmup", "0",
+		"--out", outputDir,
+	}, &stdout, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+	if requestCount.Load() != 0 {
+		t.Fatalf("provider request count = %d, want 0", requestCount.Load())
+	}
+	if !strings.Contains(stderr.String(), "output directory check") {
+		t.Fatalf("stderr missing output directory preflight error:\n%s", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
 // TestRunCommandRejectsInvalidProvider verifies validation fails before running.
 func TestRunCommandRejectsInvalidProvider(t *testing.T) {
 	var stdout bytes.Buffer

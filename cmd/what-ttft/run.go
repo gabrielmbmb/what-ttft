@@ -30,6 +30,11 @@ func runCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
+	if preflightErr := report.ValidateOutputDir(cfg.outputDir, cfg.overwrite); preflightErr != nil {
+		writeFormatted(stderr, "output directory check: %v\n", preflightErr)
+		return 1
+	}
+
 	result, metadata, err := executeRun(context.Background(), cfg, args)
 	if err != nil {
 		writeFormatted(stderr, "run failed: %v\n", err)

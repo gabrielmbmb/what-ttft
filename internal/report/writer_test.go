@@ -106,6 +106,26 @@ func TestWriteRunFailsForNonEmptyOutputDirUnlessOverwrite(t *testing.T) {
 	}
 }
 
+// TestValidateOutputDirFailsForNonEmptyDirectory verifies preflight checks can fail before a benchmark starts.
+func TestValidateOutputDirFailsForNonEmptyDirectory(t *testing.T) {
+	outputDir := t.TempDir()
+	stalePath := filepath.Join(outputDir, "stale.txt")
+	if err := os.WriteFile(stalePath, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+
+	err := ValidateOutputDir(outputDir, false)
+	if err == nil {
+		t.Fatal("expected non-empty directory error")
+	}
+	if _, statErr := os.Stat(stalePath); statErr != nil {
+		t.Fatalf("validate should not mutate stale file: %v", statErr)
+	}
+	if err := ValidateOutputDir(outputDir, true); err != nil {
+		t.Fatalf("validate with overwrite: %v", err)
+	}
+}
+
 // TestWriteRunOmitsChunksWhenDisabled verifies chunks.jsonl is not written unless SaveChunks is true.
 func TestWriteRunOmitsChunksWhenDisabled(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "run-output")

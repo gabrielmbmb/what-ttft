@@ -122,6 +122,27 @@ func WriteRun(options WriteOptions) error {
 	return nil
 }
 
+// ValidateOutputDir checks whether outputDir can be used for reports without mutating the filesystem.
+func ValidateOutputDir(outputDir string, overwrite bool) error {
+	if outputDir == "" {
+		return errors.New("output directory is required")
+	}
+
+	entries, err := os.ReadDir(outputDir)
+	if err == nil {
+		if len(entries) > 0 && !overwrite {
+			return fmt.Errorf("output directory %q is not empty", outputDir)
+		}
+
+		return nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	return fmt.Errorf("inspect output directory: %w", err)
+}
+
 // RedactURL removes userinfo and secret-looking query values from rawURL for report metadata.
 func RedactURL(rawURL string) string {
 	if rawURL == "" {
@@ -171,18 +192,13 @@ func completeRunMetadata(metadata RunMetadata) RunMetadata {
 }
 
 func prepareOutputDir(outputDir string, overwrite bool) error {
-	entries, err := os.ReadDir(outputDir)
-	if err == nil {
-		if len(entries) > 0 && !overwrite {
-			return fmt.Errorf("output directory %q is not empty", outputDir)
+	if err := ValidateOutputDir(outputDir, overwrite); err != nil {
+		return err
+	}
+	if overwrite {
+		if err := os.RemoveAll(outputDir); err != nil {
+			return fmt.Errorf("remove output directory: %w", err)
 		}
-		if overwrite {
-			if removeErr := os.RemoveAll(outputDir); removeErr != nil {
-				return fmt.Errorf("remove output directory: %w", removeErr)
-			}
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect output directory: %w", err)
 	}
 
 	if err := os.MkdirAll(outputDir, 0o700); err != nil {
