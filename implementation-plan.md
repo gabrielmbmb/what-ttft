@@ -459,7 +459,7 @@ Definition of done:
 
 ---
 
-### [ ] 4. Implement HTTP trace capture
+### [x] 4. Implement HTTP trace capture
 
 Capture client-side network and HTTP lifecycle timing with `net/http/httptrace`.
 
@@ -569,6 +569,13 @@ Important details:
 - For warm mode, reuse one transport for the run.
 - Disable automatic compression by default and record this choice.
 - Never log authorization headers.
+
+Implemented details:
+
+- Added `internal/httptracecap.Capture` with concurrency-safe HTTP trace callbacks for DNS, TCP connect, TLS handshake, connection acquisition/reuse, request write completion, and first response byte.
+- Added response observation for status code, status text, and HTTP protocol, plus normalized TLS version labels and compression-disabled metadata.
+- Added `NewHTTPClient` with benchmark-oriented transport defaults: HTTP/2 enabled, automatic compression disabled, configurable warm/cold keepalive behavior, and whole-request timeout support.
+- Added one-file/one-test-file coverage for trace capture and client construction/reuse behavior using `httptest.Server`/`httptest.NewTLSServer`.
 
 Definition of done:
 
