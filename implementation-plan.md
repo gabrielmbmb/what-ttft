@@ -673,7 +673,7 @@ Definition of done:
 
 ---
 
-### [ ] 6. Implement OpenAI-compatible Chat Completions provider
+### [x] 6. Implement OpenAI-compatible Chat Completions provider
 
 Implement direct HTTP streaming for `POST /v1/chat/completions`.
 
@@ -844,6 +844,15 @@ for {
     }
 }
 ```
+
+Implemented details:
+
+- Added `pkg/provider/openai` with config resolution, default base URL handling, direct HTTP `POST /chat/completions` streaming, and an `openai.New` provider constructor.
+- Builds OpenAI-compatible Chat Completions request bodies with system/user messages, `stream=true`, optional stream usage, sampling parameters, stop sequences, seed, and modern or legacy max-token fields.
+- Attaches HTTP trace capture, records request/header/body lifecycle events, normalizes response status/protocol metadata, and returns bounded redacted `APIError` values for non-2xx responses without retries.
+- Parses SSE streams directly, ignoring comments/heartbeats for TTFT, distinguishing empty/role-only/usage-only chunks from visible output, recording `[DONE]`, usage, prompt-cache counters, finish reasons, and body EOF.
+- Updated `internal/httptracecap.WithTrace` to accept any marker implementing `Mark`/`MarkFirst`, so provider observers can receive trace events directly.
+- Added `httptest.Server` coverage for successful streams, empty chunks, role-only chunks before content, usage chunks, `[DONE]`, non-200 redaction, malformed JSON, request-body construction, capabilities, and required-input validation.
 
 Definition of done:
 

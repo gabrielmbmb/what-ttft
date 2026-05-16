@@ -18,6 +18,15 @@ type CaptureConfig struct {
 	CompressionDisabled bool
 }
 
+// Marker records HTTP timeline events observed by trace callbacks.
+type Marker interface {
+	// Mark records or overwrites a generic timeline event at the current monotonic time.
+	Mark(whatttft.EventName)
+
+	// MarkFirst records a generic timeline event only if it has not already been recorded.
+	MarkFirst(whatttft.EventName)
+}
+
 // Capture stores HTTP trace metadata captured for one request.
 type Capture struct {
 	mu     sync.Mutex
@@ -34,7 +43,7 @@ func NewCapture(cfg CaptureConfig) *Capture {
 }
 
 // WithTrace attaches HTTP trace callbacks for capture to ctx.
-func WithTrace(ctx context.Context, rec *whatttft.Recorder, capture *Capture) context.Context {
+func WithTrace(ctx context.Context, rec Marker, capture *Capture) context.Context {
 	if capture == nil {
 		capture = NewCapture(CaptureConfig{})
 	}
@@ -43,7 +52,7 @@ func WithTrace(ctx context.Context, rec *whatttft.Recorder, capture *Capture) co
 }
 
 // WithTrace attaches HTTP trace callbacks for c to ctx.
-func (c *Capture) WithTrace(ctx context.Context, rec *whatttft.Recorder) context.Context {
+func (c *Capture) WithTrace(ctx context.Context, rec Marker) context.Context {
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(_ httptrace.DNSStartInfo) {
 			mark(rec, whatttft.EventDNSStart)
@@ -139,7 +148,7 @@ func (c *Capture) update(update func(*whatttft.HTTPRecord)) {
 	update(&c.record)
 }
 
-func mark(rec *whatttft.Recorder, name whatttft.EventName) {
+func mark(rec Marker, name whatttft.EventName) {
 	if rec != nil {
 		rec.Mark(name)
 	}
