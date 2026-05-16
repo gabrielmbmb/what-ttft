@@ -1,0 +1,48 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - durationcheck
+    - errcheck
+    - errorlint
+    - godoclint
+    - gosec
+    - govet
+    - ineffassign
+    - nilerr
+    - noctx
+    - nolintlint
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    godoclint:
+      default: basic
+      enable:
+        - require-doc
+        - require-pkg-doc
+      options:
+        require-doc:
+          ignore-exported: false
+          ignore-unexported: true
+
+    govet:
+      enable:
+        - shadow
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
