@@ -1027,7 +1027,7 @@ Definition of done:
 
 ---
 
-### [ ] 10. Implement fixed-concurrency runner mode
+### [x] 10. Implement fixed-concurrency runner mode
 
 Add concurrent request execution after sequential mode works.
 
@@ -1053,6 +1053,14 @@ Important details:
 - Protect shared writers/record slices with channels or mutexes.
 - Per-request recorder and chunk slice must not be shared unsafely.
 - Use `errgroup` only if you choose to add `golang.org/x/sync`; otherwise use `sync.WaitGroup` and channels to keep dependencies minimal.
+
+Implemented details:
+
+- Added fixed-concurrency execution for `RunConfig.Concurrency > 1`, while preserving sequential behavior for `Concurrency <= 1`.
+- Runs warmup and measured phases through separate worker-pool barriers so measured jobs are not scheduled until all warmup jobs complete.
+- Records `scheduled_at` before sending jobs to workers, keeps per-request recorders/observers isolated, and sorts completed outputs by deterministic attempt index before appending records/chunks.
+- Returns partial results plus context errors when cancellation interrupts scheduling or in-flight work.
+- Added one-file/one-test-file coverage for exact measured record counts, deterministic record ordering, maximum observed concurrency, warmup/measured barrier behavior, and context cancellation.
 
 Definition of done:
 

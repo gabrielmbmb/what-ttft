@@ -168,7 +168,6 @@ func TestRunnerRunValidatesConfig(t *testing.T) {
 		{name: "negative warmup", cfg: RunConfig{WarmupRequests: -1, MeasuredRequests: 1}},
 		{name: "negative measured", cfg: RunConfig{MeasuredRequests: -1}},
 		{name: "zero total", cfg: RunConfig{}},
-		{name: "unsupported concurrency", cfg: RunConfig{MeasuredRequests: 1, Concurrency: 2}},
 		{name: "bad cache mode", cfg: RunConfig{MeasuredRequests: 1, CacheMode: CacheMode("bad")}},
 		{name: "bad connection mode", cfg: RunConfig{MeasuredRequests: 1, ConnectionMode: ConnectionMode("bad")}},
 	}

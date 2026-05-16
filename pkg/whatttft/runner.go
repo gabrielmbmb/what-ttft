@@ -48,7 +48,7 @@ func NewRunner(provider Provider, cfg RunConfig) *Runner {
 	return &Runner{provider: provider, cfg: cfg}
 }
 
-// Run executes the configured warmup phase followed by the measured phase sequentially.
+// Run executes the configured warmup phase followed by the measured phase.
 func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -62,11 +62,16 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 		return nil, errors.New("provider is required")
 	}
 
-	total := cfg.WarmupRequests + cfg.MeasuredRequests
-	result := &RunResult{Records: make([]RequestRecord, 0, total)}
-	if cfg.SaveChunks {
-		result.Chunks = make([]ChunkRecord, 0)
+	if cfg.Concurrency > 1 {
+		return r.runConcurrent(ctx, cfg)
 	}
+
+	return r.runSequential(ctx, cfg)
+}
+
+func (r *Runner) runSequential(ctx context.Context, cfg RunConfig) (*RunResult, error) {
+	total := cfg.WarmupRequests + cfg.MeasuredRequests
+	result := newRunResult(total, cfg.SaveChunks)
 
 	for attempt := 0; attempt < total; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -75,11 +80,8 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 		}
 
 		warmup := attempt < cfg.WarmupRequests
-		record, chunks := r.runOne(ctx, cfg, attempt, warmup)
-		result.Records = append(result.Records, record)
-		if cfg.SaveChunks {
-			result.Chunks = append(result.Chunks, chunks...)
-		}
+		record, chunks := r.runOne(ctx, cfg, attempt, warmup, newScheduledRecorder())
+		appendRunOutput(result, record, chunks, cfg.SaveChunks)
 
 		if err := ctx.Err(); err != nil {
 			result.Summary = summarizeRun(result.Records)
@@ -91,10 +93,7 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 	return result, nil
 }
 
-func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup bool) (RequestRecord, []ChunkRecord) {
-	recorder := NewRecorder(nil)
-	recorder.Mark(EventScheduledAt)
-
+func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup bool, recorder *Recorder) (RequestRecord, []ChunkRecord) {
 	promptPlan := BuildPromptPlan(cfg, attempt, warmup)
 	requestID := fmt.Sprintf("req-%06d", attempt)
 	observer := newRequestObserver(requestID, recorder, cfg.SaveChunks)
@@ -146,9 +145,6 @@ func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
 	if cfg.Concurrency < 0 {
 		return RunConfig{}, errors.New("concurrency must be non-negative")
 	}
-	if cfg.Concurrency > 1 {
-		return RunConfig{}, errors.New("fixed-concurrency runner is not implemented yet")
-	}
 	if cfg.Concurrency == 0 {
 		cfg.Concurrency = 1
 	}
@@ -172,6 +168,28 @@ func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func newRunResult(total int, saveChunks bool) *RunResult {
+	result := &RunResult{Records: make([]RequestRecord, 0, total)}
+	if saveChunks {
+		result.Chunks = make([]ChunkRecord, 0)
+	}
+
+	return result
+}
+
+func appendRunOutput(result *RunResult, record RequestRecord, chunks []ChunkRecord, saveChunks bool) {
+	result.Records = append(result.Records, record)
+	if saveChunks {
+		result.Chunks = append(result.Chunks, chunks...)
+	}
+}
+
+func newScheduledRecorder() *Recorder {
+	recorder := NewRecorder(nil)
+	recorder.Mark(EventScheduledAt)
+	return recorder
 }
 
 func summarizeRun(records []RequestRecord) RunSummary {
