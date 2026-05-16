@@ -915,7 +915,7 @@ Definition of done:
 
 ---
 
-### [ ] 8. Implement cache mode prompt mutation
+### [x] 8. Implement cache mode prompt mutation
 
 Make prompt/KV cache behavior explicit and reproducible.
 
@@ -953,6 +953,13 @@ Hashing:
 - Use SHA-256 of final prompt text.
 - Store hex hash in `RequestRecord.PromptHash`.
 - Do not store prompt text in request records by default if it may contain sensitive data; store it in `run.json` only if explicitly configured.
+
+Implemented details:
+
+- Added `PromptPlan` and `BuildPromptPlan` for cache-mode-aware prompt mutation and SHA-256 prompt hashing.
+- `cache-bust` now inserts a per-request prefix nonce into the final prompt, records the nonce and location, and defaults from an empty cache mode.
+- `cache-reuse`, `provider-explicit-cache`, and `unknown` leave prompt text unchanged while preserving the requested cache mode in the plan.
+- Added one-file/one-test-file coverage for cache-busted uniqueness, cache-reuse stability, no-op modes, default cache mode behavior, prompt hashing, and warmup/measured nonce labels.
 
 Definition of done:
 
