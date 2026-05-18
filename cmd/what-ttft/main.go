@@ -15,8 +15,15 @@ Usage:
   what-ttft run [flags]
 
 Commands:
-  run    benchmark an OpenAI-compatible streaming Chat Completions endpoint
+  run      benchmark an OpenAI-compatible streaming Chat Completions endpoint
+  version  print build version information
 `
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 func main() {
 	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
@@ -31,6 +38,9 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch args[0] {
 	case "run":
 		return runCommand(args[1:], stdout, stderr)
+	case "version":
+		printVersion(stdout)
+		return 0
 	default:
 		writeFormatted(stderr, "unknown command %q\n", args[0])
 		printUsage(stderr)
@@ -40,6 +50,10 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 
 func printUsage(output io.Writer) {
 	writeText(output, usageText)
+}
+
+func printVersion(output io.Writer) {
+	writeFormatted(output, "what-ttft %s\ncommit: %s\nbuilt: %s\n", version, commit, date)
 }
 
 func writeText(output io.Writer, text string) {

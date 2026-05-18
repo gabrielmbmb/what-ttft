@@ -35,6 +35,30 @@ This is a client-side benchmark. It cannot perfectly separate provider queueing,
 
 Treat `server_wait_to_first_byte_ms` as a conservative client-observed bucket that includes provider-side and return-path effects.
 
+## Install
+
+Linux `amd64` and `arm64` release assets are published on GitHub Releases as `.tar.gz` archives plus native `.deb`, `.rpm`, and `.apk` packages.
+
+Homebrew users can install from the tap:
+
+```sh
+brew install --cask gabrielmbmb/tap/what-ttft
+```
+
+Quick Linux install to `/usr/local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gabrielmbmb/what-ttft/main/install.sh | sh
+```
+
+Install without sudo by choosing a writable directory:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gabrielmbmb/what-ttft/main/install.sh | INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+For native package managers, download the matching package from the release and install it with `sudo apt install ./what-ttft*.deb`, `sudo rpm -i ./what-ttft*.rpm`, or `sudo apk add --allow-untrusted ./what-ttft*.apk`.
+
 ## Build
 
 ```sh

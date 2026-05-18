@@ -1,0 +1,88 @@
+version: 2
+
+project_name: what-ttft
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: what-ttft
+    main: ./cmd/what-ttft
+    binary: what-ttft
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.FullCommit}} -X main.date={{.CommitDate}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: what-ttft
+    formats: ["tar.gz"]
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+
+nfpms:
+  - id: linux-packages
+    package_name: what-ttft
+    file_name_template: "{{ .ConventionalFileName }}"
+    ids:
+      - what-ttft
+    vendor: gabrielmbmb
+    homepage: https://github.com/gabrielmbmb/what-ttft
+    maintainer: gabrielmbmb <gmartinbdev@gmail.com>
+    description: |-
+      Benchmark latency in LLM, TTS, and STT APIs.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/what-ttft/README.md
+      - src: LICENSE
+        dst: /usr/share/doc/what-ttft/LICENSE
+
+homebrew_casks:
+  - name: what-ttft
+    repository:
+      owner: gabrielmbmb
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "chore: update what-ttft cask to {{ .Tag }}"
+    homepage: "https://github.com/gabrielmbmb/what-ttft"
+    description: "Benchmark latency in LLM, TTS, and STT APIs."
+    license: "Apache-2.0"
+    ids:
+      - what-ttft
+    skip_upload: auto
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/what-ttft"]
+          end
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git

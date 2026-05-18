@@ -30,8 +30,9 @@ go.work.sum
 # Local implementation/reference artifacts
 openai-openapi.yaml
 
-# Benchmark output directories
+# Benchmark and release output directories
 runs/
+dist/
 
 # Editor/IDE
 # .idea/
