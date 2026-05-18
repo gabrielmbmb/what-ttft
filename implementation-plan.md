@@ -1394,7 +1394,7 @@ Definition of done:
 
 ---
 
-### [ ] 16. Document the v0.1 methodology and usage in README
+### [x] 16. Document the v0.1 methodology and usage in README
 
 Update README with practical usage and methodology warnings.
 
@@ -1426,6 +1426,13 @@ Include:
   3. Run warm vs cold connection comparison.
   4. Run concurrency sweep.
   5. Compare p50/p95/p99, not just averages.
+
+Implemented details:
+
+- Expanded README with v0.1 scope, what the tool measures, client-side attribution limits, build/check commands, and a copy-paste OpenAI-compatible command.
+- Documented key metrics, output files, cache modes, the cached-vs-uncached comparison warning, recommended benchmark procedure, and optional real OpenAI integration test usage.
+- Noted practical model options such as omitting unsupported temperature values and using `--reasoning-effort none` where supported.
+- Linked `AGENTS.md` as the contributor methodology source of truth.
 
 Definition of done:
 
