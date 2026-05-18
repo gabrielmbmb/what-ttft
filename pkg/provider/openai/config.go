@@ -15,7 +15,7 @@ type Config struct {
 	BaseURL string
 
 	// APIKey is the bearer token used for Authorization; empty means APIKeyEnv is consulted and the value must never be logged.
-	APIKey string //nolint:gosec // Config intentionally accepts API keys so callers can authenticate requests.
+	APIKey string
 
 	// APIKeyEnv is the environment variable name used to resolve APIKey when APIKey is empty; empty means no environment lookup is performed.
 	APIKeyEnv string

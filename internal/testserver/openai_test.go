@@ -33,7 +33,6 @@ func TestOpenAIServerAcceptsV1PathAndRecordsRequests(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer placeholder")
 	req.Header.Set("Content-Type", "application/json")
 
-	//nolint:gosec // Tests send requests only to httptest.Server URLs.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("perform request: %v", err)
@@ -76,7 +75,6 @@ func TestOpenAIServerRejectsMissingStream(t *testing.T) {
 	}
 	req.Header.Set("Authorization", "Bearer placeholder")
 
-	//nolint:gosec // Tests send requests only to httptest.Server URLs.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("perform request: %v", err)

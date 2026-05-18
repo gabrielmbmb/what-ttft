@@ -245,7 +245,6 @@ func flush(w http.ResponseWriter) {
 }
 
 func writeResponse(w http.ResponseWriter, format string, args ...any) {
-	//nolint:gosec // Fake server call sites pass constant format strings; streamed payloads are arguments.
 	if _, err := fmt.Fprintf(w, format, args...); err != nil {
 		return
 	}

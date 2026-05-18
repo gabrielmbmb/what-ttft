@@ -151,7 +151,6 @@ func doTracedRequest(
 		t.Fatalf("create request: %v", err)
 	}
 
-	//nolint:gosec // Tests pass only httptest server URLs or fixed local TLS server URLs to this helper.
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("perform request: %v", err)

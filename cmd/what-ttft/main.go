@@ -63,7 +63,6 @@ func writeText(output io.Writer, text string) {
 }
 
 func writeFormatted(output io.Writer, format string, args ...any) {
-	//nolint:gosec // CLI call sites pass constant format strings; user values are provided only as arguments.
 	if _, err := fmt.Fprintf(output, format, args...); err != nil {
 		return
 	}

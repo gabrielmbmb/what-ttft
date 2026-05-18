@@ -38,6 +38,12 @@ linters:
           ignore-exported: false
           ignore-unexported: true
 
+    gosec:
+      excludes:
+        - G117 # Allow documented config structs to expose API-key fields without logging them.
+        - G704 # Avoid noisy SSRF taint false positives for caller-configured benchmark/test URLs.
+        - G705 # Avoid noisy taint false positives for internal printf helpers with controlled call sites.
+
     govet:
       enable:
         - shadow

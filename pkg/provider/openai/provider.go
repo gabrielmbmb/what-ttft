@@ -131,7 +131,6 @@ func (p *Provider) StreamChat(ctx context.Context, req whatttft.ProviderRequest,
 	p.setHeaders(httpReq, apiKey)
 
 	obs.Mark(whatttft.EventRequestStart)
-	//nolint:gosec // Benchmarks intentionally send requests to a caller-configured provider base URL.
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
 		obs.OnHTTP(capture.Record())
