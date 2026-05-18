@@ -1288,7 +1288,7 @@ Definition of done:
 
 ---
 
-### [ ] 14. Add deterministic fake OpenAI test server
+### [x] 14. Add deterministic fake OpenAI test server
 
 Create reusable fake server helpers for end-to-end tests.
 
@@ -1333,6 +1333,14 @@ data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tok
 data: [DONE]
 
 ```
+
+Implemented details:
+
+- Added `internal/testserver.OpenAIServer` with reusable scriptable SSE stream steps and request capture for OpenAI-compatible Chat Completions tests.
+- The fake server validates `/chat/completions` and `/v1/chat/completions`, `POST`, `stream=true`, and presence of an Authorization header without checking or logging the secret value.
+- Added configurable delays before headers, before the first stream event, before the first apparent content delta, between steps, and per step.
+- Added end-to-end coverage through the real OpenAI provider adapter, runner, metrics, summaries, and report writer using a fake stream with heartbeat, empty event, role-only chunk, content chunks, usage/cache metadata, and `[DONE]`.
+- Tests verify TTFT occurs after the first SSE event, usage/cache metadata is captured, `done_event`/`body_eof` are recorded, and report files are written.
 
 Definition of done:
 
