@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
@@ -18,7 +19,7 @@ func TestWriteRunCreatesOutputFilesAndParsesJSON(t *testing.T) {
 	result := sampleRunResult()
 
 	//nolint:gosec // Tests use non-secret placeholder credential strings to verify redaction.
-	err := WriteRun(WriteOptions{
+	writtenDir, err := WriteRun(WriteOptions{
 		OutputDir:  outputDir,
 		SaveChunks: true,
 		Run: RunMetadata{
@@ -38,6 +39,9 @@ func TestWriteRunCreatesOutputFilesAndParsesJSON(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("write run: %v", err)
+	}
+	if writtenDir != outputDir {
+		t.Fatalf("written dir = %q, want %q", writtenDir, outputDir)
 	}
 
 	for _, name := range []string{runJSONName, requestsJSONLName, chunksJSONLName, summaryJSONName, summaryMarkdownName} {
@@ -89,7 +93,7 @@ func TestWriteRunFailsForNonEmptyOutputDirUnlessOverwrite(t *testing.T) {
 		t.Fatalf("write stale file: %v", err)
 	}
 
-	err := WriteRun(WriteOptions{OutputDir: outputDir, Result: sampleRunResult()})
+	_, err := WriteRun(WriteOptions{OutputDir: outputDir, Result: sampleRunResult()})
 	if err == nil {
 		t.Fatal("expected non-empty directory error")
 	}
@@ -97,7 +101,7 @@ func TestWriteRunFailsForNonEmptyOutputDirUnlessOverwrite(t *testing.T) {
 		t.Fatalf("stale file should remain after failed write: %v", statErr)
 	}
 
-	err = WriteRun(WriteOptions{OutputDir: outputDir, Overwrite: true, Result: sampleRunResult()})
+	_, err = WriteRun(WriteOptions{OutputDir: outputDir, Overwrite: true, Result: sampleRunResult()})
 	if err != nil {
 		t.Fatalf("write with overwrite: %v", err)
 	}
@@ -126,11 +130,64 @@ func TestValidateOutputDirFailsForNonEmptyDirectory(t *testing.T) {
 	}
 }
 
+// TestWriteRunGeneratesOutputDir verifies empty output directories are automatically placed under runs/.
+func TestWriteRunGeneratesOutputDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	result := sampleRunResult()
+	metadata := RunMetadata{
+		Provider: "OpenAI",
+		Model:    "gpt/test",
+		Scenario: whatttft.Scenario{Name: "Short Chat"},
+		RunConfig: whatttft.RunConfig{
+			Scenario:       whatttft.Scenario{Name: "Short Chat"},
+			CacheMode:      whatttft.CacheBust,
+			ConnectionMode: whatttft.WarmConnections,
+		},
+	}
+
+	outputDir, err := WriteRun(WriteOptions{Run: metadata, Result: result})
+	if err != nil {
+		t.Fatalf("write run: %v", err)
+	}
+	if !strings.HasPrefix(outputDir, filepath.Join(defaultOutputRoot, "openai-gpt-test-short-chat-cache-bust-warm-")) {
+		t.Fatalf("generated output dir = %q", outputDir)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, runJSONName)); err != nil {
+		t.Fatalf("stat generated run.json: %v", err)
+	}
+
+	var writtenMetadata RunMetadata
+	readJSONFile(t, filepath.Join(outputDir, runJSONName), &writtenMetadata)
+	if writtenMetadata.RunConfig.OutputDir != outputDir {
+		t.Fatalf("run config output dir = %q, want %q", writtenMetadata.RunConfig.OutputDir, outputDir)
+	}
+}
+
+// TestResolveOutputDirUsesProvidedDir verifies explicit output directories are preserved exactly.
+func TestResolveOutputDirUsesProvidedDir(t *testing.T) {
+	outputDir := " custom output "
+	resolved := ResolveOutputDir(outputDir, RunMetadata{}, time.Unix(0, 0))
+
+	if resolved != outputDir {
+		t.Fatalf("resolved dir = %q, want %q", resolved, outputDir)
+	}
+}
+
+// TestResolveOutputDirUsesMetadataConfig verifies RunConfig output directories are used before generated defaults.
+func TestResolveOutputDirUsesMetadataConfig(t *testing.T) {
+	metadata := RunMetadata{RunConfig: whatttft.RunConfig{OutputDir: "metadata-output"}}
+	resolved := ResolveOutputDir("", metadata, time.Unix(0, 0))
+
+	if resolved != "metadata-output" {
+		t.Fatalf("resolved dir = %q, want metadata-output", resolved)
+	}
+}
+
 // TestWriteRunOmitsChunksWhenDisabled verifies chunks.jsonl is not written unless SaveChunks is true.
 func TestWriteRunOmitsChunksWhenDisabled(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "run-output")
 
-	err := WriteRun(WriteOptions{OutputDir: outputDir, SaveChunks: false, Result: sampleRunResult()})
+	_, err := WriteRun(WriteOptions{OutputDir: outputDir, SaveChunks: false, Result: sampleRunResult()})
 	if err != nil {
 		t.Fatalf("write run: %v", err)
 	}
@@ -142,10 +199,7 @@ func TestWriteRunOmitsChunksWhenDisabled(t *testing.T) {
 
 // TestWriteRunValidatesRequiredInputs verifies writer options fail fast for missing required fields.
 func TestWriteRunValidatesRequiredInputs(t *testing.T) {
-	if err := WriteRun(WriteOptions{Result: sampleRunResult()}); err == nil {
-		t.Fatal("missing output directory should fail")
-	}
-	if err := WriteRun(WriteOptions{OutputDir: filepath.Join(t.TempDir(), "out")}); err == nil {
+	if _, err := WriteRun(WriteOptions{OutputDir: filepath.Join(t.TempDir(), "out")}); err == nil {
 		t.Fatal("missing result should fail")
 	}
 }

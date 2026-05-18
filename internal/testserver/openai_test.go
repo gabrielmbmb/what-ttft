@@ -193,7 +193,7 @@ func assertEndToEndReports(t *testing.T, result *whatttft.RunResult, baseURL str
 	t.Helper()
 
 	outputDir := filepath.Join(t.TempDir(), "reports")
-	err := report.WriteRun(report.WriteOptions{
+	writtenDir, err := report.WriteRun(report.WriteOptions{
 		OutputDir:  outputDir,
 		SaveChunks: true,
 		Run: report.RunMetadata{
@@ -205,6 +205,9 @@ func assertEndToEndReports(t *testing.T, result *whatttft.RunResult, baseURL str
 	})
 	if err != nil {
 		t.Fatalf("write reports: %v", err)
+	}
+	if writtenDir != outputDir {
+		t.Fatalf("written dir = %q, want %q", writtenDir, outputDir)
 	}
 
 	for _, name := range []string{"run.json", "requests.jsonl", "chunks.jsonl", "summary.json", "summary.md"} {

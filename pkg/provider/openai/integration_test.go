@@ -25,7 +25,7 @@ func TestIntegrationOpenAIStreaming(t *testing.T) {
 	}
 	baseURL := os.Getenv("WHAT_TTFT_OPENAI_BASE_URL")
 	if baseURL == "" {
-		baseURL = defaultBaseURL
+		baseURL = DefaultBaseURL
 	}
 
 	provider := New(Config{

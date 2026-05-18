@@ -21,6 +21,7 @@ import (
 const (
 	benchmarkVersion    = "v0.1-dev"
 	chunksJSONLName     = "chunks.jsonl"
+	defaultOutputRoot   = "runs"
 	requestsJSONLName   = "requests.jsonl"
 	runJSONName         = "run.json"
 	summaryJSONName     = "summary.json"
@@ -71,7 +72,7 @@ type RunMetadata struct {
 
 // WriteOptions configures report file output for one benchmark run.
 type WriteOptions struct {
-	// OutputDir is the directory that will contain run.json, requests.jsonl, optional chunks.jsonl, summary.json, and summary.md; empty is invalid.
+	// OutputDir is the directory that will contain run.json, requests.jsonl, optional chunks.jsonl, summary.json, and summary.md; empty means WriteRun generates a timestamped directory under runs/.
 	OutputDir string
 
 	// Overwrite allows replacing an existing non-empty output directory when true; false preserves existing files and returns an error.
@@ -87,45 +88,56 @@ type WriteOptions struct {
 	Result *whatttft.RunResult
 }
 
-// WriteRun writes run metadata, raw request records, optional chunks, JSON summary, and Markdown summary to OutputDir.
-func WriteRun(options WriteOptions) error {
-	if options.OutputDir == "" {
-		return errors.New("output directory is required")
-	}
+// WriteRun writes run metadata, raw request records, optional chunks, JSON summary, and Markdown summary, returning the resolved report directory.
+func WriteRun(options WriteOptions) (string, error) {
 	if options.Result == nil {
-		return errors.New("run result is required")
+		return "", errors.New("run result is required")
 	}
 
-	if err := prepareOutputDir(options.OutputDir, options.Overwrite); err != nil {
-		return err
+	outputDir := ResolveOutputDir(options.OutputDir, options.Run, time.Now())
+	if err := prepareOutputDir(outputDir, options.Overwrite); err != nil {
+		return "", err
 	}
 
 	metadata := completeRunMetadata(options.Run)
-	if err := writeJSON(filepath.Join(options.OutputDir, runJSONName), metadata); err != nil {
-		return err
+	metadata.RunConfig.OutputDir = outputDir
+	if err := writeJSON(filepath.Join(outputDir, runJSONName), metadata); err != nil {
+		return "", err
 	}
-	if err := writeJSONL(filepath.Join(options.OutputDir, requestsJSONLName), options.Result.Records); err != nil {
-		return err
+	if err := writeJSONL(filepath.Join(outputDir, requestsJSONLName), options.Result.Records); err != nil {
+		return "", err
 	}
 	if options.SaveChunks {
-		if err := writeJSONL(filepath.Join(options.OutputDir, chunksJSONLName), options.Result.Chunks); err != nil {
-			return err
+		if err := writeJSONL(filepath.Join(outputDir, chunksJSONLName), options.Result.Chunks); err != nil {
+			return "", err
 		}
 	}
-	if err := writeJSON(filepath.Join(options.OutputDir, summaryJSONName), options.Result.Summary); err != nil {
-		return err
+	if err := writeJSON(filepath.Join(outputDir, summaryJSONName), options.Result.Summary); err != nil {
+		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(options.OutputDir, summaryMarkdownName), []byte(MarkdownSummary(options.Result.Summary)), 0o600); err != nil {
-		return fmt.Errorf("write summary markdown: %w", err)
+	if err := os.WriteFile(filepath.Join(outputDir, summaryMarkdownName), []byte(MarkdownSummary(options.Result.Summary)), 0o600); err != nil {
+		return "", fmt.Errorf("write summary markdown: %w", err)
 	}
 
-	return nil
+	return outputDir, nil
+}
+
+// ResolveOutputDir returns the explicit outputDir, metadata RunConfig output directory, or a timestamped reports directory under runs/.
+func ResolveOutputDir(outputDir string, metadata RunMetadata, at time.Time) string {
+	if strings.TrimSpace(outputDir) != "" {
+		return outputDir
+	}
+	if strings.TrimSpace(metadata.RunConfig.OutputDir) != "" {
+		return metadata.RunConfig.OutputDir
+	}
+
+	return defaultOutputDir(metadata, at)
 }
 
 // ValidateOutputDir checks whether outputDir can be used for reports without mutating the filesystem.
 func ValidateOutputDir(outputDir string, overwrite bool) error {
-	if outputDir == "" {
-		return errors.New("output directory is required")
+	if strings.TrimSpace(outputDir) == "" {
+		return nil
 	}
 
 	entries, err := os.ReadDir(outputDir)
@@ -141,6 +153,63 @@ func ValidateOutputDir(outputDir string, overwrite bool) error {
 	}
 
 	return fmt.Errorf("inspect output directory: %w", err)
+}
+
+func defaultOutputDir(metadata RunMetadata, at time.Time) string {
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	provider := pathSlug(metadata.Provider, "provider")
+	model := pathSlug(metadata.Model, "model")
+	scenario := pathSlug(firstNonEmpty(metadata.Scenario.Name, metadata.RunConfig.Scenario.Name), "scenario")
+	cacheMode := pathSlug(string(metadata.RunConfig.CacheMode), "cache")
+	connectionMode := pathSlug(string(metadata.RunConfig.ConnectionMode), "connection")
+	timestamp := at.UTC().Format("20060102T150405.000000000Z")
+	name := strings.Join([]string{provider, model, scenario, cacheMode, connectionMode, timestamp}, "-")
+
+	return filepath.Join(defaultOutputRoot, name)
+}
+
+func pathSlug(value string, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	lastSeparator := false
+	for _, char := range value {
+		if slugChar(char) {
+			builder.WriteRune(char)
+			lastSeparator = false
+			continue
+		}
+		if !lastSeparator {
+			builder.WriteByte('-')
+			lastSeparator = true
+		}
+	}
+
+	slug := strings.Trim(builder.String(), "-")
+	if len(slug) > 80 {
+		slug = strings.Trim(slug[:80], "-")
+	}
+	if slug == "" {
+		return fallback
+	}
+
+	return slug
+}
+
+func slugChar(char rune) bool {
+	return char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-' || char == '_' || char == '.'
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 // RedactURL removes userinfo and secret-looking query values from rawURL for report metadata.

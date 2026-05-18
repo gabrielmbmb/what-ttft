@@ -119,6 +119,9 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 	if !strings.Contains(stdout.String(), "ttft_delta_ms") {
 		t.Fatalf("stdout missing concise metric summary:\n%s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "successful=1 errors=0") {
+		t.Fatalf("stdout missing success/error counts:\n%s", stdout.String())
+	}
 
 	for _, name := range []string{"run.json", "requests.jsonl", "chunks.jsonl", "summary.json", "summary.md"} {
 		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
@@ -147,6 +150,98 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 	}
 	if summary.Groups[0].TotalCompletionTokens != 2 {
 		t.Fatalf("total completion tokens = %d, want 2", summary.Groups[0].TotalCompletionTokens)
+	}
+}
+
+// TestRunCommandGeneratesOutputDir verifies --out is optional and creates a runs/ directory automatically.
+func TestRunCommandGeneratesOutputDir(t *testing.T) {
+	const placeholderAPIKey = "cli-test-key"
+
+	t.Chdir(t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+placeholderAPIKey {
+			t.Errorf("authorization header = %q", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeCLISSE(t, w, `{"choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
+		writeCLISSE(t, w, "[DONE]")
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "openai",
+		"--base-url", server.URL,
+		"--api-key", placeholderAPIKey,
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "1",
+		"--warmup", "0",
+		"--max-output-tokens", "8",
+	}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "wrote results to runs") {
+		t.Fatalf("stdout missing generated output path:\n%s", stdout.String())
+	}
+
+	entries, err := os.ReadDir("runs")
+	if err != nil {
+		t.Fatalf("read generated runs directory: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("generated run directory count = %d, want 1", len(entries))
+	}
+	outputDir := filepath.Join("runs", entries[0].Name())
+	for _, name := range []string{"run.json", "requests.jsonl", "summary.json", "summary.md"} {
+		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
+			t.Fatalf("stat generated %s: %v", name, err)
+		}
+	}
+
+	var metadata report.RunMetadata
+	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
+	if metadata.RunConfig.OutputDir != outputDir {
+		t.Fatalf("run config output dir = %q, want %q", metadata.RunConfig.OutputDir, outputDir)
+	}
+}
+
+// TestRunCommandFailsWhenAPIKeyEnvMissing verifies unresolved API key env vars fail before provider requests start.
+func TestRunCommandFailsWhenAPIKeyEnvMissing(t *testing.T) {
+	t.Setenv("WHAT_TTFT_MISSING_API_KEY", "")
+	var requestCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "openai",
+		"--base-url", server.URL,
+		"--api-key-env", "WHAT_TTFT_MISSING_API_KEY",
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "1",
+		"--warmup", "0",
+	}, &stdout, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+	if requestCount.Load() != 0 {
+		t.Fatalf("provider request count = %d, want 0", requestCount.Load())
+	}
+	if !strings.Contains(stderr.String(), "WHAT_TTFT_MISSING_API_KEY is empty") {
+		t.Fatalf("stderr missing API key env error:\n%s", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
 }
 

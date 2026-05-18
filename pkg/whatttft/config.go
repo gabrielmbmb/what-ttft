@@ -48,7 +48,7 @@ type RunConfig struct {
 	// ConnectionMode is the requested HTTP connection reuse behavior; summaries must not mix different connection modes.
 	ConnectionMode ConnectionMode
 
-	// OutputDir is the filesystem directory for reports; empty means the caller does not request report writing through this config.
+	// OutputDir is the filesystem directory for reports; empty means the report writer or CLI may generate a unique directory under its default output root.
 	OutputDir string
 
 	// SaveChunks controls whether generated content chunks are written to chunk reports; false omits chunk files because chunks may contain sensitive output.

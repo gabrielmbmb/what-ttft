@@ -6,7 +6,8 @@ import (
 	"strings"
 )
 
-const defaultBaseURL = "https://api.openai.com/v1"
+// DefaultBaseURL is the public OpenAI API base URL used when Config.BaseURL is empty.
+const DefaultBaseURL = "https://api.openai.com/v1"
 
 // Config configures an OpenAI-compatible Chat Completions streaming provider.
 type Config struct {
@@ -40,7 +41,7 @@ type Config struct {
 
 func (c Config) baseURL() string {
 	if c.BaseURL == "" {
-		return defaultBaseURL
+		return DefaultBaseURL
 	}
 
 	return strings.TrimRight(c.BaseURL, "/")

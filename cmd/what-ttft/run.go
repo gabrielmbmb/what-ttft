@@ -18,7 +18,7 @@ import (
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
-const defaultOpenAIBaseURL = "https://api.openai.com/v1"
+const adHocScenarioName = "ad-hoc"
 
 func runCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 	cfg, _, err := parseRunFlags(args, stderr)
@@ -30,6 +30,7 @@ func runCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
+	cfg.outputDir = report.ResolveOutputDir(cfg.outputDir, outputDirMetadata(cfg), time.Now())
 	if preflightErr := report.ValidateOutputDir(cfg.outputDir, cfg.overwrite); preflightErr != nil {
 		writeFormatted(stderr, "output directory check: %v\n", preflightErr)
 		return 1
@@ -41,19 +42,20 @@ func runCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := report.WriteRun(report.WriteOptions{
+	outputDir, err := report.WriteRun(report.WriteOptions{
 		OutputDir:  cfg.outputDir,
 		Overwrite:  cfg.overwrite,
 		SaveChunks: cfg.saveChunks,
 		Run:        metadata,
 		Result:     result,
-	}); err != nil {
+	})
+	if err != nil {
 		writeFormatted(stderr, "write reports: %v\n", err)
 		return 1
 	}
 
 	printRunSummary(stdout, cfg, result)
-	writeFormatted(stdout, "\nwrote results to %s\n", cfg.outputDir)
+	writeFormatted(stdout, "\nwrote results to %s\n", outputDir)
 	return 0
 }
 
@@ -63,7 +65,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet.Usage = func() { printRunUsage(flagSet.Output()) }
 
 	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark (openai for v0.1)")
-	flagSet.StringVar(&cfg.baseURL, "base-url", defaultOpenAIBaseURL, "provider API base URL")
+	flagSet.StringVar(&cfg.baseURL, "base-url", openai.DefaultBaseURL, "provider API base URL")
 	flagSet.StringVar(&cfg.apiKeyEnv, "api-key-env", "OPENAI_API_KEY", "environment variable containing the API key")
 	flagSet.StringVar(&cfg.apiKey, "api-key", "", "API key for local testing; never printed")
 	flagSet.StringVar(&cfg.model, "model", "", "model identifier")
@@ -80,7 +82,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet.Var(&cfg.temperature, "temperature", "optional sampling temperature, e.g. 0")
 	flagSet.Var(&cfg.topP, "top-p", "optional nucleus sampling value, e.g. 1")
 	flagSet.DurationVar(&cfg.timeout, "timeout", 120*time.Second, "whole-request HTTP client timeout")
-	flagSet.StringVar(&cfg.outputDir, "out", "", "output directory")
+	flagSet.StringVar(&cfg.outputDir, "out", "", "output directory; defaults to a generated directory under runs/")
 	flagSet.BoolVar(&cfg.saveChunks, "save-chunks", false, "write chunks.jsonl with generated content")
 	flagSet.BoolVar(&cfg.includeUsage, "include-usage", true, "request stream usage chunks when supported")
 	flagSet.BoolVar(&cfg.legacyMaxTokens, "legacy-max-tokens", false, "send max_tokens instead of max_completion_tokens")
@@ -107,7 +109,6 @@ Required flags:
   --provider openai
   --model MODEL
   --prompt PROMPT
-  --out DIR
 
 Common flags:
   --base-url URL
@@ -124,6 +125,7 @@ Common flags:
   --temperature FLOAT
   --top-p FLOAT
   --timeout DURATION
+  --out DIR
   --save-chunks
   --include-usage
   --legacy-max-tokens
@@ -134,7 +136,7 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 	cacheMode := whatttft.CacheMode(cfg.cacheMode)
 	connectionMode := whatttft.ConnectionMode(cfg.connectionMode)
 	scenario := whatttft.Scenario{
-		Name:            "ad-hoc",
+		Name:            adHocScenarioName,
 		Prompt:          cfg.prompt,
 		SystemPrompt:    cfg.systemPrompt,
 		MaxOutputTokens: cfg.maxOutputTokens,
@@ -158,9 +160,9 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 		SaveChunks:       cfg.saveChunks,
 	}
 
-	apiKey := cfg.apiKey
-	if apiKey == "" && cfg.apiKeyEnv != "" {
-		apiKey = os.Getenv(cfg.apiKeyEnv)
+	apiKey, err := resolveAPIKey(cfg)
+	if err != nil {
+		return nil, report.RunMetadata{}, err
 	}
 	client := httptracecap.NewHTTPClient(httptracecap.TransportConfig{
 		ConnectionMode: connectionMode,
@@ -196,17 +198,35 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 	return result, metadata, nil
 }
 
+func outputDirMetadata(cfg runCLIConfig) report.RunMetadata {
+	scenario := whatttft.Scenario{Name: adHocScenarioName}
+
+	return report.RunMetadata{
+		Provider: cfg.provider,
+		Model:    cfg.model,
+		Scenario: scenario,
+		RunConfig: whatttft.RunConfig{
+			Scenario:       scenario,
+			CacheMode:      whatttft.CacheMode(cfg.cacheMode),
+			ConnectionMode: whatttft.ConnectionMode(cfg.connectionMode),
+		},
+	}
+}
+
 func printRunSummary(output io.Writer, cfg runCLIConfig, result *whatttft.RunResult) {
 	writeFormatted(
 		output,
-		"provider=%s model=%s scenario=ad-hoc samples=%d warmup=%d concurrency=%d cache=%s connection=%s\n\n",
+		"provider=%s model=%s scenario=%s samples=%d warmup=%d concurrency=%d cache=%s connection=%s successful=%d errors=%d\n\n",
 		cfg.provider,
 		cfg.model,
+		adHocScenarioName,
 		cfg.samples,
 		cfg.warmup,
 		cfg.concurrency,
 		cfg.cacheMode,
 		cfg.connectionMode,
+		result.Summary.SuccessfulRequests,
+		result.Summary.ErrorRequests,
 	)
 	writeLine(output, "metric                                      p50      p95      p99      mean")
 
@@ -239,6 +259,22 @@ func formatCLIOptionalFloat(value *float64) string {
 	}
 
 	return fmt.Sprintf("%.1f", *value)
+}
+
+func resolveAPIKey(cfg runCLIConfig) (string, error) {
+	if cfg.apiKey != "" {
+		return cfg.apiKey, nil
+	}
+	if cfg.apiKeyEnv == "" {
+		return "", errors.New("--api-key-env or --api-key is required")
+	}
+
+	apiKey := os.Getenv(cfg.apiKeyEnv)
+	if apiKey == "" {
+		return "", fmt.Errorf("API key environment variable %s is empty; set it or pass --api-key", cfg.apiKeyEnv)
+	}
+
+	return apiKey, nil
 }
 
 func redactArgs(args []string) []string {
@@ -293,9 +329,6 @@ func (c runCLIConfig) validate() error {
 	}
 	if c.prompt == "" {
 		return errors.New("--prompt is required")
-	}
-	if c.outputDir == "" {
-		return errors.New("--out is required")
 	}
 	if c.apiKey == "" && c.apiKeyEnv == "" {
 		return errors.New("--api-key-env or --api-key is required")

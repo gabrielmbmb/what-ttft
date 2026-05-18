@@ -6,10 +6,10 @@ import "testing"
 func TestConfigBaseURLDefault(t *testing.T) {
 	cfg := Config{}
 
-	if got := cfg.baseURL(); got != defaultBaseURL {
-		t.Fatalf("baseURL = %q, want %q", got, defaultBaseURL)
+	if got := cfg.baseURL(); got != DefaultBaseURL {
+		t.Fatalf("baseURL = %q, want %q", got, DefaultBaseURL)
 	}
-	if got := cfg.endpointURL(); got != defaultBaseURL+"/chat/completions" {
+	if got := cfg.endpointURL(); got != DefaultBaseURL+"/chat/completions" {
 		t.Fatalf("endpointURL = %q, want default chat completions endpoint", got)
 	}
 }
