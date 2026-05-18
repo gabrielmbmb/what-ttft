@@ -30,8 +30,9 @@ go.work.sum
 # Local implementation/reference artifacts
 openai-openapi.yaml
 
-# Benchmark and release output directories
+# Benchmark, smoke-test, and release output directories
 runs/
+.what-ttft-smoke.*/
 dist/
 
 # Editor/IDE

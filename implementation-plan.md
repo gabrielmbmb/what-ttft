@@ -1442,7 +1442,7 @@ Definition of done:
 
 ---
 
-### [ ] 17. Final v0.1 quality gate
+### [x] 17. Final v0.1 quality gate
 
 Before tagging or calling v0.1 complete, run the full local gate.
 
@@ -1460,6 +1460,12 @@ Manual fake-server smoke test:
 
 - Add or use a test helper command/script that runs the CLI against a local fake OpenAI server and writes reports.
 - Confirm `summary.md`, `summary.json`, `requests.jsonl`, and `run.json` are produced.
+
+Implemented details:
+
+- Added `scripts/smoke-fake-openai.sh`, a no-network smoke script that builds the CLI, starts a local deterministic fake OpenAI-compatible SSE server, runs `what-ttft run`, verifies all report files are produced, and checks the smoke API key is absent from output files.
+- Documented the fake-server smoke script in README testing instructions and ignored transient `.what-ttft-smoke.*` build directories.
+- Ran the full local v0.1 quality gate and the fake-server smoke script successfully.
 
 Definition of done:
 

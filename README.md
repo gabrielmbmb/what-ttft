@@ -153,6 +153,12 @@ Unit and end-to-end tests use `httptest.Server` and do not call real providers b
 go test ./...
 ```
 
+No-network CLI smoke test against a local fake OpenAI-compatible server:
+
+```sh
+scripts/smoke-fake-openai.sh
+```
+
 Optional real OpenAI smoke test:
 
 ```sh
