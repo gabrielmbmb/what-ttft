@@ -1,51 +1,23 @@
 # what-ttft
 
-`what-ttft` is a small Go benchmark for measuring where latency is spent in real-time AI streaming pipelines.
+`what-ttft` measures user-visible latency for OpenAI-compatible streaming Chat Completions endpoints. It is designed for answering practical questions like:
 
-v0.1 focuses on OpenAI-compatible **Chat Completions streaming** endpoints. It uses direct `net/http` requests and SSE parsing rather than provider SDKs, so request timing, transport tracing, stream frames, and raw records remain visible.
+- How long until the first response byte arrives?
+- How long until the first visible model output appears?
+- How fast does the stream continue after output starts?
+- Are latency changes caused by connection setup, provider wait, stream timing, cache behavior, or concurrency?
 
-## What it measures
-
-For each streaming request, `what-ttft` records client-observed timeline events such as:
-
-- DNS, TCP connect, TLS handshake, connection reuse, request write, and first response byte via Go `httptrace`.
-- Response headers received.
-- First SSE data event.
-- First non-empty user-visible output delta.
-- Last non-empty user-visible output delta.
-- Provider `[DONE]` event.
-- Response body EOF.
-- Provider-reported usage and prompt-cache counters when available.
-
-Key derived metrics include:
-
-- `http_ttfb_ms`: first response byte minus request start.
-- `first_event_ms`: first SSE event minus request start.
-- `ttft_delta_ms`: first non-empty visible output delta minus request start.
-- `e2e_delta_ms`: last non-empty visible output delta minus request start.
-- `stream_total_ms`: response body EOF minus request start.
-- `generation_delta_ms`: last visible delta minus first visible delta.
-- `server_wait_to_first_byte_ms`: first response byte minus request write completion.
-- `stream_protocol_to_first_output_ms`: first visible output delta minus first response byte.
-- `e2e_output_tps`: provider-reported completion tokens divided by E2E delta seconds.
-
-## What it cannot measure
-
-This is a client-side benchmark. It cannot perfectly separate provider queueing, remote request ingestion, model prefill, provider-side buffering, and network return path unless the provider exposes those timings.
-
-Treat `server_wait_to_first_byte_ms` as a conservative client-observed bucket that includes provider-side and return-path effects.
+The tool uses direct Go `net/http` requests, Go `httptrace`, and a built-in SSE parser instead of provider SDKs, so the raw client-observed timeline remains visible in the output files.
 
 ## Install
 
-Linux `amd64` and `arm64` release assets are published on GitHub Releases as `.tar.gz` archives plus native `.deb`, `.rpm`, and `.apk` packages.
-
-Homebrew users can install from the tap:
+Homebrew:
 
 ```sh
 brew install --cask gabrielmbmb/tap/what-ttft
 ```
 
-Quick Linux install to `/usr/local/bin`:
+Linux quick install to `/usr/local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gabrielmbmb/what-ttft/main/install.sh | sh
@@ -57,25 +29,27 @@ Install without sudo by choosing a writable directory:
 curl -fsSL https://raw.githubusercontent.com/gabrielmbmb/what-ttft/main/install.sh | INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
-For native package managers, download the matching package from the release and install it with `sudo apt install ./what-ttft*.deb`, `sudo rpm -i ./what-ttft*.rpm`, or `sudo apk add --allow-untrusted ./what-ttft*.apk`.
+You can also download release archives and native `.deb`, `.rpm`, or `.apk` packages from GitHub Releases.
 
-## Build
-
-```sh
-go test ./...
-go build ./...
-```
-
-Run the local quality gate used by contributors:
+## Build from source
 
 ```sh
-go test ./...
-go test -race ./...
-golangci-lint run
-go build ./...
+go build ./cmd/what-ttft
 ```
 
-## OpenAI-compatible example
+Then run the built binary:
+
+```sh
+./what-ttft --help
+```
+
+Or run directly from a checkout:
+
+```sh
+go run ./cmd/what-ttft --help
+```
+
+## Quick start
 
 Set your API key:
 
@@ -83,10 +57,10 @@ Set your API key:
 export OPENAI_API_KEY="..."
 ```
 
-Run a cache-busted sequential baseline:
+Run a sequential, cache-busted benchmark:
 
 ```sh
-go run ./cmd/what-ttft run \
+what-ttft run \
   --provider openai \
   --model gpt-5.5 \
   --api-key-env OPENAI_API_KEY \
@@ -101,15 +75,88 @@ go run ./cmd/what-ttft run \
   --out runs/openai-gpt-5.5-short-cache-bust
 ```
 
+If you are running from source, replace `what-ttft run` with:
+
+```sh
+go run ./cmd/what-ttft run
+```
+
+For OpenAI-compatible providers, set `--base-url` to the provider API base URL.
+
+## Common options
+
+```text
+--provider openai
+--base-url URL
+--api-key-env ENV
+--api-key KEY
+--model MODEL
+--prompt PROMPT
+--system-prompt PROMPT
+--samples N
+--warmup N
+--concurrency N
+--cache-mode cache-bust|cache-reuse|provider-explicit-cache|unknown
+--connection-mode warm|cold
+--reasoning-effort none|minimal|low|medium|high|xhigh
+--max-output-tokens N
+--temperature FLOAT
+--top-p FLOAT
+--timeout DURATION
+--out DIR
+--save-chunks
+--include-usage
+--legacy-max-tokens
+--overwrite
+```
+
 Notes:
 
-- For some newer reasoning models, `--temperature 0` is unsupported. Omit temperature unless the model supports the value you choose.
-- Use `--reasoning-effort none` where supported to avoid spending latency/tokens on hidden reasoning.
-- The tool refuses to write into a non-empty `--out` directory unless `--overwrite` is set. This prevents accidentally mixing runs.
+- Prefer `--api-key-env` over `--api-key` so secrets do not appear in shell history.
+- Some reasoning models do not support `--temperature 0`; omit temperature unless the model supports the value you choose.
+- Use `--reasoning-effort none` where supported to avoid spending latency and tokens on hidden reasoning.
+- The tool refuses to write into a non-empty `--out` directory unless `--overwrite` is set.
+- `--save-chunks` writes generated content to `chunks.jsonl`; leave it off when output text may be sensitive.
+
+## What is measured
+
+For every request, `what-ttft` records client-observed events such as:
+
+- DNS lookup, TCP connect, TLS handshake, connection reuse, request write, and first response byte.
+- Response headers received.
+- First SSE data event.
+- First non-empty user-visible output delta.
+- Last non-empty user-visible output delta.
+- Provider stream terminator, such as `[DONE]`.
+- Response body EOF.
+- Provider-reported token usage and prompt-cache counters when available.
+
+Important metrics:
+
+| metric | meaning |
+|---|---|
+| `http_ttfb_ms` | Time from request start to first response byte. |
+| `headers_latency_ms` | Time from request start until response headers are received. |
+| `first_event_ms` | Time from request start to the first SSE data event, even if it is empty or metadata-only. |
+| `ttft_delta_ms` | Time from request start to the first non-empty visible output delta. This is the main TTFT metric for v0.1. |
+| `e2e_delta_ms` | Time from request start to the last non-empty visible output delta. |
+| `stream_total_ms` | Time from request start until response body EOF. |
+| `generation_delta_ms` | Time between first and last visible output deltas. |
+| `server_wait_to_first_byte_ms` | Time from request write completion to first response byte. |
+| `stream_protocol_to_first_output_ms` | Time from first response byte to first visible output delta. |
+| `e2e_output_tps` | Provider-reported completion tokens divided by E2E seconds, when usage is available. |
+
+`what-ttft` does not count empty chunks, role-only chunks, usage chunks, comments, heartbeats, or `[DONE]` as TTFT.
+
+## Client-side limits
+
+`what-ttft` measures what the client can observe. It cannot perfectly separate provider queueing, request ingestion, model prefill, provider-side buffering, and the network return path unless the provider exposes those timings.
+
+Treat `server_wait_to_first_byte_ms` as a conservative bucket that can include remote provider work and network return-path effects.
 
 ## Output files
 
-Each run writes:
+Each run writes a directory containing:
 
 ```text
 run.json          run metadata, environment, scenario, and config
@@ -119,7 +166,9 @@ summary.json      aggregate summaries over successful measured requests
 summary.md        human-readable metric table
 ```
 
-`chunks.jsonl` is omitted by default because chunks may contain generated content.
+`requests.jsonl` is the most useful file for detailed investigation. It contains raw timelines, HTTP trace metadata, derived metrics, usage fields, cache fields, and errors for each request.
+
+`summary.md` is the quickest way to compare p50, p95, p99, mean, and max values for the main metrics.
 
 ## Cache modes
 
@@ -132,42 +181,68 @@ Supported modes:
 - `cache-bust`: inserts a per-request nonce into the prompt prefix to avoid prompt-cache hits. This is the default for cold comparisons.
 - `cache-reuse`: sends identical prompts so provider caches can be reused intentionally.
 - `provider-explicit-cache`: reserved for provider-specific explicit cache APIs.
-- `unknown`: no cache mutation; results may be cache-affected.
+- `unknown`: leaves the prompt unchanged; results may be cache-affected.
 
-Summaries group cache modes separately.
+Summaries group cache modes separately so cache-busted and cache-reuse measurements are not mixed.
 
-## Recommended benchmark procedure
+## Recommended workflow
 
-1. Run a sequential cache-busted baseline.
-2. Run a sequential cache-reuse test.
-3. Compare warm and cold connection modes.
-4. Run a concurrency sweep.
-5. Compare p50/p95/p99, not just averages.
-6. Keep raw `requests.jsonl` and inspect errors/outliers before drawing conclusions.
+1. Start with a sequential cache-busted run to establish a baseline.
+2. Run a cache-reuse comparison to estimate the impact of provider prompt/KV caching.
+3. Compare `warm` and `cold` connection modes to understand connection setup cost.
+4. Sweep concurrency values to see how user-visible latency changes under load.
+5. Compare p50, p95, and p99 values, not just averages.
+6. Inspect `requests.jsonl` for errors, outliers, connection reuse, cache counters, and token usage before drawing conclusions.
 
-## Testing
+## Practical examples
 
-Unit and end-to-end tests use `httptest.Server` and do not call real providers by default:
-
-```sh
-go test ./...
-```
-
-No-network CLI smoke test against a local fake OpenAI-compatible server:
+Cold connections:
 
 ```sh
-scripts/smoke-fake-openai.sh
+what-ttft run \
+  --provider openai \
+  --model gpt-5.5 \
+  --api-key-env OPENAI_API_KEY \
+  --prompt "Answer in one short sentence: what is the capital of France?" \
+  --samples 30 \
+  --warmup 0 \
+  --connection-mode cold \
+  --cache-mode cache-bust \
+  --max-output-tokens 64 \
+  --out runs/openai-gpt-5.5-short-cold
 ```
 
-Optional real OpenAI smoke test:
+Cache-reuse comparison:
 
 ```sh
-WHAT_TTFT_INTEGRATION=1 \
-OPENAI_API_KEY=... \
-WHAT_TTFT_OPENAI_MODEL=gpt-5.5 \
-go test ./pkg/provider/openai -run Integration -count=1
+what-ttft run \
+  --provider openai \
+  --model gpt-5.5 \
+  --api-key-env OPENAI_API_KEY \
+  --prompt "Use this fixed prompt for a cache reuse comparison. Answer with one short sentence." \
+  --samples 50 \
+  --warmup 5 \
+  --cache-mode cache-reuse \
+  --connection-mode warm \
+  --max-output-tokens 64 \
+  --out runs/openai-gpt-5.5-cache-reuse
 ```
 
-## Contributor methodology
+Concurrency sweep example:
 
-See [`AGENTS.md`](AGENTS.md) for the benchmark methodology, metric definitions, cache-control rules, documentation requirements, and testing expectations.
+```sh
+for c in 1 2 4 8; do
+  what-ttft run \
+    --provider openai \
+    --model gpt-5.5 \
+    --api-key-env OPENAI_API_KEY \
+    --prompt "Answer in one short sentence: what is the capital of France?" \
+    --samples 50 \
+    --warmup 5 \
+    --concurrency "$c" \
+    --cache-mode cache-bust \
+    --connection-mode warm \
+    --max-output-tokens 64 \
+    --out "runs/openai-gpt-5.5-concurrency-$c"
+done
+```
