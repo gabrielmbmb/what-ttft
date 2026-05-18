@@ -19,7 +19,10 @@ import (
 
 // TestOpenAIServerAcceptsV1PathAndRecordsRequests verifies request validation and capture for /v1 base URLs.
 func TestOpenAIServerAcceptsV1PathAndRecordsRequests(t *testing.T) {
-	server := NewOpenAIServer(OpenAIConfig{Steps: []StreamStep{{Data: "[DONE]"}}})
+	server := NewOpenAIServer(OpenAIConfig{
+		OpenAIProcessingDuration: 123 * time.Millisecond,
+		Steps:                    []StreamStep{{Data: "[DONE]"}},
+	})
 	defer server.Close()
 
 	body := stringsReader(`{"model":"gpt-test","stream":true}`)
@@ -39,6 +42,9 @@ func TestOpenAIServerAcceptsV1PathAndRecordsRequests(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(openAIProcessingMSHeader); got != "123" {
+		t.Fatalf("%s = %q, want 123", openAIProcessingMSHeader, got)
 	}
 	requests := server.Requests()
 	if len(requests) != 1 {
@@ -85,6 +91,7 @@ func TestOpenAIServerRejectsMissingStream(t *testing.T) {
 // TestOpenAIServerEndToEndRunnerAndReports verifies the full provider-runner-report path against the fake stream.
 func TestOpenAIServerEndToEndRunnerAndReports(t *testing.T) {
 	server := NewOpenAIServer(OpenAIConfig{
+		DelayBeforeHeaders:      17 * time.Millisecond,
 		DelayBeforeFirstEvent:   2 * time.Millisecond,
 		DelayBetweenSteps:       2 * time.Millisecond,
 		DelayBeforeFirstContent: 5 * time.Millisecond,
@@ -167,6 +174,9 @@ func assertEndToEndRecord(t *testing.T, result *whatttft.RunResult) {
 	}
 	if record.Cache.Hit == nil || !*record.Cache.Hit {
 		t.Fatalf("cache hit = %v, want pointer to true", record.Cache.Hit)
+	}
+	if record.HTTP.ProviderProcessingMS == nil || *record.HTTP.ProviderProcessingMS != 17 {
+		t.Fatalf("provider processing ms = %v, want 17", record.HTTP.ProviderProcessingMS)
 	}
 	if _, ok := record.Timeline.EventsNS[whatttft.EventDone]; !ok {
 		t.Fatal("done_event should be recorded")

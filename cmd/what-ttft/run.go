@@ -208,13 +208,15 @@ func printRunSummary(output io.Writer, cfg runCLIConfig, result *whatttft.RunRes
 		cfg.cacheMode,
 		cfg.connectionMode,
 	)
-	writeLine(output, "metric                p50      p95      p99      mean")
+	writeLine(output, "metric                                      p50      p95      p99      mean")
 
 	var metrics whatttft.MetricDistributions
 	if len(result.Summary.Groups) > 0 {
 		metrics = result.Summary.Groups[0].Metrics
 	}
 	printMetricLine(output, "http_ttfb_ms", metrics.HTTPTTFBMS)
+	printMetricLine(output, "provider_processing_ms", metrics.ProviderProcessingMS)
+	printMetricLine(output, "server_wait_minus_provider_processing_ms", metrics.ServerWaitMinusProviderProcessingMS)
 	printMetricLine(output, "ttft_delta_ms", metrics.TTFTDeltaMS)
 	printMetricLine(output, "e2e_delta_ms", metrics.E2EDeltaMS)
 }
@@ -222,7 +224,7 @@ func printRunSummary(output io.Writer, cfg runCLIConfig, result *whatttft.RunRes
 func printMetricLine(output io.Writer, name string, distribution whatttft.Distribution) {
 	writeFormatted(
 		output,
-		"%-20s %-8s %-8s %-8s %-8s\n",
+		"%-42s %-8s %-8s %-8s %-8s\n",
 		name,
 		formatCLIOptionalFloat(distribution.P50),
 		formatCLIOptionalFloat(distribution.P95),

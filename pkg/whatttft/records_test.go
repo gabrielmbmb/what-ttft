@@ -10,6 +10,7 @@ import (
 func TestRequestRecordJSONShape(t *testing.T) {
 	promptTokens := 12
 	cacheHit := false
+	providerProcessingMS := 42.0
 	ttfbMS := 123.45
 
 	rec := RequestRecord{
@@ -28,14 +29,15 @@ func TestRequestRecordJSONShape(t *testing.T) {
 			PromptCachedTokens: intPtr(0),
 		},
 		HTTP: HTTPRecord{
-			StatusCode:          200,
-			Status:              "200 OK",
-			Protocol:            "HTTP/2.0",
-			GotConn:             true,
-			ConnReused:          true,
-			ConnWasIdle:         true,
-			ConnIdleTimeNS:      15,
-			CompressionDisabled: true,
+			StatusCode:           200,
+			Status:               "200 OK",
+			Protocol:             "HTTP/2.0",
+			ProviderProcessingMS: &providerProcessingMS,
+			GotConn:              true,
+			ConnReused:           true,
+			ConnWasIdle:          true,
+			ConnIdleTimeNS:       15,
+			CompressionDisabled:  true,
 		},
 		Timeline: Timeline{
 			BaseWallUnixNano: 1700000000000000000,
@@ -78,6 +80,9 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	}
 	if got.Cache.Hit == nil || *got.Cache.Hit {
 		t.Fatalf("cache hit = %v, want pointer to false", got.Cache.Hit)
+	}
+	if got.HTTP.ProviderProcessingMS == nil || *got.HTTP.ProviderProcessingMS != providerProcessingMS {
+		t.Fatalf("provider_processing_ms = %v, want %v", got.HTTP.ProviderProcessingMS, providerProcessingMS)
 	}
 }
 

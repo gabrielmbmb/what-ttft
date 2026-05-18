@@ -7,10 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// openAIProcessingMSHeader is OpenAI's provider-reported request processing duration header.
+const openAIProcessingMSHeader = "openai-processing-ms"
 
 // StreamStep describes one scripted Server-Sent Events write by the fake OpenAI server.
 type StreamStep struct {
@@ -31,6 +35,9 @@ type OpenAIConfig struct {
 
 	// DelayBeforeHeaders is the optional duration to wait before response headers are written; zero means no delay.
 	DelayBeforeHeaders time.Duration
+
+	// OpenAIProcessingDuration is the provider-reported server processing duration emitted as the openai-processing-ms header; zero means report DelayBeforeHeaders in whole milliseconds.
+	OpenAIProcessingDuration time.Duration
 
 	// DelayBeforeFirstEvent is the optional duration to wait after headers before the first stream step; zero means no delay.
 	DelayBeforeFirstEvent time.Duration
@@ -109,6 +116,7 @@ func (s *OpenAIServer) handle(w http.ResponseWriter, r *http.Request) {
 	if s.config.DelayBeforeHeaders > 0 {
 		time.Sleep(s.config.DelayBeforeHeaders)
 	}
+	s.setOpenAIHeaders(w)
 
 	if r.URL.Path != "/chat/completions" && r.URL.Path != "/v1/chat/completions" {
 		http.NotFound(w, r)
@@ -168,6 +176,17 @@ func (s *OpenAIServer) handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(statusCode)
 	flush(w)
 	s.emitStream(w)
+}
+
+func (s *OpenAIServer) setOpenAIHeaders(w http.ResponseWriter) {
+	processingDuration := s.config.OpenAIProcessingDuration
+	if processingDuration == 0 {
+		processingDuration = s.config.DelayBeforeHeaders
+	}
+	if processingDuration < 0 {
+		processingDuration = 0
+	}
+	w.Header()[openAIProcessingMSHeader] = []string{strconv.FormatInt(processingDuration.Milliseconds(), 10)}
 }
 
 func (s *OpenAIServer) record(request OpenAIRequest) {

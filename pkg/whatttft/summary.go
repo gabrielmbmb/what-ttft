@@ -141,8 +141,14 @@ type MetricDistributions struct {
 	// GenerationDeltaMS summarizes generation_delta_ms over successful measured requests; units are milliseconds and Count zero means no values were observed.
 	GenerationDeltaMS Distribution `json:"generation_delta_ms"`
 
+	// ProviderProcessingMS summarizes provider_processing_ms over successful measured requests; units are milliseconds, values are provider-reported, and Count zero means no values were observed.
+	ProviderProcessingMS Distribution `json:"provider_processing_ms"`
+
 	// ServerWaitToFirstByteMS summarizes server_wait_to_first_byte_ms over successful measured requests; units are milliseconds and Count zero means no values were observed.
 	ServerWaitToFirstByteMS Distribution `json:"server_wait_to_first_byte_ms"`
+
+	// ServerWaitMinusProviderProcessingMS summarizes server_wait_to_first_byte_ms minus provider_processing_ms over successful measured requests; units are milliseconds, values are diagnostic residuals that can be negative when provider and client timing definitions differ, and Count zero means no values were observed.
+	ServerWaitMinusProviderProcessingMS Distribution `json:"server_wait_minus_provider_processing_ms"`
 
 	// StreamProtocolToFirstOutputMS summarizes stream_protocol_to_first_output_ms over successful measured requests; units are milliseconds and Count zero means no values were observed.
 	StreamProtocolToFirstOutputMS Distribution `json:"stream_protocol_to_first_output_ms"`
@@ -225,7 +231,9 @@ type metricValueSet struct {
 	e2eDelta                    []float64
 	streamTotal                 []float64
 	generationDelta             []float64
+	providerProcessing          []float64
 	serverWaitToFirstByte       []float64
+	serverWaitMinusProvider     []float64
 	streamProtocolToFirstOutput []float64
 	dns                         []float64
 	tcpConnect                  []float64
@@ -266,14 +274,15 @@ func (b *summaryGroupBuilder) add(record RequestRecord) {
 	}
 
 	b.group.SuccessfulRequests++
-	b.addMetrics(record.Derived)
+	b.addMetrics(record)
 	b.addUsage(record)
 	b.addCache(record.Cache)
 	b.addConnection(record.HTTP)
 	b.addWindow(record)
 }
 
-func (b *summaryGroupBuilder) addMetrics(metrics DerivedMetrics) {
+func (b *summaryGroupBuilder) addMetrics(record RequestRecord) {
+	metrics := record.Derived
 	appendMetric(&b.metrics.httpTTFB, metrics.HTTPTTFBMS)
 	appendMetric(&b.metrics.headersLatency, metrics.HeadersLatencyMS)
 	appendMetric(&b.metrics.firstEvent, metrics.FirstEventMS)
@@ -281,7 +290,9 @@ func (b *summaryGroupBuilder) addMetrics(metrics DerivedMetrics) {
 	appendMetric(&b.metrics.e2eDelta, metrics.E2EDeltaMS)
 	appendMetric(&b.metrics.streamTotal, metrics.StreamTotalMS)
 	appendMetric(&b.metrics.generationDelta, metrics.GenerationDeltaMS)
+	appendMetric(&b.metrics.providerProcessing, record.HTTP.ProviderProcessingMS)
 	appendMetric(&b.metrics.serverWaitToFirstByte, metrics.ServerWaitToFirstByteMS)
+	appendServerWaitResidual(&b.metrics.serverWaitMinusProvider, metrics.ServerWaitToFirstByteMS, record.HTTP.ProviderProcessingMS)
 	appendMetric(&b.metrics.streamProtocolToFirstOutput, metrics.StreamProtocolToFirstOutputMS)
 	appendMetric(&b.metrics.dns, metrics.DNSMS)
 	appendMetric(&b.metrics.tcpConnect, metrics.TCPConnectMS)
@@ -335,20 +346,22 @@ func (b *summaryGroupBuilder) addWindow(record RequestRecord) {
 
 func (b *summaryGroupBuilder) build() SummaryGroup {
 	b.group.Metrics = MetricDistributions{
-		HTTPTTFBMS:                    summarizeValues(b.metrics.httpTTFB),
-		HeadersLatencyMS:              summarizeValues(b.metrics.headersLatency),
-		FirstEventMS:                  summarizeValues(b.metrics.firstEvent),
-		TTFTDeltaMS:                   summarizeValues(b.metrics.ttftDelta),
-		E2EDeltaMS:                    summarizeValues(b.metrics.e2eDelta),
-		StreamTotalMS:                 summarizeValues(b.metrics.streamTotal),
-		GenerationDeltaMS:             summarizeValues(b.metrics.generationDelta),
-		ServerWaitToFirstByteMS:       summarizeValues(b.metrics.serverWaitToFirstByte),
-		StreamProtocolToFirstOutputMS: summarizeValues(b.metrics.streamProtocolToFirstOutput),
-		DNSMS:                         summarizeValues(b.metrics.dns),
-		TCPConnectMS:                  summarizeValues(b.metrics.tcpConnect),
-		TLSMS:                         summarizeValues(b.metrics.tls),
-		RequestWriteMS:                summarizeValues(b.metrics.requestWrite),
-		E2EOutputTPS:                  summarizeValues(b.metrics.e2eOutputTPS),
+		HTTPTTFBMS:                          summarizeValues(b.metrics.httpTTFB),
+		HeadersLatencyMS:                    summarizeValues(b.metrics.headersLatency),
+		FirstEventMS:                        summarizeValues(b.metrics.firstEvent),
+		TTFTDeltaMS:                         summarizeValues(b.metrics.ttftDelta),
+		E2EDeltaMS:                          summarizeValues(b.metrics.e2eDelta),
+		StreamTotalMS:                       summarizeValues(b.metrics.streamTotal),
+		GenerationDeltaMS:                   summarizeValues(b.metrics.generationDelta),
+		ProviderProcessingMS:                summarizeValues(b.metrics.providerProcessing),
+		ServerWaitToFirstByteMS:             summarizeValues(b.metrics.serverWaitToFirstByte),
+		ServerWaitMinusProviderProcessingMS: summarizeValues(b.metrics.serverWaitMinusProvider),
+		StreamProtocolToFirstOutputMS:       summarizeValues(b.metrics.streamProtocolToFirstOutput),
+		DNSMS:                               summarizeValues(b.metrics.dns),
+		TCPConnectMS:                        summarizeValues(b.metrics.tcpConnect),
+		TLSMS:                               summarizeValues(b.metrics.tls),
+		RequestWriteMS:                      summarizeValues(b.metrics.requestWrite),
+		E2EOutputTPS:                        summarizeValues(b.metrics.e2eOutputTPS),
 	}
 	b.group.Cache.CachedPromptTokens = summarizeValues(b.cachedPromptTokens)
 	b.group.CompletionTokenRecords = b.completionTokenCount
@@ -429,6 +442,14 @@ func appendMetric(values *[]float64, value *float64) {
 	if value != nil {
 		*values = append(*values, *value)
 	}
+}
+
+func appendServerWaitResidual(values *[]float64, serverWaitMS *float64, providerProcessingMS *float64) {
+	if serverWaitMS == nil || providerProcessingMS == nil {
+		return
+	}
+
+	*values = append(*values, *serverWaitMS-*providerProcessingMS)
 }
 
 func incrementStringMap(counts *map[string]int, key string) {

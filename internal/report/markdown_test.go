@@ -46,6 +46,8 @@ func TestMarkdownSummaryIncludesKeyMetricNames(t *testing.T) {
 		"| metric | count | mean | p50 | p95 | p99 | max |",
 		"ttft_delta_ms",
 		"http_ttfb_ms",
+		"provider_processing_ms",
+		"server_wait_minus_provider_processing_ms",
 		"e2e_delta_ms",
 		"system_tps: 100.000",
 		"rps: 90.000",

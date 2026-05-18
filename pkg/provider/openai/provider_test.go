@@ -54,6 +54,7 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 		}
 		requestCh <- reqBody
 
+		w.Header().Set(openAIProcessingMSHeader, "42")
 		w.Header().Set("Content-Type", "text/event-stream")
 		writeRaw(t, w, ": heartbeat\n\n")
 		writeSSE(t, w, "")
@@ -162,6 +163,39 @@ func TestProviderStreamChatMalformedJSON(t *testing.T) {
 	}
 	if obs.eventCount(whatttft.EventBodyEOF) != 0 {
 		t.Fatal("body_eof should not be marked for malformed JSON")
+	}
+}
+
+// TestParseOpenAIProcessingMS verifies OpenAI processing headers are parsed conservatively.
+func TestParseOpenAIProcessingMS(t *testing.T) {
+	tests := map[string]struct {
+		header string
+		want   float64
+		ok     bool
+	}{
+		"integer milliseconds": {header: "42", want: 42, ok: true},
+		"decimal milliseconds": {header: "42.5", want: 42.5, ok: true},
+		"missing":              {header: "", ok: false},
+		"negative":             {header: "-1", ok: false},
+		"nan":                  {header: "NaN", ok: false},
+		"invalid":              {header: "slow", ok: false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			header := http.Header{}
+			if tc.header != "" {
+				header.Set(openAIProcessingMSHeader, tc.header)
+			}
+
+			got, ok := parseOpenAIProcessingMS(header)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if got != tc.want {
+				t.Fatalf("processing ms = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -324,8 +358,12 @@ func assertSuccessfulObservation(t *testing.T, obs *testObserver) {
 	if !finishEvents[1].Terminal {
 		t.Fatalf("second finish event = %#v, want terminal", finishEvents[1])
 	}
-	if obs.latestHTTP().StatusCode != http.StatusOK {
-		t.Fatalf("observed HTTP status = %d, want 200", obs.latestHTTP().StatusCode)
+	httpRecord := obs.latestHTTP()
+	if httpRecord.StatusCode != http.StatusOK {
+		t.Fatalf("observed HTTP status = %d, want 200", httpRecord.StatusCode)
+	}
+	if httpRecord.ProviderProcessingMS == nil || *httpRecord.ProviderProcessingMS != 42 {
+		t.Fatalf("provider processing ms = %v, want 42", httpRecord.ProviderProcessingMS)
 	}
 }
 

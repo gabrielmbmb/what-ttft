@@ -98,13 +98,21 @@ func TestCaptureRecordsTLSVersion(t *testing.T) {
 func TestCaptureRecordReturnsCopy(t *testing.T) {
 	capture := NewCapture(CaptureConfig{})
 	capture.ObserveResponse(&http.Response{StatusCode: http.StatusAccepted, Status: "202 Accepted", Proto: "HTTP/1.1"})
+	capture.ObserveProviderProcessingMS(42)
 
 	snapshot := capture.Record()
 	snapshot.StatusCode = http.StatusTeapot
+	if snapshot.ProviderProcessingMS == nil {
+		t.Fatal("snapshot provider processing ms should be populated")
+	}
+	*snapshot.ProviderProcessingMS = 99
 
 	fresh := capture.Record()
 	if fresh.StatusCode != http.StatusAccepted {
 		t.Fatalf("fresh status = %d, want %d", fresh.StatusCode, http.StatusAccepted)
+	}
+	if fresh.ProviderProcessingMS == nil || *fresh.ProviderProcessingMS != 42 {
+		t.Fatalf("fresh provider processing ms = %v, want 42", fresh.ProviderProcessingMS)
 	}
 }
 

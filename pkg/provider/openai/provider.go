@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gabrielmbmb/what-ttft/internal/httptracecap"
@@ -16,10 +18,20 @@ import (
 )
 
 const (
+	// maxErrorBodyBytes bounds non-2xx response bodies included in APIError diagnostics.
 	maxErrorBodyBytes = 64 * 1024
-	providerName      = "openai"
+
+	// providerName is the normalized provider identifier emitted in request records.
+	providerName = "openai"
+
+	// streamProtocolSSE identifies data-only Server-Sent Events streams.
 	streamProtocolSSE = "sse"
-	textModality      = "text"
+
+	// textModality identifies user-visible text output deltas.
+	textModality = "text"
+
+	// openAIProcessingMSHeader is OpenAI's provider-reported request processing duration header.
+	openAIProcessingMSHeader = "openai-processing-ms"
 )
 
 // Provider streams OpenAI-compatible Chat Completions requests over direct HTTP.
@@ -128,6 +140,9 @@ func (p *Provider) StreamChat(ctx context.Context, req whatttft.ProviderRequest,
 
 	obs.Mark(whatttft.EventHeadersReceived)
 	capture.ObserveResponse(resp)
+	if processingMS, ok := parseOpenAIProcessingMS(resp.Header); ok {
+		capture.ObserveProviderProcessingMS(processingMS)
+	}
 	obs.OnHTTP(capture.Record())
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
@@ -299,6 +314,20 @@ func (p *Provider) readStream(resp *http.Response, requestID string, obs whatttf
 			}
 		}
 	}
+}
+
+func parseOpenAIProcessingMS(header http.Header) (float64, bool) {
+	value := strings.TrimSpace(header.Get(openAIProcessingMSHeader))
+	if value == "" {
+		return 0, false
+	}
+
+	processingMS, err := strconv.ParseFloat(value, 64)
+	if err != nil || processingMS < 0 || math.IsNaN(processingMS) || math.IsInf(processingMS, 0) {
+		return 0, false
+	}
+
+	return processingMS, true
 }
 
 func normalizeUsage(raw *usage) whatttft.ProviderUsage {

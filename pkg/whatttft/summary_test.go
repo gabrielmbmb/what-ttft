@@ -8,9 +8,10 @@ import (
 
 // TestSummarizeExcludesWarmupAndAggregatesMeasuredRequests verifies counts and metrics ignore warmup records by default.
 func TestSummarizeExcludesWarmupAndAggregatesMeasuredRequests(t *testing.T) {
+	providerProcessingMS := 3.0
 	records := []RequestRecord{
 		summaryRecord(summaryRecordConfig{warmup: true, cacheMode: CacheBust, ttftMS: 999, completionTokens: 100}),
-		summaryRecord(summaryRecordConfig{cacheMode: CacheBust, ttftMS: 10, completionTokens: 10, cachedTokens: summaryIntPointer(0), protocol: "HTTP/2.0", reused: true, bodyEOFMS: 100}),
+		summaryRecord(summaryRecordConfig{cacheMode: CacheBust, ttftMS: 10, completionTokens: 10, cachedTokens: summaryIntPointer(0), providerProcessingMS: &providerProcessingMS, protocol: "HTTP/2.0", reused: true, bodyEOFMS: 100}),
 		summaryErrorRecord(CacheBust, "http_status", httpStatusTooManyRequests),
 	}
 
@@ -46,6 +47,8 @@ func TestSummarizeExcludesWarmupAndAggregatesMeasuredRequests(t *testing.T) {
 		t.Fatalf("group counts = measured %d successful %d errors %d", group.MeasuredRequests, group.SuccessfulRequests, group.ErrorRequests)
 	}
 	assertSummaryDistribution(t, "ttft_delta_ms", group.Metrics.TTFTDeltaMS, 1, 10)
+	assertSummaryDistribution(t, "provider_processing_ms", group.Metrics.ProviderProcessingMS, 1, 3)
+	assertSummaryDistribution(t, "server_wait_minus_provider_processing_ms", group.Metrics.ServerWaitMinusProviderProcessingMS, 1, 2)
 	if group.Metrics.TTFTDeltaMS.P50 != nil && *group.Metrics.TTFTDeltaMS.P50 == 999 {
 		t.Fatal("warmup TTFT leaked into measured distribution")
 	}
@@ -117,14 +120,15 @@ func TestSummarizeRequiresCompleteSystemThroughputData(t *testing.T) {
 const httpStatusTooManyRequests = 429
 
 type summaryRecordConfig struct {
-	warmup           bool
-	cacheMode        CacheMode
-	ttftMS           float64
-	completionTokens int
-	cachedTokens     *int
-	protocol         string
-	reused           bool
-	bodyEOFMS        float64
+	warmup               bool
+	cacheMode            CacheMode
+	ttftMS               float64
+	completionTokens     int
+	cachedTokens         *int
+	providerProcessingMS *float64
+	protocol             string
+	reused               bool
+	bodyEOFMS            float64
 }
 
 func summaryRecord(cfg summaryRecordConfig) RequestRecord {
@@ -151,9 +155,10 @@ func summaryRecord(cfg summaryRecordConfig) RequestRecord {
 			PromptCachedTokens: cfg.cachedTokens,
 		},
 		HTTP: HTTPRecord{
-			StatusCode: 200,
-			Protocol:   cfg.protocol,
-			ConnReused: cfg.reused,
+			StatusCode:           200,
+			Protocol:             cfg.protocol,
+			ProviderProcessingMS: cfg.providerProcessingMS,
+			ConnReused:           cfg.reused,
 		},
 		Timeline: Timeline{
 			BaseWallUnixNano: int64(time.Second),

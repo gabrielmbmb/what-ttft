@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptrace"
 	"sync"
@@ -133,12 +134,28 @@ func (c *Capture) ObserveResponse(resp *http.Response) {
 	})
 }
 
+// ObserveProviderProcessingMS records a provider-reported server-side processing duration from response metadata.
+func (c *Capture) ObserveProviderProcessingMS(processingMS float64) {
+	if processingMS < 0 || math.IsNaN(processingMS) || math.IsInf(processingMS, 0) {
+		return
+	}
+
+	c.update(func(record *whatttft.HTTPRecord) {
+		record.ProviderProcessingMS = float64Pointer(processingMS)
+	})
+}
+
 // Record returns a concurrency-safe snapshot of the captured HTTP metadata.
 func (c *Capture) Record() whatttft.HTTPRecord {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.record
+	record := c.record
+	if c.record.ProviderProcessingMS != nil {
+		record.ProviderProcessingMS = float64Pointer(*c.record.ProviderProcessingMS)
+	}
+
+	return record
 }
 
 func (c *Capture) update(update func(*whatttft.HTTPRecord)) {
@@ -152,6 +169,10 @@ func mark(rec Marker, name whatttft.EventName) {
 	if rec != nil {
 		rec.Mark(name)
 	}
+}
+
+func float64Pointer(value float64) *float64 {
+	return &value
 }
 
 func tlsVersionString(version uint16) string {

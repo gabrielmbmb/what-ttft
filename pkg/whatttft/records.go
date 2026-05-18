@@ -108,7 +108,7 @@ type CacheRecord struct {
 	Extra map[string]any `json:"extra,omitempty"`
 }
 
-// HTTPRecord is normalized client-observed HTTP transport metadata for one provider request.
+// HTTPRecord is normalized HTTP response, transport, and response-header metadata for one provider request.
 type HTTPRecord struct {
 	// StatusCode is the HTTP response status code observed after headers arrive; zero means no response status was available.
 	StatusCode int `json:"status_code"`
@@ -118,6 +118,9 @@ type HTTPRecord struct {
 
 	// Protocol is the HTTP protocol negotiated for the response, such as "HTTP/2.0"; empty means it was not observed.
 	Protocol string `json:"protocol,omitempty"`
+
+	// ProviderProcessingMS is the provider-reported server-side request processing duration parsed from response metadata such as openai-processing-ms; units are milliseconds, nil means unavailable or unparseable, and values are provider-reported rather than client-observed.
+	ProviderProcessingMS *float64 `json:"provider_processing_ms,omitempty"`
 
 	// Network is the network name reported by httptrace ConnectStart, such as "tcp"; empty means connection setup was not observed.
 	Network string `json:"network,omitempty"`
