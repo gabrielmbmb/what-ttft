@@ -1350,7 +1350,7 @@ Definition of done:
 
 ---
 
-### [ ] 15. Add optional real OpenAI integration test
+### [x] 15. Add optional real OpenAI integration test
 
 Add an opt-in integration test that can be run manually.
 
@@ -1378,6 +1378,13 @@ OPENAI_API_KEY=... \
 WHAT_TTFT_OPENAI_MODEL=gpt-5.5 \
 go test ./pkg/provider/openai -run Integration -count=1
 ```
+
+Implemented details:
+
+- Added `TestIntegrationOpenAIStreaming` under `pkg/provider/openai`, skipped unless `WHAT_TTFT_INTEGRATION=1` and `OPENAI_API_KEY` are set.
+- Uses a configurable model via `WHAT_TTFT_OPENAI_MODEL`, defaulting to `gpt-5.5`, and an optional `WHAT_TTFT_OPENAI_BASE_URL` override.
+- Runs one measured streaming request through the shared runner with `reasoning_effort=none`, cache-bust prompt planning, and no warmup.
+- Asserts the request succeeds, `first_output_delta` and `body_eof` are present, and any returned token counts are non-negative without logging the API key.
 
 Definition of done:
 
