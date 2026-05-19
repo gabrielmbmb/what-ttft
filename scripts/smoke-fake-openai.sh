@@ -39,11 +39,10 @@ func main() {
 		DelayBetweenSteps:       2 * time.Millisecond,
 		Steps: []testserver.StreamStep{
 			{Comment: "smoke heartbeat"},
-			{Data: `{"choices":[{"delta":{"role":"assistant"}}]}`},
-			{Data: `{"choices":[{"delta":{"content":"Hello"}}]}`},
-			{Data: `{"choices":[{"delta":{"content":" smoke"},"finish_reason":"stop"}]}`},
-			{Data: `{"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6,"prompt_tokens_details":{"cached_tokens":0}}}`},
-			{Data: "[DONE]"},
+			{Data: `{"type":"response.created","response":{"status":"in_progress","service_tier":"default"}}`},
+			{Data: `{"type":"response.output_text.delta","delta":"Hello"}`},
+			{Data: `{"type":"response.output_text.delta","delta":" smoke"}`},
+			{Data: `{"type":"response.completed","response":{"status":"completed","service_tier":"default","usage":{"input_tokens":4,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":6}}}`},
 		},
 	})
 	defer server.Close()
@@ -102,7 +101,8 @@ SERVER_URL="$(head -n 1 "$SERVER_URL_FILE")"
   --cache-mode cache-reuse \
   --connection-mode warm \
   --reasoning-effort none \
-  --max-output-tokens 8 \
+  --service-tier default \
+  --max-output-tokens 16 \
   --timeout 10s \
   --out "$OUT_DIR" \
   --save-chunks=true \

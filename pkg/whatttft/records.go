@@ -26,6 +26,12 @@ type RequestRecord struct {
 	// ConnectionMode is the requested HTTP connection reuse behavior for this request; summaries must not mix different connection modes.
 	ConnectionMode ConnectionMode `json:"connection_mode"`
 
+	// RequestedServiceTier is the provider service tier requested for this request, such as OpenAI auto, default, flex, scale, or priority; empty means no tier was requested and the value is not secret.
+	RequestedServiceTier string `json:"requested_service_tier,omitempty"`
+
+	// ObservedServiceTier is the provider-reported actual service tier used for this request; empty means the provider did not report it and the value is not secret.
+	ObservedServiceTier string `json:"observed_service_tier,omitempty"`
+
 	// PromptHash is the SHA-256 hex digest of the final prompt after cache-mode mutation; it is used instead of storing prompt text in request records.
 	PromptHash string `json:"prompt_hash"`
 
@@ -121,6 +127,12 @@ type HTTPRecord struct {
 
 	// ProviderProcessingMS is the provider-reported server-side request processing duration parsed from response metadata such as openai-processing-ms; units are milliseconds, nil means unavailable or unparseable, and values are provider-reported rather than client-observed.
 	ProviderProcessingMS *float64 `json:"provider_processing_ms,omitempty"`
+
+	// RequestedServiceTier is the provider service tier requested for this HTTP request; empty means unset, values are provider labels such as OpenAI default or priority, and no redaction is required.
+	RequestedServiceTier string `json:"requested_service_tier,omitempty"`
+
+	// ObservedServiceTier is the provider-reported actual service tier for this HTTP response or stream; empty means unavailable and no redaction is required.
+	ObservedServiceTier string `json:"observed_service_tier,omitempty"`
 
 	// Network is the network name reported by httptrace ConnectStart, such as "tcp"; empty means connection setup was not observed.
 	Network string `json:"network,omitempty"`

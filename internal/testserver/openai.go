@@ -28,7 +28,7 @@ type StreamStep struct {
 	Comment string
 }
 
-// OpenAIConfig configures a deterministic fake OpenAI-compatible Chat Completions server.
+// OpenAIConfig configures a deterministic fake OpenAI-compatible streaming server.
 type OpenAIConfig struct {
 	// Steps is the scripted SSE stream emitted for successful requests; nil or empty means the response body ends without events.
 	Steps []StreamStep
@@ -66,6 +66,9 @@ type OpenAIRequest struct {
 	// Stream is the stream flag decoded from the JSON request body; false means omitted, false, or undecodable.
 	Stream bool
 
+	// ServiceTier is the service_tier decoded from the JSON request body; empty means omitted or undecodable.
+	ServiceTier string
+
 	// AuthorizationPresent is true when the request included any Authorization header value; false means it was missing.
 	AuthorizationPresent bool
 
@@ -73,7 +76,7 @@ type OpenAIRequest struct {
 	RawBody []byte
 }
 
-// OpenAIServer is a deterministic fake OpenAI-compatible Chat Completions server.
+// OpenAIServer is a deterministic fake OpenAI-compatible streaming server.
 type OpenAIServer struct {
 	server   *httptest.Server
 	config   OpenAIConfig
@@ -81,7 +84,7 @@ type OpenAIServer struct {
 	requests []OpenAIRequest
 }
 
-// NewOpenAIServer starts a fake OpenAI-compatible Chat Completions server.
+// NewOpenAIServer starts a fake OpenAI-compatible streaming server.
 func NewOpenAIServer(config OpenAIConfig) *OpenAIServer {
 	fake := &OpenAIServer{config: config}
 	fake.server = httptest.NewServer(http.HandlerFunc(fake.handle))
@@ -118,7 +121,7 @@ func (s *OpenAIServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setOpenAIHeaders(w)
 
-	if r.URL.Path != "/chat/completions" && r.URL.Path != "/v1/chat/completions" {
+	if r.URL.Path != "/chat/completions" && r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/responses" && r.URL.Path != "/v1/responses" {
 		http.NotFound(w, r)
 		return
 	}
@@ -133,8 +136,9 @@ func (s *OpenAIServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestBody := struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
+		Model       string `json:"model"`
+		Stream      bool   `json:"stream"`
+		ServiceTier string `json:"service_tier"`
 	}{}
 	if err := json.Unmarshal(rawBody, &requestBody); err != nil {
 		http.Error(w, "decode request body", http.StatusBadRequest)
@@ -145,6 +149,7 @@ func (s *OpenAIServer) handle(w http.ResponseWriter, r *http.Request) {
 		Path:                 r.URL.Path,
 		Model:                requestBody.Model,
 		Stream:               requestBody.Stream,
+		ServiceTier:          requestBody.ServiceTier,
 		AuthorizationPresent: r.Header.Get("Authorization") != "",
 		RawBody:              append([]byte(nil), rawBody...),
 	}
@@ -235,7 +240,7 @@ func emitStep(w http.ResponseWriter, step StreamStep) {
 }
 
 func isContentStep(step StreamStep) bool {
-	return strings.Contains(step.Data, `"content"`)
+	return strings.Contains(step.Data, `"content"`) || strings.Contains(step.Data, `"response.output_text.delta"`) || strings.Contains(step.Data, `"response.refusal.delta"`)
 }
 
 func flush(w http.ResponseWriter) {

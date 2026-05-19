@@ -81,6 +81,12 @@ type SummaryGroup struct {
 	// ConnectionMode is the requested HTTP connection reuse behavior for this group; groups never mix connection modes.
 	ConnectionMode ConnectionMode `json:"connection_mode"`
 
+	// RequestedServiceTier is the provider service tier requested for this group; groups never mix different requested service tiers and empty means unset.
+	RequestedServiceTier string `json:"requested_service_tier,omitempty"`
+
+	// ObservedServiceTierCounts maps provider-reported actual service tier labels to successful measured request counts; nil means no tiers were reported.
+	ObservedServiceTierCounts map[string]int `json:"observed_service_tier_counts,omitempty"`
+
 	// MeasuredRequests is the count of measured requests in this group; units are requests and warmups are excluded.
 	MeasuredRequests int `json:"measured_requests"`
 
@@ -255,12 +261,13 @@ type summaryGroupBuilder struct {
 
 func newSummaryGroupBuilder(record RequestRecord) *summaryGroupBuilder {
 	return &summaryGroupBuilder{group: SummaryGroup{
-		Provider:       record.Provider,
-		Model:          record.Model,
-		ScenarioName:   record.ScenarioName,
-		CacheMode:      record.CacheMode,
-		ConnectionMode: record.ConnectionMode,
-		Cache:          CacheSummary{CacheMode: record.CacheMode},
+		Provider:             record.Provider,
+		Model:                record.Model,
+		ScenarioName:         record.ScenarioName,
+		CacheMode:            record.CacheMode,
+		ConnectionMode:       record.ConnectionMode,
+		RequestedServiceTier: record.RequestedServiceTier,
+		Cache:                CacheSummary{CacheMode: record.CacheMode},
 	}}
 }
 
@@ -278,6 +285,7 @@ func (b *summaryGroupBuilder) add(record RequestRecord) {
 	b.addUsage(record)
 	b.addCache(record.Cache)
 	b.addConnection(record.HTTP)
+	b.addServiceTier(record)
 	b.addWindow(record)
 }
 
@@ -327,6 +335,12 @@ func (b *summaryGroupBuilder) addConnection(record HTTPRecord) {
 	}
 	if record.Protocol != "" {
 		incrementStringMap(&b.group.Connection.ProtocolCounts, record.Protocol)
+	}
+}
+
+func (b *summaryGroupBuilder) addServiceTier(record RequestRecord) {
+	if record.ObservedServiceTier != "" {
+		incrementStringMap(&b.group.ObservedServiceTierCounts, record.ObservedServiceTier)
 	}
 }
 
@@ -479,7 +493,7 @@ func errorStatusCode(record RequestRecord) int {
 }
 
 func groupKey(record RequestRecord) string {
-	return record.Provider + "\x00" + record.Model + "\x00" + record.ScenarioName + "\x00" + string(record.CacheMode) + "\x00" + string(record.ConnectionMode)
+	return record.Provider + "\x00" + record.Model + "\x00" + record.ScenarioName + "\x00" + string(record.CacheMode) + "\x00" + string(record.ConnectionMode) + "\x00" + record.RequestedServiceTier
 }
 
 func responseWindowEndpoints(record RequestRecord) (int64, int64, bool) {

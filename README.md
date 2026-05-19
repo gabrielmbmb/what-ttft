@@ -1,6 +1,6 @@
 # what-ttft
 
-`what-ttft` measures user-visible latency for OpenAI-compatible streaming Chat Completions endpoints. It is designed for answering practical questions like:
+`what-ttft` measures user-visible latency for OpenAI-compatible streaming endpoints. For the OpenAI provider, the default API is the Responses API (`/v1/responses`); Chat Completions remains available as an explicit compatibility mode for endpoints that do not support Responses. It is designed for answering practical questions like:
 
 - How long until the first response byte arrives?
 - How long until the first visible model output appears?
@@ -71,6 +71,7 @@ what-ttft run \
   --cache-mode cache-bust \
   --connection-mode warm \
   --reasoning-effort none \
+  --service-tier default \
   --max-output-tokens 64 \
   --out runs/openai-gpt-5.5-short-cache-bust
 ```
@@ -81,12 +82,25 @@ If you are running from source, replace `what-ttft run` with:
 go run ./cmd/what-ttft run
 ```
 
-For OpenAI-compatible providers, set `--base-url` to the provider API base URL.
+For OpenAI-compatible providers, set `--base-url` to the provider API base URL. If the endpoint only supports Chat Completions, add `--openai-api chat-completions`:
+
+```sh
+what-ttft run \
+  --provider openai \
+  --openai-api chat-completions \
+  --base-url https://provider.example/v1 \
+  --api-key-env PROVIDER_API_KEY \
+  --model provider-model \
+  --prompt "Say hello." \
+  --samples 10 \
+  --warmup 1
+```
 
 ## Common options
 
 ```text
 --provider openai
+--openai-api responses|chat-completions
 --base-url URL
 --api-key-env ENV
 --api-key KEY
@@ -99,6 +113,7 @@ For OpenAI-compatible providers, set `--base-url` to the provider API base URL.
 --cache-mode cache-bust|cache-reuse|provider-explicit-cache|unknown
 --connection-mode warm|cold
 --reasoning-effort none|minimal|low|medium|high|xhigh
+--service-tier auto|default|flex|scale|priority
 --max-output-tokens N
 --temperature FLOAT
 --top-p FLOAT
@@ -115,6 +130,7 @@ Notes:
 - Prefer `--api-key-env` over `--api-key` so secrets do not appear in shell history.
 - Some reasoning models do not support `--temperature 0`; omit temperature unless the model supports the value you choose.
 - Use `--reasoning-effort none` where supported to avoid spending latency and tokens on hidden reasoning.
+- Use `--service-tier` to request an OpenAI processing tier (`auto`, `default`, `flex`, `scale`, or `priority`). Do not compare different requested or observed service tiers as if they were the same traffic shape.
 - The tool refuses to write into a non-empty `--out` directory unless `--overwrite` is set.
 - `--save-chunks` writes generated content to `chunks.jsonl`; leave it off when output text may be sensitive.
 
@@ -129,7 +145,7 @@ For every request, `what-ttft` records client-observed events such as:
 - Last non-empty user-visible output delta.
 - Provider stream terminator, such as `[DONE]`.
 - Response body EOF.
-- Provider-reported token usage and prompt-cache counters when available.
+- Provider-reported token usage, prompt-cache counters, and OpenAI service tier metadata when available.
 
 Important metrics:
 
@@ -144,9 +160,11 @@ Important metrics:
 | `generation_delta_ms` | Time between first and last visible output deltas. |
 | `server_wait_to_first_byte_ms` | Time from request write completion to first response byte. |
 | `stream_protocol_to_first_output_ms` | Time from first response byte to first visible output delta. |
-| `e2e_output_tps` | Provider-reported completion tokens divided by E2E seconds, when usage is available. |
+| `e2e_output_tps` | Provider-reported output/completion tokens divided by E2E seconds, when usage is available. For Responses reasoning models, provider output tokens may include hidden reasoning tokens. |
 
-`what-ttft` does not count empty chunks, role-only chunks, usage chunks, comments, heartbeats, or `[DONE]` as TTFT.
+For OpenAI Responses streams, TTFT is driven by the first non-empty `response.output_text.delta` or visible refusal delta, not by metadata events such as `response.created`, `response.in_progress`, tool events, reasoning events, or empty content-part events.
+
+`what-ttft` does not count empty chunks, role-only chunks, usage chunks, comments, heartbeats, metadata events, reasoning/tool events, or `[DONE]` as TTFT.
 
 ## Client-side limits
 
@@ -166,7 +184,7 @@ summary.json      aggregate summaries over successful measured requests
 summary.md        human-readable metric table
 ```
 
-`requests.jsonl` is the most useful file for detailed investigation. It contains raw timelines, HTTP trace metadata, derived metrics, usage fields, cache fields, and errors for each request.
+`requests.jsonl` is the most useful file for detailed investigation. It contains raw timelines, HTTP trace metadata, derived metrics, usage fields, cache fields, requested/observed service tier fields, and errors for each request.
 
 `summary.md` is the quickest way to compare p50, p95, p99, mean, and max values for the main metrics.
 

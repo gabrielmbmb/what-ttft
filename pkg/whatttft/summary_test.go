@@ -75,6 +75,30 @@ func TestSummarizeExcludesWarmupAndAggregatesMeasuredRequests(t *testing.T) {
 	}
 }
 
+// TestSummarizeSeparatesServiceTiers verifies different requested provider service tiers are never combined.
+func TestSummarizeSeparatesServiceTiers(t *testing.T) {
+	summary := Summarize([]RequestRecord{
+		summaryRecord(summaryRecordConfig{cacheMode: CacheBust, serviceTier: "default", observedServiceTier: "default", ttftMS: 10, completionTokens: 1, bodyEOFMS: 50}),
+		summaryRecord(summaryRecordConfig{cacheMode: CacheBust, serviceTier: "priority", observedServiceTier: "priority", ttftMS: 20, completionTokens: 1, bodyEOFMS: 50}),
+	})
+
+	if len(summary.Groups) != 2 {
+		t.Fatalf("group count = %d, want 2", len(summary.Groups))
+	}
+	if summary.Groups[0].RequestedServiceTier != "default" {
+		t.Fatalf("first group service tier = %q, want default", summary.Groups[0].RequestedServiceTier)
+	}
+	if summary.Groups[1].RequestedServiceTier != "priority" {
+		t.Fatalf("second group service tier = %q, want priority", summary.Groups[1].RequestedServiceTier)
+	}
+	if summary.Groups[0].ObservedServiceTierCounts["default"] != 1 {
+		t.Fatalf("observed default tiers = %#v", summary.Groups[0].ObservedServiceTierCounts)
+	}
+	if summary.Groups[1].ObservedServiceTierCounts["priority"] != 1 {
+		t.Fatalf("observed priority tiers = %#v", summary.Groups[1].ObservedServiceTierCounts)
+	}
+}
+
 // TestSummarizeSeparatesCacheModes verifies mixed cache modes are never combined into one metric group.
 func TestSummarizeSeparatesCacheModes(t *testing.T) {
 	summary := Summarize([]RequestRecord{
@@ -129,6 +153,8 @@ type summaryRecordConfig struct {
 	protocol             string
 	reused               bool
 	bodyEOFMS            float64
+	serviceTier          string
+	observedServiceTier  string
 }
 
 func summaryRecord(cfg summaryRecordConfig) RequestRecord {
@@ -143,14 +169,16 @@ func summaryRecord(cfg summaryRecordConfig) RequestRecord {
 	completionTokens := cfg.completionTokens
 
 	return RequestRecord{
-		RequestID:        "req-summary",
-		Provider:         "provider",
-		Model:            "model",
-		ScenarioName:     "scenario",
-		Warmup:           cfg.warmup,
-		CacheMode:        cfg.cacheMode,
-		ConnectionMode:   WarmConnections,
-		CompletionTokens: &completionTokens,
+		RequestID:            "req-summary",
+		Provider:             "provider",
+		Model:                "model",
+		ScenarioName:         "scenario",
+		Warmup:               cfg.warmup,
+		CacheMode:            cfg.cacheMode,
+		ConnectionMode:       WarmConnections,
+		RequestedServiceTier: cfg.serviceTier,
+		ObservedServiceTier:  cfg.observedServiceTier,
+		CompletionTokens:     &completionTokens,
 		Cache: CacheRecord{
 			PromptCachedTokens: cfg.cachedTokens,
 		},
@@ -158,6 +186,8 @@ func summaryRecord(cfg summaryRecordConfig) RequestRecord {
 			StatusCode:           200,
 			Protocol:             cfg.protocol,
 			ProviderProcessingMS: cfg.providerProcessingMS,
+			RequestedServiceTier: cfg.serviceTier,
+			ObservedServiceTier:  cfg.observedServiceTier,
 			ConnReused:           cfg.reused,
 		},
 		Timeline: Timeline{

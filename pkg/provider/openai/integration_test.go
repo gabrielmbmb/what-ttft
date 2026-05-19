@@ -9,7 +9,7 @@ import (
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
-// TestIntegrationOpenAIStreaming performs an opt-in smoke test against the real OpenAI Chat Completions API.
+// TestIntegrationOpenAIStreaming performs an opt-in smoke test against the real OpenAI Responses API by default.
 func TestIntegrationOpenAIStreaming(t *testing.T) {
 	if os.Getenv("WHAT_TTFT_INTEGRATION") != "1" {
 		t.Skip("set WHAT_TTFT_INTEGRATION=1 to run real OpenAI integration test")

@@ -1475,13 +1475,662 @@ Definition of done:
 
 ---
 
-## Future tasks after v0.1
+## v0.2 feature plan: Responses-default OpenAI, multi-model YAML benchmarks, and TPS
 
-These are intentionally outside the first version but should influence design decisions.
+The next milestone should first move the OpenAI provider to the Responses API by default, then make `what-ttft` useful for repeatable model comparisons without compromising the measurement discipline from v0.1.
 
-### [ ] Future: OpenAI Responses API provider
+### Research notes and adopted design decisions
 
-Implement `/v1/responses` streaming with the same timeline model. Keep output event types separate from Chat Completions chunks.
+Sources reviewed while planning v0.2:
+
+- NVIDIA NIM/GenAI-Perf metrics documentation: <https://docs.nvidia.com/nim/benchmarking/llm/latest/metrics.html>
+- Ray/Anyscale LLM latency and throughput definitions: <https://docs.anyscale.com/llm/serving/benchmarking/metrics.md>
+- YAML maintained Go package documentation: <https://pkg.go.dev/go.yaml.in/yaml/v3>
+- NVIDIA AI Perf YAML configuration examples: <https://docs.nvidia.com/aiperf/tutorials/configuration/yaml-configuration-files>
+- Local OpenAI OpenAPI spec: `openai-openapi.yaml`, especially `POST /responses`, `CreateResponse`, `ResponseStreamEvent`, `ResponseTextDeltaEvent`, `ResponseCompletedEvent`, `ResponseUsage`, and `ServiceTier`.
+
+Design decisions for this milestone:
+
+- Do the OpenAI Responses API migration first. The OpenAI provider should default to `/v1/responses` for real OpenAI targets, with Chat Completions retained as an explicit compatibility mode for OpenAI-compatible providers that only expose `/v1/chat/completions`.
+- Keep `what-ttft run` as the low-friction single-model/ad-hoc command. Add a new `what-ttft bench --config benchmark.yaml` command for declarative, repeatable, multi-model benchmarks. This avoids overloading the existing flag-heavy `run` command and gives YAML a stable schema.
+- Treat a benchmark config as a matrix of targets using a common scenario and run settings for v0.2. A target is a provider/model/API/endpoint/API-key-env tuple. The schema should be forward-compatible with multiple scenarios and provider-specific overrides, but v0.2 should avoid implementing a large matrix language before the single-scenario multi-model path is solid.
+- Use one output directory per `bench` invocation with combined `requests.jsonl`, optional combined `chunks.jsonl`, `summary.json`, and `summary.md`. Existing summary grouping by provider/model/scenario/cache/connection is a good base, but v0.2 must add a `target_id` dimension so identical model names on different base URLs, regions, or deployments are not accidentally mixed.
+- Use `go.yaml.in/yaml/v3`, not `gopkg.in/yaml.v3`, for YAML parsing. The maintained module is run by the YAML organization and supports `Decoder.KnownFields(true)`, which should be enabled so typos in benchmark configs fail fast.
+- Do not store inline API keys in YAML in v0.2. Support `api_key_env` only. This keeps `run.json` and committed benchmark configs safe by default.
+- Tokens-per-second must remain precisely named:
+  - `e2e_output_tps` already exists and means provider-reported output tokens divided by request-start-to-last-visible-delta seconds. This is user-perceived TPS including TTFT.
+  - `system_tps` already exists at summary-group level and means total successful output tokens divided by the first-successful-request to last-successful-response window.
+  - Add a new post-TTFT metric only if it is named to reflect the available evidence, e.g. `generation_delta_output_tps`. Do **not** call it `decode_tps` unless true token timestamps are available.
+  - Never label chunk cadence as token cadence. Chunk gaps can be reported separately later as `chunk_itl_ms`, but they are not token ITL/TPOT.
+- v0.2 may execute targets serially at first for implementation simplicity, but it must record target order in `run.json` and make the limitation clear. A later task can add round-robin or randomized interleaving to reduce time-of-day/provider-load bias.
+
+### [x] 18. Implement OpenAI Responses API default and immediate `service_tier` support
+
+This must be the first v0.2 implementation task. The OpenAI provider should benchmark `/v1/responses` by default because the OpenAPI spec marks Responses as the current model-response API and exposes streaming `ResponseStreamEvent` objects. Chat Completions should remain available as a compatibility mode for OpenAI-compatible providers that have not implemented Responses. In the same task, add `service_tier` support for both Responses and Chat Completions; do not defer service-tier request, record, summary, CLI, or test coverage to the later YAML/multi-model tasks.
+
+OpenAPI findings from `openai-openapi.yaml`:
+
+- `POST /responses` has `operationId: createResponse`, tag `Responses`, and returns either `application/json` `Response` or `text/event-stream` `ResponseStreamEvent`.
+- `CreateResponse` supports `model`, `input`, `instructions`, `stream`, `stream_options`, `max_output_tokens`, `temperature`, `top_p`, `reasoning`, tools, text formatting, and related fields.
+- Text input can be a plain string through `InputParam`; system/developer instructions can be sent through `instructions`.
+- Streaming events include `response.created`, `response.in_progress`, `response.output_item.added`, `response.content_part.added`, `response.output_text.delta`, `response.output_text.done`, `response.completed`, `response.failed`, `response.incomplete`, and `error`, plus many tool/audio/reasoning events that must not count as default text TTFT.
+- The first user-visible text delta is `response.output_text.delta` with a non-empty `delta`. Refusal deltas are also user-visible and should be handled separately from hidden reasoning/tool events.
+- Usage is reported on the completed `Response` as `usage.input_tokens`, `usage.output_tokens`, `usage.total_tokens`, `usage.input_tokens_details.cached_tokens`, and `usage.output_tokens_details.reasoning_tokens`.
+- `ResponseStreamOptions` currently includes `include_obfuscation`; it is not the same as Chat Completions `stream_options.include_usage`.
+- `ServiceTier` is a shared OpenAI request/response field with allowed values `auto`, `default`, `flex`, `scale`, and `priority`. When omitted, OpenAI defaults to `auto`; the response may report the actual tier used, which can differ from the requested value.
+
+Implementation details:
+
+- Add an OpenAI API selection enum to `pkg/provider/openai`:
+
+  ```go
+  type API string
+
+  const (
+      ResponsesAPI API = "responses"
+      ChatCompletionsAPI API = "chat-completions"
+  )
+  ```
+
+  Rules:
+
+  - Empty `Config.API` defaults to `ResponsesAPI`.
+  - `ChatCompletionsAPI` preserves the existing `/chat/completions` behavior for compatibility.
+  - Unsupported values return a clear validation error before sending a request.
+  - Public doc comments must state that `ResponsesAPI` is the default for the OpenAI provider.
+
+- Refactor the existing OpenAI provider without changing the public `whatttft.Provider` interface:
+  - keep `StreamChat(ctx, req, obs)` as the normalized chat-style benchmark entrypoint;
+  - dispatch internally to `streamResponses` or `streamChatCompletions` based on `Config.API`;
+  - keep shared HTTP setup, API-key handling, redaction, status-code errors, and trace capture in common helpers;
+  - keep direct `net/http` and the existing SSE parser in the hot path; do not use the OpenAI SDK.
+- Implement `POST {base_url}/responses` request construction:
+  - `model`: configured model;
+  - `input`: cache-mode-mutated user prompt from `ProviderRequest.Prompt` as a plain string for v0.2 text benchmarks;
+  - `instructions`: `Scenario.SystemPrompt` when non-empty;
+  - `stream`: `true`;
+  - `stream_options.include_obfuscation`: `false` by default to avoid artificial payload overhead, and record this provider-specific choice in safe metadata if a metadata field is available;
+  - `temperature`, `top_p`, and `reasoning.effort`: map from scenario fields; `service_tier`: map from OpenAI provider config/CLI/YAML target settings;
+  - `max_output_tokens`: map from `Scenario.MaxOutputTokens` when positive; validate that Responses requests obey the OpenAPI minimum of 16 when the field is set;
+  - do not send Chat-only `max_completion_tokens`, `max_tokens`, or Chat `stream_options.include_usage` to `/responses`.
+- Add service-tier support as an immediate first-task benchmark variable for both OpenAI API modes:
+  - add an OpenAI `ServiceTier` type or validated string field with allowed values empty, `auto`, `default`, `flex`, `scale`, and `priority`; empty means omit the request field and use provider default behavior;
+  - add `ServiceTier` to `openai.Config` so both `ResponsesAPI` and `ChatCompletionsAPI` can send the same configured tier without relying on later YAML work;
+  - add additive request-record fields such as `requested_service_tier` and `observed_service_tier`, with comments stating they are OpenAI provider tier labels, not secrets, and empty means unset/unreported;
+  - add matching summary-group fields and include requested service tier in the summary group key immediately, so `auto`, `default`, `flex`, `scale`, and `priority` results are never silently aggregated together;
+  - record the requested service tier in `run.json`, request records, and summaries, with no redaction required because tier labels are not secrets;
+  - capture the provider-reported/actual `service_tier` from Responses terminal `response` objects and Chat Completions chunks/responses when present;
+  - do not aggregate or compare results across different requested service tiers.
+- Preserve Chat Completions compatibility:
+  - existing request/response structs may be renamed to make the Chat-vs-Responses split clear;
+  - `service_tier` should also be sent on Chat Completions requests when configured because `CreateChatCompletionRequest` inherits it through `CreateModelResponseProperties`;
+  - `UseLegacyMaxTokens` applies only to Chat Completions and should be ignored or rejected with a clear warning/error for Responses, whichever keeps behavior least surprising;
+  - `IncludeUsage` applies only to Chat Completions because Responses usage is delivered on the terminal response event when available.
+- Parse Responses SSE events by `type` from JSON and optionally cross-check the SSE `event:` field:
+  - `response.created`, `response.in_progress`, `response.output_item.added`, empty `response.content_part.added`, reasoning events, function/tool call argument deltas, web/file/code tool events, annotations, and metadata events drive `first_sse_event` but not TTFT;
+  - first non-empty `response.output_text.delta.delta` drives `first_output_delta`;
+  - later non-empty output text deltas update `last_output_delta`;
+  - non-empty `response.refusal.delta.delta` should be treated as visible text/refusal output and should also drive TTFT/E2E unless a scenario explicitly opts out later;
+  - `response.output_text.done` records finish metadata but must not create a duplicate output delta;
+  - `response.completed` marks `done_event`, captures usage/cache metadata, and records finish status;
+  - `response.incomplete` marks `done_event`, captures usage/cache metadata when present, records incomplete reason, and should be treated like a normal length/content-filter finish unless the event also carries an error;
+  - `response.failed` and `error` events should return structured provider errors with redacted message/code details;
+  - `[DONE]`, if encountered for compatibility, marks `done_event` but is not required for Responses streams;
+  - `body_eof` is still recorded only when the response body read completes.
+- Normalize Responses usage/cache metadata:
+  - `input_tokens` -> `ProviderUsage.PromptTokens`;
+  - `output_tokens` -> `ProviderUsage.CompletionTokens`;
+  - `total_tokens` -> `ProviderUsage.TotalTokens`;
+  - `input_tokens_details.cached_tokens` -> `CacheRecord.PromptCachedTokens` and `CacheRecord.Hit`;
+  - `output_tokens_details.reasoning_tokens` -> a redacted/safe usage `Extra` field for now, with future schema work allowed to promote it to a first-class field;
+  - document that provider `output_tokens` may include hidden reasoning tokens, so visible-output TPS and provider-output-token TPS can differ for reasoning models.
+- Update CLI `run` defaults:
+  - add `--openai-api responses|chat-completions`, default `responses`;
+  - add `--service-tier auto|default|flex|scale|priority`; omit the field when the flag is not set;
+  - top-level and run help should say the OpenAI provider defaults to Responses API;
+  - existing fake-server CLI tests must be updated so default `run` posts to `/responses`;
+  - add at least one compatibility test proving `--openai-api chat-completions` still posts to `/chat/completions`.
+- Update `internal/testserver` or add a new fake Responses server helper:
+  - validate `POST /responses` or `/v1/responses`;
+  - validate `stream=true`;
+  - validate `model`, `input`, optional `instructions`, optional `service_tier`, and authorization header;
+  - emit scriptable Responses SSE events with `event:` and `data:` fields;
+  - support delayed headers, empty/metadata events before text, text deltas, refusal deltas, terminal completed/incomplete/failed events, usage/cache metadata, malformed JSON, non-200 errors, and abrupt EOF.
+- Update tests:
+  - request-body construction for Responses, including `service_tier` when configured and omission when unset;
+  - request-body construction for Chat Completions compatibility mode, including `service_tier` when configured and omission when unset;
+  - default API selection is Responses;
+  - first SSE metadata event is recorded before first text delta;
+  - `response.output_text.delta` drives TTFT and E2E;
+  - reasoning/tool/metadata events do not drive TTFT;
+  - usage/cache/reasoning-token metadata and actual `service_tier` are captured from `response.completed`;
+  - `response.failed` and `error` become request errors;
+  - `response.incomplete` with `max_output_tokens` is captured as finish metadata and does not crash the stream;
+  - non-200 and malformed JSON errors are bounded and redacted;
+  - Chat Completions compatibility tests still pass under `ChatCompletionsAPI`;
+  - summaries split otherwise-identical records by requested service tier, and Markdown/CLI output displays requested and observed tiers.
+- Update README after implementation:
+  - the quick-start command uses Responses by default;
+  - explain `--openai-api chat-completions` for OpenAI-compatible providers that lack `/responses`;
+  - explain Responses stream TTFT semantics (`response.output_text.delta`, not metadata events);
+  - explain Responses usage fields and the reasoning-token caveat;
+  - document `--service-tier` and warn that different service tiers must be compared separately.
+
+Implemented details:
+
+- Added `openai.API` with `ResponsesAPI` as the default and `ChatCompletionsAPI` as an explicit compatibility mode.
+- Added `openai.ServiceTier` values and validation for `auto`, `default`, `flex`, `scale`, and `priority`.
+- Implemented direct HTTP `POST /responses` streaming without SDK usage, including Responses request construction, SSE event parsing, visible text/refusal delta TTFT semantics, terminal usage/cache capture, reasoning-token metadata, failure/error events, and `[DONE]` compatibility handling.
+- Preserved the existing Chat Completions streaming implementation behind `Config.API: ChatCompletionsAPI` and added `service_tier` request/response capture for that path too.
+- Added request-record, HTTP-record, summary-group, Markdown, CLI, and run metadata fields for requested and observed service tiers; summaries now group by requested service tier immediately.
+- Added `what-ttft run --openai-api responses|chat-completions` and `--service-tier auto|default|flex|scale|priority` flags.
+- Updated fake OpenAI server helpers, CLI tests, provider tests, report tests, smoke script, README, and integration test comments for Responses-default behavior.
+
+Definition of done:
+
+- `what-ttft run --provider openai ...` defaults to `/v1/responses` without requiring a new flag.
+- `what-ttft run --provider openai --openai-api chat-completions ...` preserves the old Chat Completions streaming path.
+- Unit and fake-server tests prove Responses metadata/role/tool/reasoning events do not count as TTFT.
+- Usage/cache metadata and provider-reported actual service tier from `response.completed` appear in `requests.jsonl` and summaries when available.
+- Requested service tier is present in request records, summary groups, Markdown, and `run.json` for the single-run CLI path.
+- Configured service tier is sent for both Responses and Chat Completions compatibility mode, and omitted when unset.
+- Summary grouping includes requested service tier immediately, before multi-target/YAML work starts.
+- No provider SDK is used in the benchmark hot path.
+
+---
+
+### [ ] 19. Make tokens-per-second first-class and rigorously named
+
+Current state:
+
+- `DerivedMetrics.E2EOutputTPS` exists.
+- `SummaryGroup.SystemTPS` and `SummaryGroup.RPS` exist.
+- Markdown summary includes `e2e_output_tps`, but the single-run CLI summary does not print it.
+- There is no post-TTFT output-token throughput metric.
+
+Implementation details:
+
+- Keep `e2e_output_tps` unchanged and document it as per-request/user-perceived throughput including TTFT.
+- Add a new optional request-level derived metric named `generation_delta_output_tps`:
+
+  ```text
+  generation_delta_output_tps = max(completion_tokens - 1, 0) / generation_delta_seconds
+  ```
+
+  Rules:
+
+  - Compute only when provider-reported or estimated completion token count is available, `completion_tokens > 1`, `first_output_delta` exists, `last_output_delta` exists, and `last_output_delta > first_output_delta`.
+  - Return nil/omit the field when inputs are missing, token count is zero/one, or generation duration is zero/non-positive.
+  - Field documentation must state that timing bounds are visible-output delta timestamps, not true token timestamps, so this is a post-first-delta output-token throughput approximation. It must not be called `decode_tps`.
+  - If the token count source is provider-reported, the numerator is provider-reported tokens. If a future tokenizer fallback estimates counts, the metric remains estimated and must be labeled through the usage source.
+
+- Extend `DerivedMetrics`, `CalculateDerivedMetrics`, and `metrics_test.go`:
+  - complete-timeline case with 10 completion tokens and a known generation delta;
+  - nil when completion tokens are missing;
+  - nil when completion tokens are 0 or 1;
+  - nil when first/last output delta are missing;
+  - nil when generation duration is zero;
+  - preserve existing `e2e_output_tps` behavior.
+- Extend `MetricDistributions`, summary builders, and `summary_test.go` to include `generation_delta_output_tps`.
+- Update `internal/report/markdown.go` so detailed group tables include both:
+  - `e2e_output_tps`;
+  - `generation_delta_output_tps`.
+- Update `cmd/what-ttft/run.go` summary printing to include:
+  - `e2e_output_tps` p50/p95/p99/mean;
+  - `generation_delta_output_tps` p50/p95/p99/mean;
+  - group-level `system_tps` and `rps` when available.
+- Update README metric definitions to explain the difference between user-perceived TPS, post-first-delta TPS, and system TPS.
+
+Definition of done:
+
+- Unit tests cover all new nil/non-nil TPS cases.
+- Existing tests still pass without requiring provider usage.
+- CLI and Markdown output display TPS metrics when usage is available and `-`/empty values when usage is unavailable.
+- No metric is named `decode_tps`, `token_itl`, or `tpot` in v0.2 unless true token timestamps are implemented.
+
+---
+
+### [ ] 20. Add target identity to request records and summaries
+
+Multi-model and YAML benchmarks need a stable comparison label that is distinct from provider/model. Without this, two targets using the same model against different base URLs, deployments, regions, or API accounts could be summarized together incorrectly.
+
+Implementation details:
+
+- Add optional target metadata to `RequestRecord`:
+
+  ```go
+  type RequestRecord struct {
+      TargetID string `json:"target_id,omitempty"`
+      TargetName string `json:"target_name,omitempty"`
+      // existing fields...
+  }
+  ```
+
+  Field documentation requirements:
+
+  - `TargetID` is a stable, sanitized benchmark-config identifier; empty means the record came from legacy/single-run execution.
+  - `TargetName` is a human-readable target label; empty means no separate label was supplied.
+  - Neither field may contain secrets.
+
+- Add matching target fields to `SummaryGroup` and include `target_id` in the group key when non-empty, while preserving the requested service-tier grouping added in task 18.
+- Update Markdown headings to include `target_id` and `target_name` when present:
+
+  ```md
+  ## target=gpt-5.5 provider=openai model=gpt-5.5 scenario=short cache=cache-bust connection=warm service_tier=default
+  ```
+
+- Add `RunConfig.RequestIDPrefix` or an equivalent runner option so a batch/multi-target caller can create globally unique request IDs without rewriting records after the fact.
+  - Single-run default remains `req-000000`, `req-000001`, etc.
+  - Batch runs should use deterministic prefixes such as `target-gpt-5.5-req-000000`.
+  - Chunk records must keep joining through `request_id` without ambiguity.
+- Add runner support for target identity:
+  - either explicit fields on `RunConfig` (`TargetID`, `TargetName`, `RequestIDPrefix`), or a small `RunLabels` struct if that keeps `RunConfig` cleaner;
+  - populate `RequestRecord.TargetID`/`TargetName` in `runOne`;
+  - keep these fields empty for `what-ttft run` unless the caller explicitly sets them.
+- Update JSON round-trip tests and summary tests:
+  - two records with the same provider/model/scenario/cache/connection but different `target_id` must produce two groups;
+  - two records with the same provider/model/scenario/cache/connection but different requested service tiers must produce two groups;
+  - records without `target_id` keep existing grouping behavior;
+  - request IDs are unique and chunk join remains correct when prefixes are set.
+
+Definition of done:
+
+- `requests.jsonl` can represent multiple targets without duplicate request IDs.
+- `summary.json` never mixes different non-empty `target_id` values or different requested service tiers.
+- Existing single-run output remains backward-compatible except for additive optional JSON fields.
+
+---
+
+### [ ] 21. Define the v0.2 YAML benchmark schema and loader
+
+Add strict YAML configuration support for repeatable benchmarks. The schema should cover the user's requested multi-model use case first and leave obvious extension points for providers/scenarios later.
+
+Proposed v0.2 schema:
+
+```yaml
+schema_version: 1
+name: openai-short-model-compare
+
+defaults:
+  provider: openai
+  api: responses
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  service_tier: default
+  include_usage: true        # chat-completions only; Responses usage is captured from terminal events
+  legacy_max_tokens: false   # chat-completions only
+
+run:
+  samples: 50
+  warmup: 5
+  concurrency: 1
+  cache_mode: cache-bust
+  connection_mode: warm
+  timeout: 120s
+  save_chunks: false
+
+scenario:
+  name: short-capital
+  system_prompt: You are a concise assistant.
+  prompt: "Answer in one short sentence: what is the capital of France?"
+  max_output_tokens: 64
+  temperature: 0
+  top_p: 1
+  reasoning_effort: none
+
+targets:
+  - id: gpt-5.5
+    model: gpt-5.5
+  - id: gpt-5.2
+    model: gpt-5.2
+```
+
+Schema rules:
+
+- `schema_version` is required and must equal `1` for v0.2.
+- `name` is optional but recommended; it is used in default output directory names and report metadata.
+- `defaults` values are inherited by every target and may be overridden per target.
+- `targets` is required and must contain at least one target.
+- Each target requires a model after inheritance.
+- Each target requires `provider: openai` after inheritance in v0.2. Other providers should fail with a clear validation error.
+- Each OpenAI target uses `api: responses` by default. `api: chat-completions` is allowed only as an explicit compatibility mode for OpenAI-compatible endpoints that do not support `/responses`.
+- Responses targets must send `/responses` requests and must not send Chat-only `stream_options.include_usage`, `max_completion_tokens`, or `max_tokens` fields.
+- Chat Completions targets preserve existing `/chat/completions` behavior; `include_usage` and `legacy_max_tokens` only apply in this mode.
+- Each target requires `api_key_env` after inheritance. Inline `api_key` is not supported in v0.2.
+- Target `id` is optional only if it can be generated deterministically from provider/model/base-url index; generated IDs must be stable and collision-free.
+- Duplicate target IDs are invalid.
+- `scenario.prompt` is required and must be non-empty.
+- `run.samples + run.warmup` must be greater than zero.
+- Cache mode, connection mode, reasoning effort, OpenAI API mode, and service tier validation must reuse the same accepted values as the CLI.
+- Unknown YAML keys must be errors, not ignored.
+- Durations use Go duration strings such as `120s`, `2m`, or `500ms`; integer nanosecond durations should not be accepted in YAML because they are error-prone for humans.
+- Optional floats such as `temperature` and `top_p` must preserve the difference between omitted and explicitly set zero.
+- `defaults.service_tier` and per-target `service_tier` are optional OpenAI provider settings; when omitted after inheritance, OpenAI requests omit `service_tier` and OpenAI uses its default `auto` behavior. When present, the value must be one of `auto`, `default`, `flex`, `scale`, or `priority`.
+
+Implementation details:
+
+- Add a focused config package, preferably `internal/configfile` unless a public Go API for YAML configs is intentionally exposed.
+- Add types with both `yaml` and `json` tags if they will be embedded in `run.json`.
+- Use `go.yaml.in/yaml/v3` with `Decoder.KnownFields(true)`.
+- Add a custom duration type for YAML duration strings.
+- Add a custom optional-float type or pointer-based decoding so `temperature: 0` is preserved.
+- Add validation that returns all practical config errors in one message where possible, or at least includes the YAML path, e.g. `targets[1].model is required`.
+- Add config redaction/sanitization helpers:
+  - API key values are never loaded from YAML;
+  - `api_key_env` names may be written to `run.json`;
+  - base URLs are redacted with existing report URL redaction before writing metadata;
+  - target IDs/names are sanitized for paths but preserved in metadata if safe.
+- Add fixtures under the package testdata, for example:
+  - `valid_minimal.yaml`;
+  - `valid_two_models.yaml`;
+  - `invalid_unknown_field.yaml`;
+  - `invalid_duplicate_target_id.yaml`;
+  - `invalid_missing_prompt.yaml`;
+  - `invalid_bad_duration.yaml`;
+  - `invalid_bad_service_tier.yaml`;
+  - `invalid_inline_api_key.yaml` if the schema explicitly rejects that field.
+
+Definition of done:
+
+- Loading a valid config yields normalized targets, a shared `whatttft.Scenario`, run settings, and OpenAI provider settings with inherited defaults applied, including `api: responses` when omitted and `service_tier` when provided.
+- Unknown fields fail in tests.
+- Duplicate/missing required fields fail in tests with actionable messages.
+- No test fixture contains a real secret.
+- `go.mod` uses `go.yaml.in/yaml/v3` and not `gopkg.in/yaml.v3`.
+
+---
+
+### [ ] 22. Implement a multi-target benchmark runner/orchestrator
+
+Build the library/CLI bridge that executes a YAML benchmark plan across multiple targets while reusing the existing single-provider `Runner` where practical.
+
+Implementation details:
+
+- Add an orchestration type, for example:
+
+  ```go
+  type BenchmarkTarget struct {
+      ID       string
+      Name     string
+      Provider Provider
+      Config   RunConfig
+  }
+
+  type BenchmarkConfig struct {
+      Name    string
+      Targets []BenchmarkTarget
+  }
+
+  type BenchmarkResult struct {
+      Records []RequestRecord
+      Chunks  []ChunkRecord
+      Summary RunSummary
+  }
+  ```
+
+  Exact names may differ, but the public API should make it easy for Go callers to run the same scenario/config against several providers/models without going through the CLI.
+
+- Start with serial target execution in v0.2:
+  1. validate all targets before sending any provider request;
+  2. for each target in config order, run warmup and measured requests using `NewRunner`;
+  3. append records/chunks into one combined result;
+  4. compute one combined `RunSummary` over all records.
+- Record execution order in report metadata so readers know whether the run was serial. Use a value such as `target_order: serial`.
+- Ensure each target gets its own HTTP client/transport constructed from the shared connection mode and timeout:
+  - warm connections are reused within a target run;
+  - transports are not shared across different target base URLs unless that is explicitly added later;
+  - cold mode still disables keepalives as in v0.1.
+- Ensure each OpenAI target is constructed with the normalized API mode from YAML, defaulting to Responses and using Chat Completions only when explicitly requested.
+- Ensure request IDs and target labels are set before each target run:
+  - `TargetID` and `TargetName` from the YAML target;
+  - deterministic request ID prefix based on sanitized target ID.
+- Error behavior:
+  - missing API key env vars, invalid target provider settings, or provider construction errors should fail before any target starts;
+  - per-request provider errors remain request records and do not abort the whole benchmark;
+  - context cancellation aborts promptly and returns partial combined results;
+  - if one target completes with all request-level errors, still run subsequent targets unless the context is canceled or preflight failed.
+- Add tests with fake providers:
+  - two targets, same scenario, different models produce two summary groups;
+  - same provider/model but different target IDs produce two groups;
+  - warmups are excluded per target;
+  - request IDs are unique across targets;
+  - context cancellation returns partial combined results;
+  - target preflight catches duplicate IDs and nil providers.
+
+Definition of done:
+
+- Go callers can run a multi-target benchmark without invoking the CLI.
+- Combined summaries are grouped correctly by target and model.
+- No request or chunk IDs collide across targets.
+- The orchestrator does not introduce stdout/stderr writes in the hot path.
+
+---
+
+### [ ] 23. Add the `what-ttft bench --config` CLI command
+
+Expose YAML benchmarks through a dedicated CLI command while keeping `run` unchanged for single-model ad-hoc use.
+
+Command shape:
+
+```sh
+what-ttft bench --config benchmark.yaml --out runs/openai-short-model-compare
+```
+
+Flags:
+
+```text
+--config PATH        required YAML benchmark config
+--out DIR           optional output directory override
+--overwrite         allow replacing a non-empty output directory
+--dry-run           parse, validate, and print the normalized plan without sending requests
+--save-chunks       optional override for run.save_chunks
+--samples N         optional override for run.samples
+--warmup N          optional override for run.warmup
+--concurrency N     optional override for run.concurrency
+--timeout DURATION  optional override for run.timeout
+--service-tier TIER optional override for every OpenAI target service_tier; auto|default|flex|scale|priority
+```
+
+Implementation details:
+
+- Update top-level usage to list `bench`:
+
+  ```text
+  run      benchmark one OpenAI-compatible model from flags
+  bench    run a YAML benchmark across one or more targets
+  version  print build version information
+  ```
+
+- Parse with the standard-library `flag` package to match v0.1.
+- Require `--config`; fail with exit code 2 for parse/validation errors.
+- `--dry-run` must:
+  - validate YAML and environment-variable presence if practical;
+  - print target IDs, provider/API/model/base URL, samples/warmup/concurrency/cache/connection, service tier, scenario name, and output directory;
+  - not print API key values;
+  - not send HTTP requests;
+  - not create report files unless an explicit future flag requests plan export.
+- Normal execution must:
+  - load and validate YAML;
+  - resolve API keys from `api_key_env` for each target;
+  - build one OpenAI provider per target with the normalized API mode, defaulting to Responses;
+  - run the multi-target orchestrator;
+  - write combined reports;
+  - print a concise comparison table.
+- Suggested terminal comparison table columns:
+
+  ```text
+  target        api        tier     model        ok err ttft_p50 ttft_p95 e2e_p50 e2e_p95 e2e_tps_mean gen_tps_mean system_tps rps
+  gpt-5.5      responses  default  gpt-5.5      50 0   312.7    450.9    980.0   1300.4   58.2         72.1         55.0       0.9
+  gpt-5.2      responses  default  gpt-5.2      50 0   280.1    420.3    870.5   1201.8   64.0         80.4         60.2       1.0
+  ```
+
+- Redact CLI args in metadata. `--config` path is not secret, but do not write resolved API key values.
+- Add CLI tests:
+  - help text for `bench`;
+  - missing `--config` validation;
+  - invalid YAML returns exit code 2;
+  - `--dry-run` sends no HTTP requests;
+  - two-target fake OpenAI benchmark writes reports and prints comparison rows;
+  - output files do not contain fake API key values.
+
+Definition of done:
+
+- `go run ./cmd/what-ttft bench --help` works.
+- `what-ttft bench --config valid.yaml` can benchmark two fake OpenAI targets in tests.
+- `run` command behavior and tests remain unchanged.
+- CLI output includes TPS columns when usage is available.
+
+---
+
+### [ ] 24. Extend report metadata and Markdown for YAML/multi-target benchmarks
+
+Make `run.json`, `summary.json`, and `summary.md` self-explanatory for a benchmark containing multiple targets.
+
+Implementation details:
+
+- Extend `internal/report.RunMetadata` with optional fields, for example:
+
+  ```go
+  type RunMetadata struct {
+      BenchmarkName string `json:"benchmark_name,omitempty"`
+      ConfigPath string `json:"config_path,omitempty"`
+      ConfigSHA256 string `json:"config_sha256,omitempty"`
+      TargetOrder string `json:"target_order,omitempty"`
+      Targets []RunTargetMetadata `json:"targets,omitempty"`
+      // existing fields...
+  }
+  ```
+
+- Add `RunTargetMetadata` with documented fields:
+  - target ID/name;
+  - provider;
+  - OpenAI API mode (`responses` by default or `chat-completions` compatibility mode);
+  - requested service tier and observed/actual service tier when reported by the provider;
+  - model;
+  - redacted base URL;
+  - API key env var name, not value;
+  - include-usage / legacy-max-tokens flags;
+  - optional provider-specific metadata map with secrets redacted.
+- For single-model `run`, keep existing `Provider`, `Model`, `BaseURL`, `Scenario`, and `RunConfig` fields populated as before.
+- For multi-target `bench`, populate:
+  - `BenchmarkName`;
+  - `ConfigPath` and SHA-256 of the YAML file bytes;
+  - `TargetOrder` (`serial` for v0.2);
+  - `Targets` array;
+  - common `Scenario` and `RunConfig`.
+- Update default output directory naming:
+  - single `run`: current provider-model-scenario-cache-connection-timestamp behavior;
+  - `bench`: prefer benchmark name, scenario, cache mode, connection mode, timestamp, e.g. `runs/openai-short-model-compare-short-capital-cache-bust-warm-20260519T...Z`.
+- Add a high-level comparison table at the top of `summary.md` before detailed per-group metric tables:
+
+  ```md
+  | target | provider | api | requested tier | observed tier | model | ok | err | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e tps mean | generation tps mean | system tps | rps |
+  |---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+  ```
+
+- Keep the existing detailed per-group metric tables after the comparison table.
+- Add report tests:
+  - multi-target `run.json` is parseable and redacts base URLs/secrets;
+  - config hash is stable for known bytes;
+  - Markdown includes target IDs and TPS columns;
+  - single-run report output remains compatible.
+
+Definition of done:
+
+- A reader can open `run.json` and know exactly which YAML config and targets produced the run.
+- `summary.md` is useful for model comparison without manually reading JSON.
+- No API key values are written to any report file.
+
+---
+
+### [ ] 25. Document YAML benchmarks, multi-model methodology, and TPS semantics
+
+Update user-facing documentation after the CLI and report behavior exists.
+
+Implementation details:
+
+- Add a README section titled "YAML benchmark configs" with:
+  - a complete two-model example using `api: responses`;
+  - `what-ttft bench --config benchmark.yaml` command;
+  - `--dry-run` example;
+  - note that inline API keys are not supported and `api_key_env` should be used;
+  - note that `api: chat-completions` is only for compatibility with endpoints that do not support `/responses`.
+- Add a README section titled "Comparing multiple models" explaining:
+  - all targets in a YAML benchmark share the same prompt, cache mode, generation settings, OpenAI API mode, connection mode, samples, warmup, and concurrency unless explicitly overridden by target/default fields or future schema versions;
+  - serial target execution can be affected by time-of-day/provider-load changes;
+  - for rigorous comparisons, run multiple independent passes and consider alternating target order manually until round-robin/randomized scheduling exists;
+  - never compare cached and uncached targets in one conclusion.
+- Document service tier control:
+  - `--service-tier` for single-run benchmarks;
+  - `defaults.service_tier` and target-level `service_tier` for YAML benchmarks;
+  - allowed values `auto`, `default`, `flex`, `scale`, `priority`;
+  - omitted value means do not send `service_tier`, allowing OpenAI's default `auto` behavior;
+  - requested service tier and observed provider-reported service tier should be treated as benchmark variables and not mixed silently.
+- Expand metric definitions for:
+  - `e2e_output_tps`;
+  - `generation_delta_output_tps`;
+  - `system_tps`;
+  - `rps`.
+- Include a warning that post-first-delta TPS is not true decode TPS/token ITL because OpenAI-compatible streaming chunks are not guaranteed to equal tokens.
+- Add a sample `benchmark.yaml` under `examples/` or `docs/` with fake model names and no secrets.
+
+Definition of done:
+
+- README contains a copy-paste YAML example and command.
+- Documentation explains why `run` and `bench` both exist.
+- Documentation says the OpenAI provider defaults to Responses API and explains how to opt into Chat Completions compatibility mode.
+- Documentation distinguishes user TPS, post-first-delta TPS, and system TPS.
+- Documentation explains service tier semantics and warns not to compare different service tiers as if they were the same traffic shape.
+
+---
+
+### [ ] 26. Add quality gates and fake-server smoke coverage for `bench`
+
+Mirror the v0.1 quality gate for the new multi-target path.
+
+Implementation details:
+
+- Add a script, for example `scripts/smoke-fake-openai-bench.sh`, that:
+  - builds the CLI;
+  - starts two deterministic fake OpenAI Responses-compatible SSE endpoints or one endpoint that accepts two model names;
+  - writes a temporary YAML config with two targets using fake API key env vars, default `api: responses`, and a configured `service_tier` such as `default`;
+  - runs `what-ttft bench --config ...`;
+  - verifies `run.json`, `requests.jsonl`, `summary.json`, and `summary.md` exist;
+  - verifies two target/model groups are present;
+  - verifies `/responses` was used by default;
+  - verifies configured `service_tier` is sent in requests and appears in metadata/summaries;
+  - verifies TPS fields are present when Responses terminal usage events are emitted;
+  - verifies fake API keys are absent from report files.
+- Update README testing instructions to include the new smoke script.
+- Run the full gate before marking v0.2 tasks complete:
+
+  ```sh
+  go test ./...
+  go test -race ./...
+  golangci-lint run
+  go build ./...
+  go run ./cmd/what-ttft run --help
+  go run ./cmd/what-ttft bench --help
+  scripts/smoke-fake-openai.sh
+  scripts/smoke-fake-openai-bench.sh
+  ```
+
+Definition of done:
+
+- All commands pass locally.
+- Fake bench smoke test uses no external network.
+- Report files from smoke tests contain no API keys.
+- `implementation-plan.md` v0.2 tasks are marked `[x]` as they are completed.
+
+---
+
+## Future tasks beyond this v0.2 plan
+
+These are intentionally outside the current v0.2 feature set but should influence design decisions.
+
+### [ ] Future: additional provider protocols and APIs
+
+After Responses becomes the OpenAI default, keep the provider abstraction ready for other APIs and protocols, including non-OpenAI providers, WebSocket-style realtime APIs, and future multimodal Responses features beyond text-only v0.2 coverage.
 
 ### [ ] Future: scheduled-rate/open-loop load mode
 
@@ -1495,9 +2144,9 @@ Add optional tokenizer-based token count estimation when provider usage is unava
 
 If a provider emits token-level events, store `first_output_token`, `last_output_token`, and token ITL/TPOT separately from chunk cadence.
 
-### [ ] Future: multi-scenario config file
+### [ ] Future: richer matrix scheduling and multi-scenario configs
 
-Add JSON or YAML config for running matrix benchmarks across providers, models, prompts, cache modes, and concurrency levels.
+Extend the v0.2 YAML benchmark format beyond one shared scenario to full matrices across scenarios, prompts/datasets, cache modes, connection modes, concurrency levels, and provider-specific options. Add round-robin or randomized target/scenario interleaving so model comparisons are less sensitive to time-of-day and provider-load drift.
 
 ### [ ] Future: STT and TTS components
 

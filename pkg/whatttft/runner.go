@@ -89,22 +89,25 @@ func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup 
 
 	timeline := recorder.Timeline()
 	usage := observer.usageSnapshot()
+	httpRecord := observer.httpSnapshot()
 	record := RequestRecord{
-		RequestID:        requestID,
-		Provider:         r.provider.Name(),
-		Model:            r.provider.Model(),
-		ScenarioName:     cfg.Scenario.Name,
-		Warmup:           warmup,
-		Attempt:          attempt,
-		CacheMode:        promptPlan.CacheMode,
-		ConnectionMode:   cfg.ConnectionMode,
-		PromptHash:       promptPlan.PromptHash,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		TotalTokens:      usage.TotalTokens,
-		Cache:            observer.cacheSnapshot(),
-		HTTP:             observer.httpSnapshot(),
-		Timeline:         timeline,
+		RequestID:            requestID,
+		Provider:             r.provider.Name(),
+		Model:                r.provider.Model(),
+		ScenarioName:         cfg.Scenario.Name,
+		Warmup:               warmup,
+		Attempt:              attempt,
+		CacheMode:            promptPlan.CacheMode,
+		ConnectionMode:       cfg.ConnectionMode,
+		RequestedServiceTier: httpRecord.RequestedServiceTier,
+		ObservedServiceTier:  httpRecord.ObservedServiceTier,
+		PromptHash:           promptPlan.PromptHash,
+		PromptTokens:         usage.PromptTokens,
+		CompletionTokens:     usage.CompletionTokens,
+		TotalTokens:          usage.TotalTokens,
+		Cache:                observer.cacheSnapshot(),
+		HTTP:                 httpRecord,
+		Timeline:             timeline,
 	}
 	record.Derived = CalculateDerivedMetrics(timeline, record.CompletionTokens)
 	if err != nil {

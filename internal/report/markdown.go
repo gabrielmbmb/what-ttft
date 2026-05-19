@@ -2,6 +2,7 @@ package report
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -30,8 +31,12 @@ func MarkdownSummary(summary whatttft.RunSummary) string {
 }
 
 func writeGroupMarkdown(builder *strings.Builder, group whatttft.SummaryGroup) {
-	fmt.Fprintf(builder, "## provider=%s model=%s scenario=%s cache=%s connection=%s\n\n", group.Provider, group.Model, group.ScenarioName, group.CacheMode, group.ConnectionMode)
-	fmt.Fprintf(builder, "measured=%d successful=%d errors=%d\n\n", group.MeasuredRequests, group.SuccessfulRequests, group.ErrorRequests)
+	fmt.Fprintf(builder, "## provider=%s model=%s scenario=%s cache=%s connection=%s service_tier=%s\n\n", group.Provider, group.Model, group.ScenarioName, group.CacheMode, group.ConnectionMode, firstNonEmpty(group.RequestedServiceTier, "unset"))
+	fmt.Fprintf(builder, "measured=%d successful=%d errors=%d\n", group.MeasuredRequests, group.SuccessfulRequests, group.ErrorRequests)
+	if len(group.ObservedServiceTierCounts) > 0 {
+		fmt.Fprintf(builder, "observed_service_tiers=%s\n", formatStringIntMap(group.ObservedServiceTierCounts))
+	}
+	builder.WriteString("\n")
 	builder.WriteString("| metric | count | mean | p50 | p95 | p99 | max |\n")
 	builder.WriteString("|---|---:|---:|---:|---:|---:|---:|\n")
 
@@ -93,4 +98,23 @@ func formatOptionalFloat(value *float64) string {
 	}
 
 	return fmt.Sprintf("%.3f", *value)
+}
+
+func formatStringIntMap(values map[string]int) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s:%d", key, values[key]))
+	}
+
+	return strings.Join(parts, ",")
 }

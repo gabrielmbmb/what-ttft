@@ -96,11 +96,11 @@ func TestOpenAIServerEndToEndRunnerAndReports(t *testing.T) {
 		Steps: []StreamStep{
 			{Comment: "heartbeat"},
 			{Data: ""},
-			{Data: `{"choices":[{"index":0,"delta":{"role":"assistant"}}]}`},
-			{Data: `{"choices":[{"index":0,"delta":{"content":"Hello"}}]}`},
-			{Data: `{"choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}`},
-			{Data: `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":3}}}`},
-			{Data: "[DONE]"},
+			{Data: `{"type":"response.created","response":{"status":"in_progress","service_tier":"default"}}`},
+			{Data: `{"type":"response.content_part.added","part":{"type":"output_text","text":""}}`},
+			{Data: `{"type":"response.output_text.delta","delta":"Hello"}`},
+			{Data: `{"type":"response.output_text.delta","delta":" world"}`},
+			{Data: `{"type":"response.completed","response":{"status":"completed","service_tier":"default","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":3},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":12}}}`},
 		},
 	})
 	defer server.Close()
@@ -110,6 +110,7 @@ func TestOpenAIServerEndToEndRunnerAndReports(t *testing.T) {
 		BaseURL:      server.URL(),
 		APIKey:       "placeholder",
 		Model:        "gpt-test",
+		ServiceTier:  openai.ServiceTierDefault,
 		IncludeUsage: true,
 		HTTPClient:   client,
 	})
@@ -117,7 +118,7 @@ func TestOpenAIServerEndToEndRunnerAndReports(t *testing.T) {
 		Scenario: whatttft.Scenario{
 			Name:            "fake-openai",
 			Prompt:          "Say hello.",
-			MaxOutputTokens: 8,
+			MaxOutputTokens: 16,
 		},
 		MeasuredRequests: 1,
 		CacheMode:        whatttft.CacheReuse,
@@ -176,14 +177,17 @@ func assertEndToEndRecord(t *testing.T, result *whatttft.RunResult) {
 	if record.HTTP.ProviderProcessingMS == nil || *record.HTTP.ProviderProcessingMS != 17 {
 		t.Fatalf("provider processing ms = %v, want 17", record.HTTP.ProviderProcessingMS)
 	}
+	if record.RequestedServiceTier != "default" || record.ObservedServiceTier != "default" {
+		t.Fatalf("service tiers = requested %q observed %q, want default/default", record.RequestedServiceTier, record.ObservedServiceTier)
+	}
 	if _, ok := record.Timeline.EventsNS[whatttft.EventDone]; !ok {
 		t.Fatal("done_event should be recorded")
 	}
 	if _, ok := record.Timeline.EventsNS[whatttft.EventBodyEOF]; !ok {
 		t.Fatal("body_eof should be recorded")
 	}
-	if len(result.Chunks) < 4 {
-		t.Fatalf("chunk count = %d, want role/content/usage chunks", len(result.Chunks))
+	if len(result.Chunks) < 3 {
+		t.Fatalf("chunk count = %d, want content and usage chunks", len(result.Chunks))
 	}
 }
 

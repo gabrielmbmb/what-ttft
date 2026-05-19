@@ -54,6 +54,12 @@ type RunMetadata struct {
 	// BaseURL is the provider endpoint/base URL with credentials and secret query values redacted; empty means unavailable.
 	BaseURL string `json:"base_url,omitempty"`
 
+	// ProviderAPI is the provider API surface requested for this run, such as openai responses or chat-completions; empty means unspecified and it must not contain secrets.
+	ProviderAPI string `json:"provider_api,omitempty"`
+
+	// RequestedServiceTier is the provider service tier requested for this run, such as OpenAI default or priority; empty means unset and it must not contain secrets.
+	RequestedServiceTier string `json:"requested_service_tier,omitempty"`
+
 	// Scenario is the benchmark scenario configuration; prompt fields may contain sensitive data and are intentionally limited to run.json.
 	Scenario whatttft.Scenario `json:"scenario"`
 

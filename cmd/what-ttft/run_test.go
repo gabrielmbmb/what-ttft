@@ -27,19 +27,19 @@ func TestRunCommandHelp(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "--provider openai") || !strings.Contains(stderr.String(), "--model MODEL") {
+	if !strings.Contains(stderr.String(), "--provider openai") || !strings.Contains(stderr.String(), "--model MODEL") || !strings.Contains(stderr.String(), "--openai-api") {
 		t.Fatalf("stderr missing run help:\n%s", stderr.String())
 	}
 }
 
-// TestRunCommandAgainstFakeOpenAIServer verifies the CLI writes reports against an httptest OpenAI-compatible stream.
+// TestRunCommandAgainstFakeOpenAIServer verifies the CLI writes reports against an httptest OpenAI Responses-compatible stream.
 func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 	const placeholderAPIKey = "cli-test-key"
 
 	var sawAuthorization atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Errorf("path = %q, want /chat/completions", r.URL.Path)
+		if r.URL.Path != "/responses" {
+			t.Errorf("path = %q, want /responses", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
@@ -55,9 +55,12 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 		}
 
 		var body struct {
-			Model           string `json:"model"`
-			Stream          bool   `json:"stream"`
-			ReasoningEffort string `json:"reasoning_effort"`
+			Model       string `json:"model"`
+			Stream      bool   `json:"stream"`
+			ServiceTier string `json:"service_tier"`
+			Reasoning   struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request body: %v", err)
@@ -70,16 +73,18 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 		if !body.Stream {
 			t.Error("stream should be true")
 		}
-		if body.ReasoningEffort != "none" {
-			t.Errorf("reasoning_effort = %q, want none", body.ReasoningEffort)
+		if body.Reasoning.Effort != "none" {
+			t.Errorf("reasoning effort = %q, want none", body.Reasoning.Effort)
+		}
+		if body.ServiceTier != "default" {
+			t.Errorf("service_tier = %q, want default", body.ServiceTier)
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		writeCLISSE(t, w, `{"choices":[{"delta":{"role":"assistant"}}]}`)
-		writeCLISSE(t, w, `{"choices":[{"delta":{"content":"Hello"}}]}`)
-		writeCLISSE(t, w, `{"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}`)
-		writeCLISSE(t, w, `{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":0}}}`)
-		writeCLISSE(t, w, "[DONE]")
+		writeCLISSEEvent(t, w, "response.created", `{"type":"response.created","response":{"status":"in_progress","service_tier":"default"}}`)
+		writeCLISSEEvent(t, w, "response.output_text.delta", `{"type":"response.output_text.delta","delta":"Hello"}`)
+		writeCLISSEEvent(t, w, "response.output_text.delta", `{"type":"response.output_text.delta","delta":" world"}`)
+		writeCLISSEEvent(t, w, "response.completed", `{"type":"response.completed","response":{"status":"completed","service_tier":"default","usage":{"input_tokens":3,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":5}}}`)
 	}))
 	defer server.Close()
 
@@ -100,7 +105,8 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 		"--cache-mode", "cache-reuse",
 		"--connection-mode", "warm",
 		"--reasoning-effort", "none",
-		"--max-output-tokens", "8",
+		"--service-tier", "default",
+		"--max-output-tokens", "16",
 		"--temperature", "0",
 		"--top-p", "1",
 		"--timeout", "10s",
@@ -122,6 +128,9 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 	if !strings.Contains(stdout.String(), "successful=1 errors=0") {
 		t.Fatalf("stdout missing success/error counts:\n%s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "service_tier=default") {
+		t.Fatalf("stdout missing service tier:\n%s", stdout.String())
+	}
 
 	for _, name := range []string{"run.json", "requests.jsonl", "chunks.jsonl", "summary.json", "summary.md"} {
 		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
@@ -133,6 +142,12 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
 	if metadata.Args == nil {
 		t.Fatal("run metadata args should be recorded")
+	}
+	if metadata.ProviderAPI != "responses" {
+		t.Fatalf("provider API = %q, want responses", metadata.ProviderAPI)
+	}
+	if metadata.RequestedServiceTier != "default" {
+		t.Fatalf("metadata service tier = %q, want default", metadata.RequestedServiceTier)
 	}
 	for _, arg := range metadata.Args {
 		if strings.Contains(arg, placeholderAPIKey) {
@@ -151,6 +166,64 @@ func TestRunCommandAgainstFakeOpenAIServer(t *testing.T) {
 	if summary.Groups[0].TotalCompletionTokens != 2 {
 		t.Fatalf("total completion tokens = %d, want 2", summary.Groups[0].TotalCompletionTokens)
 	}
+	if summary.Groups[0].RequestedServiceTier != "default" {
+		t.Fatalf("requested service tier = %q, want default", summary.Groups[0].RequestedServiceTier)
+	}
+	if summary.Groups[0].ObservedServiceTierCounts["default"] != 1 {
+		t.Fatalf("observed service tiers = %#v, want default count 1", summary.Groups[0].ObservedServiceTierCounts)
+	}
+}
+
+// TestRunCommandCanUseChatCompletionsCompatibility verifies the explicit compatibility API posts to /chat/completions.
+func TestRunCommandCanUseChatCompletionsCompatibility(t *testing.T) {
+	const placeholderAPIKey = "cli-test-key"
+
+	var sawChatPath atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("path = %q, want /chat/completions", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		sawChatPath.Store(true)
+		var body struct {
+			ServiceTier string `json:"service_tier"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		if body.ServiceTier != "flex" {
+			t.Errorf("service_tier = %q, want flex", body.ServiceTier)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeCLISSEData(t, w, `{"service_tier":"flex","choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
+		writeCLISSEData(t, w, `{"service_tier":"flex","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"prompt_tokens_details":{"cached_tokens":0}}}`)
+		writeCLISSEData(t, w, "[DONE]")
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "openai",
+		"--openai-api", "chat-completions",
+		"--base-url", server.URL,
+		"--api-key", placeholderAPIKey,
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "1",
+		"--warmup", "0",
+		"--service-tier", "flex",
+		"--max-output-tokens", "8",
+		"--out", filepath.Join(t.TempDir(), "reports"),
+	}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !sawChatPath.Load() {
+		t.Fatal("chat completions path was not observed")
+	}
 }
 
 // TestRunCommandGeneratesOutputDir verifies --out is optional and creates a runs/ directory automatically.
@@ -163,8 +236,8 @@ func TestRunCommandGeneratesOutputDir(t *testing.T) {
 			t.Errorf("authorization header = %q", got)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		writeCLISSE(t, w, `{"choices":[{"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
-		writeCLISSE(t, w, "[DONE]")
+		writeCLISSEEvent(t, w, "response.output_text.delta", `{"type":"response.output_text.delta","delta":"Hello"}`)
+		writeCLISSEEvent(t, w, "response.completed", `{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2}}}`)
 	}))
 	defer server.Close()
 
@@ -179,7 +252,7 @@ func TestRunCommandGeneratesOutputDir(t *testing.T) {
 		"--prompt", "Say hello.",
 		"--samples", "1",
 		"--warmup", "0",
-		"--max-output-tokens", "8",
+		"--max-output-tokens", "16",
 	}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
@@ -301,7 +374,16 @@ func TestRunCommandRejectsInvalidProvider(t *testing.T) {
 	}
 }
 
-func writeCLISSE(t *testing.T, w http.ResponseWriter, data string) {
+func writeCLISSEEvent(t *testing.T, w http.ResponseWriter, event string, data string) {
+	t.Helper()
+
+	if _, err := w.Write([]byte("event: " + event + "\n")); err != nil {
+		t.Errorf("write SSE event: %v", err)
+	}
+	writeCLISSEData(t, w, data)
+}
+
+func writeCLISSEData(t *testing.T, w http.ResponseWriter, data string) {
 	t.Helper()
 
 	if _, err := w.Write([]byte("data: " + data + "\n\n")); err != nil {

@@ -9,8 +9,14 @@ func TestConfigBaseURLDefault(t *testing.T) {
 	if got := cfg.baseURL(); got != DefaultBaseURL {
 		t.Fatalf("baseURL = %q, want %q", got, DefaultBaseURL)
 	}
-	if got := cfg.endpointURL(); got != DefaultBaseURL+"/chat/completions" {
-		t.Fatalf("endpointURL = %q, want default chat completions endpoint", got)
+	if got := cfg.api(); got != ResponsesAPI {
+		t.Fatalf("api = %q, want responses default", got)
+	}
+	if got := cfg.responsesEndpointURL(); got != DefaultBaseURL+"/responses" {
+		t.Fatalf("responses endpoint = %q, want default responses endpoint", got)
+	}
+	if got := cfg.chatCompletionsEndpointURL(); got != DefaultBaseURL+"/chat/completions" {
+		t.Fatalf("chat endpoint = %q, want default chat completions endpoint", got)
 	}
 }
 
@@ -18,8 +24,11 @@ func TestConfigBaseURLDefault(t *testing.T) {
 func TestConfigEndpointURLTrimsTrailingSlash(t *testing.T) {
 	cfg := Config{BaseURL: "https://example.test/v1/"}
 
-	if got := cfg.endpointURL(); got != "https://example.test/v1/chat/completions" {
-		t.Fatalf("endpointURL = %q, want trimmed endpoint", got)
+	if got := cfg.responsesEndpointURL(); got != "https://example.test/v1/responses" {
+		t.Fatalf("responses endpoint = %q, want trimmed endpoint", got)
+	}
+	if got := cfg.chatCompletionsEndpointURL(); got != "https://example.test/v1/chat/completions" {
+		t.Fatalf("chat endpoint = %q, want trimmed endpoint", got)
 	}
 }
 

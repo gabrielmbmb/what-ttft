@@ -15,17 +15,17 @@ import (
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
-// TestProviderStreamChatParsesStreamingEvents verifies OpenAI-compatible streaming chunks are normalized.
-func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
+// TestProviderStreamChatDefaultsToResponsesAPIParsesStreamingEvents verifies Responses streams are the default OpenAI path.
+func TestProviderStreamChatDefaultsToResponsesAPIParsesStreamingEvents(t *testing.T) {
 	const apiKey = "test-secret"
 
-	requestCh := make(chan chatCompletionRequest, 1)
+	requestCh := make(chan responseRequest, 1)
 	handlerErrors := make(chan string, 8)
 	var sawAuth atomic.Bool
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			handlerErrors <- fmt.Sprintf("path = %q, want /chat/completions", r.URL.Path)
+		if r.URL.Path != "/responses" {
+			handlerErrors <- fmt.Sprintf("path = %q, want /responses", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
@@ -46,6 +46,75 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 			handlerErrors <- fmt.Sprintf("project header = %q, want project-1", got)
 		}
 
+		var reqBody responseRequest
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			handlerErrors <- fmt.Sprintf("decode request body: %v", err)
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		requestCh <- reqBody
+
+		w.Header().Set(openAIProcessingMSHeader, "42")
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeRaw(t, w, ": heartbeat\n\n")
+		writeSSEEvent(t, w, "response.created", `{"type":"response.created","response":{"status":"in_progress","service_tier":"priority"}}`)
+		writeSSEEvent(t, w, "response.content_part.added", `{"type":"response.content_part.added","part":{"type":"output_text","text":""}}`)
+		writeSSEEvent(t, w, responseOutputTextDeltaEvent, `{"type":"response.output_text.delta","delta":"Hello"}`)
+		writeSSEEvent(t, w, responseOutputTextDeltaEvent, `{"type":"response.output_text.delta","delta":" world"}`)
+		writeSSEEvent(t, w, "response.completed", `{"type":"response.completed","response":{"status":"completed","service_tier":"priority","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":12}}}`)
+	}))
+	defer server.Close()
+
+	temperature := 0.0
+	topP := 1.0
+	provider := New(Config{
+		BaseURL:      server.URL,
+		APIKey:       apiKey,
+		Organization: "org-1",
+		Project:      "project-1",
+		Model:        "gpt-test",
+		ServiceTier:  ServiceTierPriority,
+		IncludeUsage: true,
+	})
+	obs := newTestObserver()
+
+	err := provider.StreamChat(context.Background(), whatttft.ProviderRequest{
+		RequestID: "req-1",
+		Scenario: whatttft.Scenario{
+			SystemPrompt:    "You are concise.",
+			MaxOutputTokens: 16,
+			Temperature:     &temperature,
+			TopP:            &topP,
+			ReasoningEffort: "none",
+		},
+		Prompt: "Say hello.",
+	}, obs)
+	if err != nil {
+		t.Fatalf("stream responses: %v", err)
+	}
+	assertNoHandlerErrors(t, handlerErrors)
+	if !sawAuth.Load() {
+		t.Fatal("authorization header was not observed")
+	}
+
+	requestBody := <-requestCh
+	assertResponsesRequest(t, requestBody)
+	assertSuccessfulResponsesObservation(t, obs)
+}
+
+// TestProviderStreamChatCompletionsCompatibilityParsesStreamingEvents verifies the explicit Chat Completions compatibility path.
+func TestProviderStreamChatCompletionsCompatibilityParsesStreamingEvents(t *testing.T) {
+	const apiKey = "test-secret"
+
+	requestCh := make(chan chatCompletionRequest, 1)
+	handlerErrors := make(chan string, 8)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			handlerErrors <- fmt.Sprintf("path = %q, want /chat/completions", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
 		var reqBody chatCompletionRequest
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			handlerErrors <- fmt.Sprintf("decode request body: %v", err)
@@ -58,10 +127,10 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		writeRaw(t, w, ": heartbeat\n\n")
 		writeSSE(t, w, "")
-		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"role":"assistant"}}]}`)
-		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"content":"Hello"}}]}`)
-		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}`)
-		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":0}}}`)
+		writeSSE(t, w, `{"service_tier":"flex","choices":[{"index":0,"delta":{"role":"assistant"}}]}`)
+		writeSSE(t, w, `{"service_tier":"flex","choices":[{"index":0,"delta":{"content":"Hello"}}]}`)
+		writeSSE(t, w, `{"service_tier":"flex","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}`)
+		writeSSE(t, w, `{"service_tier":"flex","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":0}}}`)
 		writeSSE(t, w, "[DONE]")
 	}))
 	defer server.Close()
@@ -70,11 +139,11 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 	topP := 1.0
 	seed := int64(123)
 	provider := New(Config{
+		API:          ChatCompletionsAPI,
 		BaseURL:      server.URL,
 		APIKey:       apiKey,
-		Organization: "org-1",
-		Project:      "project-1",
 		Model:        "gpt-test",
+		ServiceTier:  ServiceTierFlex,
 		IncludeUsage: true,
 	})
 	obs := newTestObserver()
@@ -93,16 +162,13 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 		Prompt: "Say hello.",
 	}, obs)
 	if err != nil {
-		t.Fatalf("stream chat: %v", err)
+		t.Fatalf("stream chat completions: %v", err)
 	}
 	assertNoHandlerErrors(t, handlerErrors)
-	if !sawAuth.Load() {
-		t.Fatal("authorization header was not observed")
-	}
 
 	requestBody := <-requestCh
 	assertChatRequest(t, requestBody)
-	assertSuccessfulObservation(t, obs)
+	assertSuccessfulChatObservation(t, obs)
 }
 
 // TestProviderStreamChatReturnsRedactedAPIError verifies non-2xx responses include bounded redacted details.
@@ -140,7 +206,7 @@ func TestProviderStreamChatReturnsRedactedAPIError(t *testing.T) {
 	}
 }
 
-// TestProviderStreamChatMalformedJSON verifies malformed chunks return decode errors without marking stream completion.
+// TestProviderStreamChatMalformedJSON verifies malformed Responses events return decode errors without marking stream completion.
 func TestProviderStreamChatMalformedJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -155,7 +221,7 @@ func TestProviderStreamChatMalformedJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected decode error")
 	}
-	if !strings.Contains(err.Error(), "decode chat completion chunk") {
+	if !strings.Contains(err.Error(), "decode response stream event") {
 		t.Fatalf("error = %q, want decode context", err.Error())
 	}
 	if obs.eventCount(whatttft.EventDone) != 0 {
@@ -201,7 +267,7 @@ func TestParseOpenAIProcessingMS(t *testing.T) {
 
 // TestProviderChatRequestUsesLegacyMaxTokens verifies legacy max_tokens compatibility mode.
 func TestProviderChatRequestUsesLegacyMaxTokens(t *testing.T) {
-	provider := New(Config{Model: "gpt-test", UseLegacyMaxTokens: true})
+	provider := New(Config{API: ChatCompletionsAPI, Model: "gpt-test", UseLegacyMaxTokens: true})
 	req := provider.chatRequest(whatttft.ProviderRequest{
 		Scenario: whatttft.Scenario{MaxOutputTokens: 7},
 		Prompt:   "hello",
@@ -217,14 +283,20 @@ func TestProviderChatRequestUsesLegacyMaxTokens(t *testing.T) {
 
 // TestProviderCapabilitiesReflectConfig verifies the provider advertises standardized capabilities.
 func TestProviderCapabilitiesReflectConfig(t *testing.T) {
-	provider := New(Config{Model: "gpt-test", IncludeUsage: true})
-	capabilities := provider.Capabilities()
-
-	if provider.Name() != providerName {
-		t.Fatalf("provider name = %q, want %q", provider.Name(), providerName)
+	responsesProvider := New(Config{Model: "gpt-test"})
+	responsesCapabilities := responsesProvider.Capabilities()
+	if !responsesCapabilities.SupportsUsageInStream {
+		t.Fatal("Responses API should support usage in terminal stream events")
 	}
-	if provider.Model() != "gpt-test" {
-		t.Fatalf("model = %q, want gpt-test", provider.Model())
+
+	chatProvider := New(Config{API: ChatCompletionsAPI, Model: "gpt-test", IncludeUsage: true})
+	capabilities := chatProvider.Capabilities()
+
+	if chatProvider.Name() != providerName {
+		t.Fatalf("provider name = %q, want %q", chatProvider.Name(), providerName)
+	}
+	if chatProvider.Model() != "gpt-test" {
+		t.Fatalf("model = %q, want gpt-test", chatProvider.Model())
 	}
 	if capabilities.StreamingProtocol != streamProtocolSSE {
 		t.Fatalf("stream protocol = %q, want %q", capabilities.StreamingProtocol, streamProtocolSSE)
@@ -236,7 +308,7 @@ func TestProviderCapabilitiesReflectConfig(t *testing.T) {
 		t.Fatal("supports usage should reflect IncludeUsage")
 	}
 	if capabilities.SupportsTokenEvents {
-		t.Fatal("OpenAI Chat Completions chunks are not true token events")
+		t.Fatal("OpenAI stream chunks are not true token events")
 	}
 }
 
@@ -252,6 +324,47 @@ func TestProviderStreamChatValidatesRequiredInputs(t *testing.T) {
 	}
 	if err := New(Config{Model: "gpt-test", APIKey: "key"}).StreamChat(context.Background(), whatttft.ProviderRequest{}, nil); err == nil {
 		t.Fatal("missing observer should fail")
+	}
+	if err := New(Config{Model: "gpt-test", APIKey: "key", API: API("other")}).StreamChat(context.Background(), whatttft.ProviderRequest{}, obs); err == nil {
+		t.Fatal("unsupported API should fail")
+	}
+	if err := New(Config{Model: "gpt-test", APIKey: "key", ServiceTier: ServiceTier("vip")}).StreamChat(context.Background(), whatttft.ProviderRequest{}, obs); err == nil {
+		t.Fatal("unsupported service tier should fail")
+	}
+	if err := New(Config{Model: "gpt-test", APIKey: "key", UseLegacyMaxTokens: true}).StreamChat(context.Background(), whatttft.ProviderRequest{}, obs); err == nil {
+		t.Fatal("legacy max_tokens with Responses should fail")
+	}
+	if err := New(Config{Model: "gpt-test", APIKey: "key"}).StreamChat(context.Background(), whatttft.ProviderRequest{Scenario: whatttft.Scenario{MaxOutputTokens: 8}}, obs); err == nil {
+		t.Fatal("Responses max_output_tokens below minimum should fail")
+	}
+}
+
+func assertResponsesRequest(t *testing.T, req responseRequest) {
+	t.Helper()
+
+	if req.Model != "gpt-test" {
+		t.Fatalf("model = %q, want gpt-test", req.Model)
+	}
+	if req.Input != "Say hello." {
+		t.Fatalf("input = %q, want prompt", req.Input)
+	}
+	if req.Instructions != "You are concise." {
+		t.Fatalf("instructions = %q, want system prompt", req.Instructions)
+	}
+	if !req.Stream {
+		t.Fatal("stream should be true")
+	}
+	if req.StreamOptions == nil || req.StreamOptions.IncludeObfuscation == nil || *req.StreamOptions.IncludeObfuscation {
+		t.Fatalf("stream options = %#v, want include_obfuscation false", req.StreamOptions)
+	}
+	if req.MaxOutputTokens == nil || *req.MaxOutputTokens != 16 {
+		t.Fatalf("max_output_tokens = %v, want 16", req.MaxOutputTokens)
+	}
+	if req.Reasoning == nil || req.Reasoning.Effort != "none" {
+		t.Fatalf("reasoning = %#v, want none", req.Reasoning)
+	}
+	if req.ServiceTier != ServiceTierPriority {
+		t.Fatalf("service_tier = %q, want priority", req.ServiceTier)
 	}
 }
 
@@ -282,12 +395,78 @@ func assertChatRequest(t *testing.T, req chatCompletionRequest) {
 	if req.ReasoningEffort != "none" {
 		t.Fatalf("reasoning_effort = %q, want none", req.ReasoningEffort)
 	}
+	if req.ServiceTier != ServiceTierFlex {
+		t.Fatalf("service_tier = %q, want flex", req.ServiceTier)
+	}
 	if req.MaxTokens != nil {
 		t.Fatalf("max_tokens = %v, want nil", *req.MaxTokens)
 	}
 }
 
-func assertSuccessfulObservation(t *testing.T, obs *testObserver) {
+func assertSuccessfulResponsesObservation(t *testing.T, obs *testObserver) {
+	t.Helper()
+
+	for _, name := range []whatttft.EventName{
+		whatttft.EventRequestStart,
+		whatttft.EventHeadersReceived,
+		whatttft.EventFirstSSEEvent,
+		whatttft.EventFirstOutputDelta,
+		whatttft.EventLastOutputDelta,
+		whatttft.EventDone,
+		whatttft.EventBodyEOF,
+	} {
+		if obs.eventCount(name) == 0 {
+			t.Fatalf("event %q was not marked", name)
+		}
+	}
+
+	visible := obs.visibleOutput()
+	if len(visible) != 2 {
+		t.Fatalf("visible output count = %d, want 2", len(visible))
+	}
+	if visible[0].Text != "Hello" || visible[1].Text != " world" {
+		t.Fatalf("visible output = %#v, want Hello/world", visible)
+	}
+
+	usageRecords := obs.usages()
+	if len(usageRecords) != 1 {
+		t.Fatalf("usage count = %d, want 1", len(usageRecords))
+	}
+	if usageRecords[0].PromptTokens == nil || *usageRecords[0].PromptTokens != 10 {
+		t.Fatalf("prompt tokens = %v, want 10", usageRecords[0].PromptTokens)
+	}
+	if usageRecords[0].CompletionTokens == nil || *usageRecords[0].CompletionTokens != 2 {
+		t.Fatalf("completion tokens = %v, want 2", usageRecords[0].CompletionTokens)
+	}
+	if usageRecords[0].Extra["reasoning_tokens"] != 1 {
+		t.Fatalf("usage extra = %#v, want reasoning_tokens 1", usageRecords[0].Extra)
+	}
+
+	cacheRecords := obs.caches()
+	if len(cacheRecords) != 1 {
+		t.Fatalf("cache count = %d, want 1", len(cacheRecords))
+	}
+	if cacheRecords[0].Hit == nil || *cacheRecords[0].Hit {
+		t.Fatalf("cache hit = %v, want pointer to false", cacheRecords[0].Hit)
+	}
+
+	finishEvents := obs.finishes()
+	if len(finishEvents) != 1 || !finishEvents[0].Terminal {
+		t.Fatalf("finish events = %#v, want one terminal event", finishEvents)
+	}
+	httpRecord := obs.latestHTTP()
+	if httpRecord.StatusCode != http.StatusOK {
+		t.Fatalf("observed HTTP status = %d, want 200", httpRecord.StatusCode)
+	}
+	if httpRecord.RequestedServiceTier != string(ServiceTierPriority) || httpRecord.ObservedServiceTier != string(ServiceTierPriority) {
+		t.Fatalf("HTTP service tiers = requested %q observed %q, want priority/priority", httpRecord.RequestedServiceTier, httpRecord.ObservedServiceTier)
+	}
+	if httpRecord.ProviderProcessingMS == nil || *httpRecord.ProviderProcessingMS != 42 {
+		t.Fatalf("provider processing ms = %v, want 42", httpRecord.ProviderProcessingMS)
+	}
+}
+
+func assertSuccessfulChatObservation(t *testing.T, obs *testObserver) {
 	t.Helper()
 
 	for _, name := range []whatttft.EventName{
@@ -362,6 +541,9 @@ func assertSuccessfulObservation(t *testing.T, obs *testObserver) {
 	if httpRecord.StatusCode != http.StatusOK {
 		t.Fatalf("observed HTTP status = %d, want 200", httpRecord.StatusCode)
 	}
+	if httpRecord.RequestedServiceTier != string(ServiceTierFlex) || httpRecord.ObservedServiceTier != string(ServiceTierFlex) {
+		t.Fatalf("HTTP service tiers = requested %q observed %q, want flex/flex", httpRecord.RequestedServiceTier, httpRecord.ObservedServiceTier)
+	}
 	if httpRecord.ProviderProcessingMS == nil || *httpRecord.ProviderProcessingMS != 42 {
 		t.Fatalf("provider processing ms = %v, want 42", httpRecord.ProviderProcessingMS)
 	}
@@ -378,6 +560,12 @@ func assertNoHandlerErrors(t *testing.T, errors <-chan string) {
 			return
 		}
 	}
+}
+
+func writeSSEEvent(t *testing.T, w http.ResponseWriter, event string, data string) {
+	t.Helper()
+	writeRaw(t, w, "event: "+event+"\n")
+	writeSSE(t, w, data)
 }
 
 func writeSSE(t *testing.T, w http.ResponseWriter, data string) {

@@ -14,16 +14,18 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	ttfbMS := 123.45
 
 	rec := RequestRecord{
-		RequestID:      "req-001",
-		Provider:       "openai",
-		Model:          "test-model",
-		ScenarioName:   "short",
-		Warmup:         false,
-		Attempt:        1,
-		CacheMode:      CacheBust,
-		ConnectionMode: WarmConnections,
-		PromptHash:     strings.Repeat("a", 64),
-		PromptTokens:   &promptTokens,
+		RequestID:            "req-001",
+		Provider:             "openai",
+		Model:                "test-model",
+		ScenarioName:         "short",
+		Warmup:               false,
+		Attempt:              1,
+		CacheMode:            CacheBust,
+		ConnectionMode:       WarmConnections,
+		RequestedServiceTier: "priority",
+		ObservedServiceTier:  "priority",
+		PromptHash:           strings.Repeat("a", 64),
+		PromptTokens:         &promptTokens,
 		Cache: CacheRecord{
 			Hit:                &cacheHit,
 			PromptCachedTokens: intPtr(0),
@@ -33,6 +35,8 @@ func TestRequestRecordJSONShape(t *testing.T) {
 			Status:               "200 OK",
 			Protocol:             "HTTP/2.0",
 			ProviderProcessingMS: &providerProcessingMS,
+			RequestedServiceTier: "priority",
+			ObservedServiceTier:  "priority",
 			GotConn:              true,
 			ConnReused:           true,
 			ConnWasIdle:          true,
@@ -71,6 +75,9 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	}
 	if got.ConnectionMode != WarmConnections {
 		t.Fatalf("connection mode = %q, want %q", got.ConnectionMode, WarmConnections)
+	}
+	if got.RequestedServiceTier != "priority" || got.ObservedServiceTier != "priority" {
+		t.Fatalf("service tiers = requested %q observed %q, want priority/priority", got.RequestedServiceTier, got.ObservedServiceTier)
 	}
 	if got.Timeline.EventsNS[EventFirstOutputDelta] != 200000000 {
 		t.Fatalf("first output delta ns = %d, want 200000000", got.Timeline.EventsNS[EventFirstOutputDelta])

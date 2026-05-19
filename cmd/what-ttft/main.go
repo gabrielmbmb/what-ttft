@@ -15,7 +15,7 @@ Usage:
   what-ttft run [flags]
 
 Commands:
-  run      benchmark an OpenAI-compatible streaming Chat Completions endpoint
+  run      benchmark an OpenAI streaming endpoint; Responses API is the OpenAI default
   version  print build version information
 `
 

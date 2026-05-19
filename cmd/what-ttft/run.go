@@ -65,6 +65,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet.Usage = func() { printRunUsage(flagSet.Output()) }
 
 	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark (openai for v0.1)")
+	flagSet.StringVar(&cfg.openAIAPI, "openai-api", string(openai.ResponsesAPI), "OpenAI API surface: responses|chat-completions")
 	flagSet.StringVar(&cfg.baseURL, "base-url", openai.DefaultBaseURL, "provider API base URL")
 	flagSet.StringVar(&cfg.apiKeyEnv, "api-key-env", "OPENAI_API_KEY", "environment variable containing the API key")
 	flagSet.StringVar(&cfg.apiKey, "api-key", "", "API key for local testing; never printed")
@@ -78,6 +79,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet.StringVar(&cfg.connectionMode, "connection-mode", string(whatttft.WarmConnections), "warm|cold")
 	flagSet.StringVar(&cfg.reasoningEffort, "reasoning-effort", "", "optional reasoning/thinking effort: none|minimal|low|medium|high|xhigh")
 	flagSet.StringVar(&cfg.reasoningEffort, "thinking-effort", "", "alias for --reasoning-effort")
+	flagSet.StringVar(&cfg.serviceTier, "service-tier", "", "optional OpenAI service tier: auto|default|flex|scale|priority")
 	flagSet.IntVar(&cfg.maxOutputTokens, "max-output-tokens", 64, "maximum output tokens")
 	flagSet.Var(&cfg.temperature, "temperature", "optional sampling temperature, e.g. 0")
 	flagSet.Var(&cfg.topP, "top-p", "optional nucleus sampling value, e.g. 1")
@@ -111,6 +113,7 @@ Required flags:
   --prompt PROMPT
 
 Common flags:
+  --openai-api responses|chat-completions
   --base-url URL
   --api-key-env ENV
   --api-key KEY
@@ -121,6 +124,7 @@ Common flags:
   --connection-mode warm|cold
   --reasoning-effort none|minimal|low|medium|high|xhigh
   --thinking-effort none|minimal|low|medium|high|xhigh
+  --service-tier auto|default|flex|scale|priority
   --max-output-tokens N
   --temperature FLOAT
   --top-p FLOAT
@@ -169,10 +173,12 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 		Timeout:        cfg.timeout,
 	})
 	provider := openai.New(openai.Config{
+		API:                openai.API(cfg.openAIAPI),
 		BaseURL:            cfg.baseURL,
 		APIKey:             apiKey,
 		APIKeyEnv:          "",
 		Model:              cfg.model,
+		ServiceTier:        openai.ServiceTier(cfg.serviceTier),
 		UseLegacyMaxTokens: cfg.legacyMaxTokens,
 		IncludeUsage:       cfg.includeUsage,
 		HTTPClient:         client,
@@ -182,14 +188,16 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 	result, err := whatttft.NewRunner(provider, runConfig).Run(ctx)
 	end := time.Now()
 	metadata := report.RunMetadata{
-		Provider:          provider.Name(),
-		Model:             provider.Model(),
-		BaseURL:           cfg.baseURL,
-		Scenario:          scenario,
-		RunConfig:         runConfig,
-		WallStartUnixNano: start.UnixNano(),
-		WallEndUnixNano:   end.UnixNano(),
-		Args:              redactArgs(args),
+		Provider:             provider.Name(),
+		Model:                provider.Model(),
+		BaseURL:              cfg.baseURL,
+		ProviderAPI:          cfg.openAIAPI,
+		RequestedServiceTier: cfg.serviceTier,
+		Scenario:             scenario,
+		RunConfig:            runConfig,
+		WallStartUnixNano:    start.UnixNano(),
+		WallEndUnixNano:      end.UnixNano(),
+		Args:                 redactArgs(args),
 	}
 	if err != nil {
 		return result, metadata, err
@@ -202,9 +210,11 @@ func outputDirMetadata(cfg runCLIConfig) report.RunMetadata {
 	scenario := whatttft.Scenario{Name: adHocScenarioName}
 
 	return report.RunMetadata{
-		Provider: cfg.provider,
-		Model:    cfg.model,
-		Scenario: scenario,
+		Provider:             cfg.provider,
+		Model:                cfg.model,
+		ProviderAPI:          cfg.openAIAPI,
+		RequestedServiceTier: cfg.serviceTier,
+		Scenario:             scenario,
 		RunConfig: whatttft.RunConfig{
 			Scenario:       scenario,
 			CacheMode:      whatttft.CacheMode(cfg.cacheMode),
@@ -216,8 +226,9 @@ func outputDirMetadata(cfg runCLIConfig) report.RunMetadata {
 func printRunSummary(output io.Writer, cfg runCLIConfig, result *whatttft.RunResult) {
 	writeFormatted(
 		output,
-		"provider=%s model=%s scenario=%s samples=%d warmup=%d concurrency=%d cache=%s connection=%s successful=%d errors=%d\n\n",
+		"provider=%s api=%s model=%s scenario=%s samples=%d warmup=%d concurrency=%d cache=%s connection=%s service_tier=%s successful=%d errors=%d\n\n",
 		cfg.provider,
+		cfg.openAIAPI,
 		cfg.model,
 		adHocScenarioName,
 		cfg.samples,
@@ -225,6 +236,7 @@ func printRunSummary(output io.Writer, cfg runCLIConfig, result *whatttft.RunRes
 		cfg.concurrency,
 		cfg.cacheMode,
 		cfg.connectionMode,
+		firstNonEmptyString(cfg.serviceTier, "unset"),
 		result.Summary.SuccessfulRequests,
 		result.Summary.ErrorRequests,
 	)
@@ -259,6 +271,14 @@ func formatCLIOptionalFloat(value *float64) string {
 	}
 
 	return fmt.Sprintf("%.1f", *value)
+}
+
+func firstNonEmptyString(value string, fallback string) string {
+	if value != "" {
+		return value
+	}
+
+	return fallback
 }
 
 func resolveAPIKey(cfg runCLIConfig) (string, error) {
@@ -297,6 +317,7 @@ func redactArgs(args []string) []string {
 
 type runCLIConfig struct {
 	provider        string
+	openAIAPI       string
 	baseURL         string
 	apiKeyEnv       string
 	apiKey          string
@@ -309,6 +330,7 @@ type runCLIConfig struct {
 	cacheMode       string
 	connectionMode  string
 	reasoningEffort string
+	serviceTier     string
 	maxOutputTokens int
 	temperature     optionalFloat
 	topP            optionalFloat
@@ -360,6 +382,12 @@ func (c runCLIConfig) validate() error {
 	if !validReasoningEffort(c.reasoningEffort) {
 		return fmt.Errorf("unsupported reasoning effort %q", c.reasoningEffort)
 	}
+	if !validOpenAIAPI(openai.API(c.openAIAPI)) {
+		return fmt.Errorf("unsupported OpenAI API %q", c.openAIAPI)
+	}
+	if !validServiceTier(openai.ServiceTier(c.serviceTier)) {
+		return fmt.Errorf("unsupported service tier %q", c.serviceTier)
+	}
 
 	return nil
 }
@@ -376,6 +404,24 @@ func validCacheMode(mode whatttft.CacheMode) bool {
 func validConnectionMode(mode whatttft.ConnectionMode) bool {
 	switch mode {
 	case whatttft.WarmConnections, whatttft.ColdConnections:
+		return true
+	default:
+		return false
+	}
+}
+
+func validOpenAIAPI(api openai.API) bool {
+	switch api {
+	case openai.ResponsesAPI, openai.ChatCompletionsAPI:
+		return true
+	default:
+		return false
+	}
+}
+
+func validServiceTier(tier openai.ServiceTier) bool {
+	switch tier {
+	case "", openai.ServiceTierAuto, openai.ServiceTierDefault, openai.ServiceTierFlex, openai.ServiceTierScale, openai.ServiceTierPriority:
 		return true
 	default:
 		return false
