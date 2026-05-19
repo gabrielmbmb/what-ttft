@@ -18,6 +18,9 @@ func TestRunCLIPrintsTopLevelHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "what-ttft run [flags]") {
 		t.Fatalf("stdout missing run usage:\n%s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "what-ttft bench --config benchmark.yaml") || !strings.Contains(stdout.String(), "bench    run a YAML benchmark") {
+		t.Fatalf("stdout missing bench usage:\n%s", stdout.String())
+	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}

@@ -1941,7 +1941,7 @@ Definition of done:
 
 ---
 
-### [ ] 23. Add the `what-ttft bench --config` CLI command
+### [x] 23. Add the `what-ttft bench --config` CLI command
 
 Expose YAML benchmarks through a dedicated CLI command while keeping `run` unchanged for single-model ad-hoc use.
 
@@ -2007,6 +2007,15 @@ Implementation details:
   - `--dry-run` sends no HTTP requests;
   - two-target fake OpenAI benchmark writes reports and prints comparison rows;
   - output files do not contain fake API key values.
+
+Implemented details:
+
+- Added a `bench` subcommand to the top-level CLI and usage text while preserving the existing `run` command behavior.
+- Implemented `what-ttft bench --config benchmark.yaml` with standard-library flag parsing, output overwrite checks, dry-run mode, and optional overrides for save chunks, samples, warmup, concurrency, timeout, and OpenAI service tier.
+- Wired YAML configs through `internal/configfile`, resolved API keys from `api_key_env` before provider requests, built one OpenAI provider/client per target, and executed the public multi-target benchmark runner.
+- Wrote combined report outputs through the existing report writer and printed a concise target comparison table with TTFT/E2E and TPS columns.
+- Added dry-run plan printing with redacted base URLs and API key environment names only; no API key values are printed or written.
+- Added CLI tests for help text, missing `--config`, invalid YAML exit code 2, dry-run with no HTTP requests or files, two-target fake OpenAI Responses benchmark output, service-tier override, report file creation, summary grouping, and secret non-leakage.
 
 Definition of done:
 

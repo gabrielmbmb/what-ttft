@@ -1,0 +1,319 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/gabrielmbmb/what-ttft/internal/report"
+	"github.com/gabrielmbmb/what-ttft/internal/testserver"
+	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
+)
+
+// TestBenchCommandHelp verifies bench-specific help lists YAML benchmark flags.
+func TestBenchCommandHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI([]string{"bench", "--help"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "--config PATH") || !strings.Contains(stderr.String(), "--dry-run") || !strings.Contains(stderr.String(), "--service-tier") {
+		t.Fatalf("stderr missing bench help:\n%s", stderr.String())
+	}
+}
+
+// TestBenchCommandRequiresConfig verifies --config is mandatory.
+func TestBenchCommandRequiresConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runCLI([]string{"bench"}, &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "--config is required") {
+		t.Fatalf("stderr missing config error:\n%s", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+// TestBenchCommandRejectsInvalidYAML verifies config parse and validation errors use usage exit code 2.
+func TestBenchCommandRejectsInvalidYAML(t *testing.T) {
+	configPath := writeBenchConfig(t, `
+schema_version: 1
+unexpected: true
+run:
+  samples: 1
+scenario:
+  prompt: hello
+targets:
+  - model: gpt-test
+    api_key_env: WHAT_TTFT_BENCH_KEY
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath}, &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "config:") || !strings.Contains(stderr.String(), "field unexpected not found") {
+		t.Fatalf("stderr missing YAML validation error:\n%s", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+// TestBenchCommandDryRunSendsNoRequests verifies dry-run validates and prints a plan without touching the server or output directory.
+func TestBenchCommandDryRunSendsNoRequests(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "bench-dry-run-key"
+	t.Setenv("WHAT_TTFT_BENCH_KEY", placeholderAPIKey)
+
+	server := testserver.NewOpenAIServer(testserver.OpenAIConfig{Steps: benchResponseSteps()})
+	defer server.Close()
+	configPath := writeBenchConfig(t, benchYAML(server.URL(), "WHAT_TTFT_BENCH_KEY", "default"))
+	outputDir := filepath.Join(t.TempDir(), "dry-run-output")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", outputDir, "--dry-run", "--samples", "2"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if requests := server.Requests(); len(requests) != 0 {
+		t.Fatalf("server requests = %d, want 0", len(requests))
+	}
+	if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+		t.Fatalf("dry-run output dir stat error = %v, want not exist", err)
+	}
+	if !strings.Contains(stdout.String(), "dry run: no requests sent") || !strings.Contains(stdout.String(), "target-a") || !strings.Contains(stdout.String(), "samples=2") {
+		t.Fatalf("stdout missing dry-run plan:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked in dry-run output\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
+// TestBenchCommandAgainstFakeOpenAIServer verifies two YAML targets run through Responses by default and write combined reports.
+func TestBenchCommandAgainstFakeOpenAIServer(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "bench-cli-test-key"
+	t.Setenv("WHAT_TTFT_BENCH_KEY", placeholderAPIKey)
+
+	server := testserver.NewOpenAIServer(testserver.OpenAIConfig{Steps: benchResponseSteps()})
+	defer server.Close()
+	configPath := writeBenchConfig(t, benchYAML(server.URL(), "WHAT_TTFT_BENCH_KEY", "default"))
+	outputDir := filepath.Join(t.TempDir(), "reports")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"bench",
+		"--config", configPath,
+		"--out", outputDir,
+		"--save-chunks",
+	}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked in CLI output\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "target-a") || !strings.Contains(stdout.String(), "target-b") {
+		t.Fatalf("stdout missing target comparison rows:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "e2e_tps_mean") || !strings.Contains(stdout.String(), "gen_tps_mean") {
+		t.Fatalf("stdout missing TPS comparison columns:\n%s", stdout.String())
+	}
+
+	requests := server.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("server requests = %d, want 2", len(requests))
+	}
+	models := make([]string, 0, len(requests))
+	for _, request := range requests {
+		if request.Path != "/responses" {
+			t.Fatalf("request path = %q, want /responses", request.Path)
+		}
+		if !request.AuthorizationPresent {
+			t.Fatal("authorization header was not present")
+		}
+		if !request.Stream {
+			t.Fatal("stream should be true")
+		}
+		if request.ServiceTier != "default" {
+			t.Fatalf("service tier = %q, want default", request.ServiceTier)
+		}
+		models = append(models, request.Model)
+	}
+	sort.Strings(models)
+	if strings.Join(models, ",") != "gpt-a,gpt-b" {
+		t.Fatalf("models = %#v, want gpt-a,gpt-b", models)
+	}
+
+	for _, name := range []string{"run.json", "requests.jsonl", "chunks.jsonl", "summary.json", "summary.md"} {
+		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+	}
+
+	var metadata report.RunMetadata
+	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
+	if metadata.Provider != "openai" {
+		t.Fatalf("metadata provider = %q, want openai", metadata.Provider)
+	}
+	if metadata.ProviderAPI != "responses" {
+		t.Fatalf("provider API = %q, want responses", metadata.ProviderAPI)
+	}
+	if metadata.RequestedServiceTier != "default" {
+		t.Fatalf("requested service tier = %q, want default", metadata.RequestedServiceTier)
+	}
+	if metadata.RunConfig.MeasuredRequests != 1 || !metadata.RunConfig.SaveChunks {
+		t.Fatalf("run config measured/save_chunks = %d/%t, want 1/true", metadata.RunConfig.MeasuredRequests, metadata.RunConfig.SaveChunks)
+	}
+
+	var summary whatttft.RunSummary
+	readCLIJSONFile(t, filepath.Join(outputDir, "summary.json"), &summary)
+	if summary.MeasuredRequests != 2 || summary.SuccessfulRequests != 2 || summary.ErrorRequests != 0 {
+		t.Fatalf("summary counts = measured %d successful %d errors %d", summary.MeasuredRequests, summary.SuccessfulRequests, summary.ErrorRequests)
+	}
+	if len(summary.Groups) != 2 {
+		t.Fatalf("summary groups = %d, want 2", len(summary.Groups))
+	}
+	groupsByTarget := make(map[string]whatttft.SummaryGroup, len(summary.Groups))
+	for _, group := range summary.Groups {
+		groupsByTarget[group.TargetID] = group
+	}
+	for _, targetID := range []string{"target-a", "target-b"} {
+		group, ok := groupsByTarget[targetID]
+		if !ok {
+			t.Fatalf("missing summary group for %s", targetID)
+		}
+		if group.TotalCompletionTokens != 4 {
+			t.Fatalf("group %s completion tokens = %d, want 4", targetID, group.TotalCompletionTokens)
+		}
+		if group.RequestedServiceTier != "default" {
+			t.Fatalf("group %s requested tier = %q, want default", targetID, group.RequestedServiceTier)
+		}
+		if group.Metrics.E2EOutputTPS.Count != 1 {
+			t.Fatalf("group %s e2e TPS count = %d, want 1", targetID, group.Metrics.E2EOutputTPS.Count)
+		}
+	}
+
+	for _, name := range []string{"run.json", "requests.jsonl", "chunks.jsonl", "summary.json", "summary.md"} {
+		//nolint:gosec // Tests read fixed report filenames under t.TempDir.
+		data, err := os.ReadFile(filepath.Join(outputDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if bytes.Contains(data, []byte(placeholderAPIKey)) {
+			t.Fatalf("API key leaked in %s", name)
+		}
+	}
+}
+
+// TestBenchCommandServiceTierOverride verifies the CLI override applies to every OpenAI target.
+func TestBenchCommandServiceTierOverride(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "bench-cli-override-key"
+	t.Setenv("WHAT_TTFT_BENCH_KEY", placeholderAPIKey)
+	server := testserver.NewOpenAIServer(testserver.OpenAIConfig{Steps: benchResponseSteps()})
+	defer server.Close()
+	configPath := writeBenchConfig(t, benchYAML(server.URL(), "WHAT_TTFT_BENCH_KEY", "default"))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"bench",
+		"--config", configPath,
+		"--out", filepath.Join(t.TempDir(), "reports"),
+		"--service-tier", "priority",
+	}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	for _, request := range server.Requests() {
+		if request.ServiceTier != "priority" {
+			t.Fatalf("service tier = %q, want priority override", request.ServiceTier)
+		}
+	}
+}
+
+func benchYAML(baseURL string, apiKeyEnv string, serviceTier string) string {
+	return `schema_version: 1
+name: bench-test
+
+defaults:
+  provider: openai
+  api: responses
+  base_url: ` + baseURL + `
+  api_key_env: ` + apiKeyEnv + `
+  service_tier: ` + serviceTier + `
+
+run:
+  samples: 1
+  warmup: 0
+  concurrency: 1
+  cache_mode: cache-reuse
+  connection_mode: warm
+  timeout: 10s
+  save_chunks: false
+
+scenario:
+  name: bench-short
+  prompt: Say hello.
+  max_output_tokens: 16
+  reasoning_effort: none
+
+targets:
+  - id: target-a
+    name: Target A
+    model: gpt-a
+  - id: target-b
+    name: Target B
+    model: gpt-b
+`
+}
+
+func benchResponseSteps() []testserver.StreamStep {
+	return []testserver.StreamStep{
+		{Data: `{"type":"response.created","response":{"status":"in_progress","service_tier":"default"}}`},
+		{Data: `{"type":"response.output_text.delta","delta":"Hello"}`},
+		{Data: `{"type":"response.output_text.delta","delta":" world"}`},
+		{Data: `{"type":"response.completed","response":{"status":"completed","service_tier":"default","usage":{"input_tokens":3,"input_tokens_details":{"cached_tokens":0},"output_tokens":4,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":7}}}`},
+	}
+}
+
+func writeBenchConfig(t *testing.T, content string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "benchmark.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write benchmark config: %v", err)
+	}
+
+	return path
+}
+
+// TestBenchYAMLFixtureIsValidJSONEscapedResponses ensures the test SSE payloads remain valid JSON.
+func TestBenchYAMLFixtureIsValidJSONEscapedResponses(t *testing.T) {
+	for index, step := range benchResponseSteps() {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(step.Data), &decoded); err != nil {
+			t.Fatalf("step %d JSON invalid: %v", index, err)
+		}
+	}
+}

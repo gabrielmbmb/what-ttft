@@ -13,9 +13,11 @@ const usageText = `what-ttft benchmarks AI provider latency.
 Usage:
   what-ttft --help
   what-ttft run [flags]
+  what-ttft bench --config benchmark.yaml [flags]
 
 Commands:
-  run      benchmark an OpenAI streaming endpoint; Responses API is the OpenAI default
+  run      benchmark one OpenAI-compatible model from flags; Responses API is the OpenAI default
+  bench    run a YAML benchmark across one or more targets
   version  print build version information
 `
 
@@ -38,6 +40,8 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch args[0] {
 	case "run":
 		return runCommand(args[1:], stdout, stderr)
+	case "bench":
+		return benchCommand(args[1:], stdout, stderr)
 	case "version":
 		printVersion(stdout)
 		return 0
