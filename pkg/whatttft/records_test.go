@@ -29,6 +29,7 @@ func TestRequestRecordJSONShape(t *testing.T) {
 		ObservedServiceTier:  "priority",
 		PromptHash:           strings.Repeat("a", 64),
 		PromptTokens:         &promptTokens,
+		OutputDeltaCount:     2,
 		Cache: CacheRecord{
 			Hit:                &cacheHit,
 			PromptCachedTokens: intPtr(0),
@@ -85,6 +86,9 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	}
 	if got.RequestedServiceTier != "priority" || got.ObservedServiceTier != "priority" {
 		t.Fatalf("service tiers = requested %q observed %q, want priority/priority", got.RequestedServiceTier, got.ObservedServiceTier)
+	}
+	if got.OutputDeltaCount != 2 {
+		t.Fatalf("output delta count = %d, want 2", got.OutputDeltaCount)
 	}
 	if got.Timeline.EventsNS[EventFirstOutputDelta] != 200000000 {
 		t.Fatalf("first output delta ns = %d, want 200000000", got.Timeline.EventsNS[EventFirstOutputDelta])

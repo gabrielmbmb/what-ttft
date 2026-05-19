@@ -2,8 +2,17 @@ package whatttft
 
 import "time"
 
-// CalculateDerivedMetrics computes standardized request metrics from monotonic-relative timeline events.
+// CalculateDerivedMetrics computes standardized request metrics from monotonic-relative timeline events, omitting generation_delta_output_tps because the visible output delta count is unknown.
 func CalculateDerivedMetrics(timeline Timeline, completionTokens *int) DerivedMetrics {
+	return calculateDerivedMetrics(timeline, completionTokens, 0)
+}
+
+// CalculateDerivedMetricsWithOutputDeltaCount computes standardized request metrics and post-first-delta throughput when the visible output delta count is known.
+func CalculateDerivedMetricsWithOutputDeltaCount(timeline Timeline, completionTokens *int, outputDeltaCount int) DerivedMetrics {
+	return calculateDerivedMetrics(timeline, completionTokens, outputDeltaCount)
+}
+
+func calculateDerivedMetrics(timeline Timeline, completionTokens *int, outputDeltaCount int) DerivedMetrics {
 	metrics := DerivedMetrics{
 		HTTPTTFBMS:                    durationMS(timeline, EventRequestStart, EventFirstResponseByte),
 		HeadersLatencyMS:              durationMS(timeline, EventRequestStart, EventHeadersReceived),
@@ -20,7 +29,7 @@ func CalculateDerivedMetrics(timeline Timeline, completionTokens *int) DerivedMe
 		RequestWriteMS:                durationMS(timeline, EventGotConn, EventWroteRequest),
 	}
 	metrics.E2EOutputTPS = e2eOutputTPS(timeline, completionTokens)
-	metrics.GenerationDeltaOutputTPS = generationDeltaOutputTPS(timeline, completionTokens)
+	metrics.GenerationDeltaOutputTPS = generationDeltaOutputTPS(timeline, completionTokens, outputDeltaCount)
 
 	return metrics
 }
@@ -56,8 +65,8 @@ func e2eOutputTPS(timeline Timeline, completionTokens *int) *float64 {
 	return tokensPerSecond(*completionTokens, endNS-startNS)
 }
 
-func generationDeltaOutputTPS(timeline Timeline, completionTokens *int) *float64 {
-	if completionTokens == nil || *completionTokens <= 1 {
+func generationDeltaOutputTPS(timeline Timeline, completionTokens *int, outputDeltaCount int) *float64 {
+	if completionTokens == nil || *completionTokens <= 1 || outputDeltaCount <= 1 {
 		return nil
 	}
 

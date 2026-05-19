@@ -27,7 +27,7 @@ func TestCalculateDerivedMetricsCompleteTimeline(t *testing.T) {
 		EventBodyEOF:           ns(50 * time.Millisecond),
 	}}
 
-	metrics := CalculateDerivedMetrics(timeline, &completionTokens)
+	metrics := CalculateDerivedMetricsWithOutputDeltaCount(timeline, &completionTokens, 3)
 
 	assertMetric(t, "http_ttfb_ms", metrics.HTTPTTFBMS, 20)
 	assertMetric(t, "headers_latency_ms", metrics.HeadersLatencyMS, 21)
@@ -49,19 +49,19 @@ func TestCalculateDerivedMetricsCompleteTimeline(t *testing.T) {
 // TestCalculateDerivedMetricsMissingEvents verifies metrics are nil when either endpoint event is absent.
 func TestCalculateDerivedMetricsMissingEvents(t *testing.T) {
 	completionTokens := 4
-	metrics := CalculateDerivedMetrics(Timeline{EventsNS: map[EventName]int64{
+	metrics := CalculateDerivedMetricsWithOutputDeltaCount(Timeline{EventsNS: map[EventName]int64{
 		EventFirstResponseByte: ns(10 * time.Millisecond),
 		EventLastOutputDelta:   ns(20 * time.Millisecond),
-	}}, &completionTokens)
+	}}, &completionTokens, 2)
 
 	assertNilMetric(t, "http_ttfb_ms", metrics.HTTPTTFBMS)
 	assertNilMetric(t, "e2e_output_tps", metrics.E2EOutputTPS)
 	assertNilMetric(t, "generation_delta_output_tps", metrics.GenerationDeltaOutputTPS)
 
-	metrics = CalculateDerivedMetrics(Timeline{EventsNS: map[EventName]int64{
+	metrics = CalculateDerivedMetricsWithOutputDeltaCount(Timeline{EventsNS: map[EventName]int64{
 		EventRequestStart:     0,
 		EventFirstOutputDelta: ns(15 * time.Millisecond),
-	}}, nil)
+	}}, nil, 1)
 
 	assertMetric(t, "ttft_delta_ms", metrics.TTFTDeltaMS, 15)
 	assertNilMetric(t, "e2e_delta_ms", metrics.E2EDeltaMS)
@@ -72,7 +72,7 @@ func TestCalculateDerivedMetricsMissingEvents(t *testing.T) {
 
 // TestCalculateDerivedMetricsZeroDurations verifies observed zero-duration metrics are not treated as missing.
 func TestCalculateDerivedMetricsZeroDurations(t *testing.T) {
-	metrics := CalculateDerivedMetrics(Timeline{EventsNS: map[EventName]int64{
+	metrics := CalculateDerivedMetricsWithOutputDeltaCount(Timeline{EventsNS: map[EventName]int64{
 		EventRequestStart:      0,
 		EventFirstResponseByte: 0,
 		EventHeadersReceived:   0,
@@ -88,7 +88,7 @@ func TestCalculateDerivedMetricsZeroDurations(t *testing.T) {
 		EventTLSDone:           0,
 		EventGotConn:           0,
 		EventWroteRequest:      0,
-	}}, nil)
+	}}, nil, 0)
 
 	assertMetric(t, "http_ttfb_ms", metrics.HTTPTTFBMS, 0)
 	assertMetric(t, "headers_latency_ms", metrics.HeadersLatencyMS, 0)
@@ -108,11 +108,11 @@ func TestCalculateDerivedMetricsZeroDurations(t *testing.T) {
 // TestCalculateDerivedMetricsZeroCompletionTokens verifies known zero output tokens produce zero E2E throughput when duration is positive and no post-first-delta TPS.
 func TestCalculateDerivedMetricsZeroCompletionTokens(t *testing.T) {
 	completionTokens := 0
-	metrics := CalculateDerivedMetrics(Timeline{EventsNS: map[EventName]int64{
+	metrics := CalculateDerivedMetricsWithOutputDeltaCount(Timeline{EventsNS: map[EventName]int64{
 		EventRequestStart:     0,
 		EventFirstOutputDelta: ns(5 * time.Millisecond),
 		EventLastOutputDelta:  ns(10 * time.Millisecond),
-	}}, &completionTokens)
+	}}, &completionTokens, 2)
 
 	assertMetric(t, "e2e_output_tps", metrics.E2EOutputTPS, 0)
 	assertNilMetric(t, "generation_delta_output_tps", metrics.GenerationDeltaOutputTPS)
@@ -121,46 +121,60 @@ func TestCalculateDerivedMetricsZeroCompletionTokens(t *testing.T) {
 // TestCalculateDerivedMetricsGenerationDeltaOutputTPSNilCases verifies post-first-delta TPS is omitted when it would be misleading.
 func TestCalculateDerivedMetricsGenerationDeltaOutputTPSNilCases(t *testing.T) {
 	tests := map[string]struct {
-		tokens *int
-		events map[EventName]int64
+		tokens           *int
+		outputDeltaCount int
+		events           map[EventName]int64
 	}{
 		"missing tokens": {
+			outputDeltaCount: 2,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 				EventLastOutputDelta:  ns(10 * time.Millisecond),
 			},
 		},
 		"one token": {
-			tokens: intPointerForMetrics(1),
+			tokens:           intPointerForMetrics(1),
+			outputDeltaCount: 2,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 				EventLastOutputDelta:  ns(10 * time.Millisecond),
 			},
 		},
 		"missing first output": {
-			tokens: intPointerForMetrics(2),
+			tokens:           intPointerForMetrics(2),
+			outputDeltaCount: 2,
 			events: map[EventName]int64{
 				EventLastOutputDelta: ns(10 * time.Millisecond),
 			},
 		},
 		"missing last output": {
-			tokens: intPointerForMetrics(2),
+			tokens:           intPointerForMetrics(2),
+			outputDeltaCount: 2,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 			},
 		},
 		"zero generation duration": {
-			tokens: intPointerForMetrics(2),
+			tokens:           intPointerForMetrics(2),
+			outputDeltaCount: 2,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 				EventLastOutputDelta:  0,
+			},
+		},
+		"one visible output delta": {
+			tokens:           intPointerForMetrics(6),
+			outputDeltaCount: 1,
+			events: map[EventName]int64{
+				EventFirstOutputDelta: 0,
+				EventLastOutputDelta:  ns(time.Microsecond),
 			},
 		},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			metrics := CalculateDerivedMetrics(Timeline{EventsNS: tc.events}, tc.tokens)
+			metrics := CalculateDerivedMetricsWithOutputDeltaCount(Timeline{EventsNS: tc.events}, tc.tokens, tc.outputDeltaCount)
 			assertNilMetric(t, "generation_delta_output_tps", metrics.GenerationDeltaOutputTPS)
 		})
 	}

@@ -50,6 +50,9 @@ type RequestRecord struct {
 	// TotalTokens is the provider-reported total token count for this request, or nil when unavailable; units are tokens.
 	TotalTokens *int `json:"total_tokens,omitempty"`
 
+	// OutputDeltaCount is the count of non-empty user-visible output deltas observed in the stream; units are deltas, zero means none were observed or the request failed before visible output.
+	OutputDeltaCount int `json:"output_delta_count,omitempty"`
+
 	// Cache is normalized provider prompt/KV cache metadata; empty fields mean the provider did not expose cache details.
 	Cache CacheRecord `json:"cache"`
 

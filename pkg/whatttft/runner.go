@@ -90,6 +90,7 @@ func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup 
 	timeline := recorder.Timeline()
 	usage := observer.usageSnapshot()
 	httpRecord := observer.httpSnapshot()
+	outputDeltaCount := observer.visibleOutputDeltaCountSnapshot()
 	record := RequestRecord{
 		RequestID:            requestID,
 		TargetID:             cfg.TargetID,
@@ -107,11 +108,12 @@ func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup 
 		PromptTokens:         usage.PromptTokens,
 		CompletionTokens:     usage.CompletionTokens,
 		TotalTokens:          usage.TotalTokens,
+		OutputDeltaCount:     outputDeltaCount,
 		Cache:                observer.cacheSnapshot(),
 		HTTP:                 httpRecord,
 		Timeline:             timeline,
 	}
-	record.Derived = CalculateDerivedMetrics(timeline, record.CompletionTokens)
+	record.Derived = CalculateDerivedMetricsWithOutputDeltaCount(timeline, record.CompletionTokens, outputDeltaCount)
 	if err != nil {
 		record.Error = newErrorRecord(err, recorder.ElapsedNS())
 	}
@@ -201,14 +203,15 @@ func newErrorRecord(err error, atNS int64) *ErrorRecord {
 }
 
 type requestObserver struct {
-	mu         sync.Mutex
-	requestID  string
-	recorder   *Recorder
-	saveChunks bool
-	chunks     []ChunkRecord
-	usage      ProviderUsage
-	cache      CacheRecord
-	http       HTTPRecord
+	mu                  sync.Mutex
+	requestID           string
+	recorder            *Recorder
+	saveChunks          bool
+	chunks              []ChunkRecord
+	visibleOutputDeltas int
+	usage               ProviderUsage
+	cache               CacheRecord
+	http                HTTPRecord
 }
 
 func newRequestObserver(requestID string, recorder *Recorder, saveChunks bool) *requestObserver {
@@ -235,17 +238,21 @@ func (o *requestObserver) OnStreamEvent(StreamEvent) {}
 
 func (o *requestObserver) OnOutputDelta(delta OutputDelta) {
 	atNS := o.recorder.ElapsedNS()
-	if delta.Visible && delta.Text != "" {
+	visible := delta.Visible && delta.Text != ""
+	if visible {
 		o.recorder.MarkFirst(EventFirstOutputDelta)
 		o.recorder.MarkLast(EventLastOutputDelta)
 	}
 
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if visible {
+		o.visibleOutputDeltas++
+	}
 	if !o.saveChunks {
 		return
 	}
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
 
 	index := len(o.chunks)
 	o.chunks = append(o.chunks, ChunkRecord{
@@ -314,6 +321,13 @@ func (o *requestObserver) httpSnapshot() HTTPRecord {
 	defer o.mu.Unlock()
 
 	return o.http
+}
+
+func (o *requestObserver) visibleOutputDeltaCountSnapshot() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.visibleOutputDeltas
 }
 
 func (o *requestObserver) chunkSnapshot() []ChunkRecord {
