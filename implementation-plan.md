@@ -1866,7 +1866,7 @@ Definition of done:
 
 ---
 
-### [ ] 22. Implement a multi-target benchmark runner/orchestrator
+### [x] 22. Implement a multi-target benchmark runner/orchestrator
 
 Build the library/CLI bridge that executes a YAML benchmark plan across multiple targets while reusing the existing single-provider `Runner` where practical.
 
@@ -1922,6 +1922,15 @@ Implementation details:
   - request IDs are unique across targets;
   - context cancellation returns partial combined results;
   - target preflight catches duplicate IDs and nil providers.
+
+Implemented details:
+
+- Added public multi-target benchmark API types in `pkg/whatttft`: `BenchmarkConfig`, `BenchmarkTarget`, `BenchmarkResult`, `TargetOrder`, `BenchmarkRunner`, `NewBenchmarkRunner`, and `RunBenchmark`.
+- Implemented v0.2 serial target execution that preflights every target before any provider request, then runs each target through the existing single-provider `Runner` and combines records, chunks, and a grouped `RunSummary`.
+- Added target ID sanitization, duplicate-ID detection, nil-provider validation, per-target run-config validation, target label propagation, and deterministic per-target request ID prefixes.
+- Added partial-result behavior for context cancellation while keeping request-level provider errors as records and continuing normally when a target completes with request errors.
+- Added a `BenchmarkResult.RunResult` conversion helper for existing report writers that accept `RunResult`.
+- Added tests covering two-target runs, summary grouping by target/model, same-model target separation, warmup exclusion per target, request/chunk ID uniqueness, cancellation partial results, and preflight validation with no provider calls.
 
 Definition of done:
 
