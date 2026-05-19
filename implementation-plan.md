@@ -2096,7 +2096,7 @@ Definition of done:
 
 ---
 
-### [ ] 25. Document YAML benchmarks, multi-model methodology, and TPS semantics
+### [x] 25. Document YAML benchmarks, multi-model methodology, and TPS semantics
 
 Update user-facing documentation after the CLI and report behavior exists.
 
@@ -2126,6 +2126,16 @@ Implementation details:
   - `rps`.
 - Include a warning that post-first-delta TPS is not true decode TPS/token ITL because OpenAI-compatible streaming chunks are not guaranteed to equal tokens.
 - Add a sample `benchmark.yaml` under `examples/` or `docs/` with fake model names and no secrets.
+
+Implemented details:
+
+- Added `examples/openai-model-compare.yaml`, a complete two-target OpenAI Responses benchmark config using fake model names and `api_key_env` only.
+- Expanded README with a YAML benchmark config section, copy-paste two-model YAML, dry-run command, normal `bench` command, and `bench` override example.
+- Documented why `run` remains useful for single-model/ad-hoc measurements while `bench` is for repeatable YAML and multi-target comparisons.
+- Documented that OpenAI defaults to Responses API and that `api: chat-completions` is only a compatibility mode for endpoints without `/responses`.
+- Added multi-model methodology notes about shared settings, serial target execution, repeated passes, manual target-order alternation, cache-mode separation, and service-tier separation.
+- Expanded TPS semantics for `e2e_output_tps`, `generation_delta_output_tps`, `system_tps`, and `rps`, including the warning that post-first-delta TPS is not true decode TPS/token ITL/TPOT.
+- Documented service-tier control for single-run and YAML benchmarks, allowed tier values, omitted-tier behavior, and requested/observed tier comparison warnings.
 
 Definition of done:
 

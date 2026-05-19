@@ -96,6 +96,77 @@ what-ttft run \
   --warmup 1
 ```
 
+Use `run` for quick single-model/ad-hoc measurements. Use `bench` when you want a repeatable YAML config, multiple targets, a single combined report directory, and stable target labels for model comparison.
+
+## YAML benchmark configs
+
+YAML benchmark configs make multi-model comparisons repeatable. Inline API keys are intentionally not supported; put the environment variable name in `api_key_env` and export the key before running.
+
+A complete two-model OpenAI Responses example is available at [`examples/openai-model-compare.yaml`](examples/openai-model-compare.yaml):
+
+```yaml
+schema_version: 1
+name: openai-gpt-5-model-compare
+
+defaults:
+  provider: openai
+  api: responses
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  service_tier: default
+
+run:
+  samples: 50
+  warmup: 5
+  concurrency: 1
+  cache_mode: cache-bust
+  connection_mode: warm
+  timeout: 120s
+  save_chunks: false
+
+scenario:
+  name: short-capital
+  system_prompt: You are a concise assistant.
+  prompt: "Answer in one short sentence: what is the capital of France?"
+  max_output_tokens: 64
+  reasoning_effort: none
+
+targets:
+  - id: gpt-5.5
+    name: GPT-5.5
+    model: gpt-5.5
+
+  - id: gpt-5.2
+    name: GPT-5.2
+    model: gpt-5.2
+```
+
+Validate the plan without sending requests:
+
+```sh
+what-ttft bench --config examples/openai-model-compare.yaml --dry-run
+```
+
+Run the benchmark:
+
+```sh
+export OPENAI_API_KEY="..."
+what-ttft bench --config examples/openai-model-compare.yaml
+```
+
+The OpenAI provider defaults to `api: responses`. Use `api: chat-completions` only for compatibility endpoints that do not support `/responses`; Chat-only fields such as `include_usage` and `legacy_max_tokens` only apply in that mode.
+
+`bench` supports command-line overrides for operational settings without editing the YAML:
+
+```sh
+what-ttft bench \
+  --config examples/openai-model-compare.yaml \
+  --samples 100 \
+  --warmup 10 \
+  --service-tier priority \
+  --out runs/openai-gpt-5-priority-compare
+```
+
 ## Common options
 
 ```text
@@ -130,7 +201,7 @@ Notes:
 - Prefer `--api-key-env` over `--api-key` so secrets do not appear in shell history.
 - Some reasoning models do not support `--temperature 0`; omit temperature unless the model supports the value you choose.
 - Use `--reasoning-effort none` where supported to avoid spending latency and tokens on hidden reasoning.
-- Use `--service-tier` to request an OpenAI processing tier (`auto`, `default`, `flex`, `scale`, or `priority`). Do not compare different requested or observed service tiers as if they were the same traffic shape.
+- Use `--service-tier` to request an OpenAI processing tier (`auto`, `default`, `flex`, `scale`, or `priority`). For YAML benchmarks, set `defaults.service_tier`, per-target `service_tier`, or use the `bench --service-tier` override. If omitted, `what-ttft` does not send `service_tier` and OpenAI uses its default `auto` behavior. Do not compare different requested or observed service tiers as if they were the same traffic shape.
 - The tool refuses to write into a non-empty `--out` directory unless `--overwrite` is set.
 - `--save-chunks` writes generated content to `chunks.jsonl`; leave it off when output text may be sensitive.
 
@@ -154,7 +225,7 @@ Important metrics:
 | `http_ttfb_ms` | Time from request start to first response byte. |
 | `headers_latency_ms` | Time from request start until response headers are received. |
 | `first_event_ms` | Time from request start to the first SSE data event, even if it is empty or metadata-only. |
-| `ttft_delta_ms` | Time from request start to the first non-empty visible output delta. This is the main TTFT metric for v0.1. |
+| `ttft_delta_ms` | Time from request start to the first non-empty visible output delta. This is the main user-visible TTFT metric. |
 | `e2e_delta_ms` | Time from request start to the last non-empty visible output delta. |
 | `stream_total_ms` | Time from request start until response body EOF. |
 | `generation_delta_ms` | Time between first and last visible output deltas. |
@@ -170,6 +241,13 @@ For OpenAI Responses streams, TTFT is driven by the first non-empty `response.ou
 `what-ttft` does not count empty chunks, role-only chunks, usage chunks, comments, heartbeats, metadata events, reasoning/tool events, or `[DONE]` as TTFT.
 
 OpenAI-compatible streams do not guarantee that one chunk equals one tokenizer token. `generation_delta_output_tps` is useful for comparing post-first-delta streaming speed when provider usage is available, at least three visible output deltas were observed, and the observed post-first-delta window is at least 50 ms. It is intentionally not labeled decode TPS, token ITL, or TPOT. It is omitted for short/buffered responses because tiny first-to-last delta windows can produce meaningless TPS values.
+
+TPS terms are deliberately separate:
+
+- `e2e_output_tps` is user-perceived per-request output throughput and includes TTFT.
+- `generation_delta_output_tps` is a post-first-visible-delta approximation based on visible delta timing, not true token timestamps.
+- `system_tps` is group-level total successful output tokens divided by the successful response window.
+- `rps` is successful measured requests per second over the same response window.
 
 ## Client-side limits
 
@@ -191,7 +269,9 @@ summary.md        human-readable metric table
 
 `requests.jsonl` is the most useful file for detailed investigation. It contains raw timelines, HTTP trace metadata, derived metrics, usage fields, cache fields, requested/observed service tier fields, and errors for each request.
 
-`summary.md` is the quickest way to compare p50, p95, p99, mean, and max values for the main metrics.
+`summary.md` is the quickest way to compare p50, p95, p99, mean, and max values for the main metrics. For `bench` runs, it starts with a target comparison table containing per-target success/error counts, TTFT/E2E percentiles, user-perceived TPS, post-first-delta TPS, system TPS, and RPS.
+
+For YAML `bench` runs, `run.json` also records the benchmark name, config path, config SHA-256, target execution order, and per-target metadata such as target ID/name, provider API, model, requested service tier, observed service tier counts, redacted base URL, and API-key environment variable name. API key values are never written.
 
 ## Cache modes
 
@@ -216,6 +296,18 @@ Summaries group cache modes separately so cache-busted and cache-reuse measureme
 4. Sweep concurrency values to see how user-visible latency changes under load.
 5. Compare p50, p95, and p99 values, not just averages.
 6. Inspect `requests.jsonl` for errors, outliers, connection reuse, cache counters, and token usage before drawing conclusions.
+
+## Comparing multiple models
+
+Use `bench` for multi-model comparisons so target IDs, config hashes, and combined summaries stay together. In v0.2, all targets in a YAML benchmark share the same scenario, prompt, run counts, cache mode, connection mode, timeout, and concurrency unless defaults or per-target fields explicitly override provider settings.
+
+Multi-target benchmarks execute targets serially in YAML order in v0.2. Serial execution is simple and reproducible, but it can be affected by time-of-day changes, provider-load drift, or transient network conditions between targets. For more rigorous comparisons:
+
+- Run multiple independent passes.
+- Consider alternating target order manually between passes until round-robin/randomized scheduling exists.
+- Keep cache mode, connection mode, OpenAI API mode, reasoning effort, and service tier consistent for the comparison question.
+- Never compare cached and uncached targets as if they represent the same condition.
+- Treat requested service tier and observed provider-reported service tier as benchmark variables. Do not silently mix `auto`, `default`, `flex`, `scale`, and `priority` results.
 
 ## Practical examples
 
