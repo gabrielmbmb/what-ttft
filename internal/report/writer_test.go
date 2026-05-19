@@ -85,6 +85,83 @@ func TestWriteRunCreatesOutputFilesAndParsesJSON(t *testing.T) {
 	}
 }
 
+// TestWriteRunWritesMultiTargetMetadataAndMarkdown verifies benchmark metadata and comparison reports are self-describing.
+func TestWriteRunWritesMultiTargetMetadataAndMarkdown(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "bench-output")
+	result := sampleMultiTargetRunResult()
+
+	//nolint:gosec // Tests use non-secret placeholder credential strings to verify target URL redaction.
+	_, err := WriteRun(WriteOptions{
+		OutputDir: outputDir,
+		Run: RunMetadata{
+			BenchmarkName: "model compare",
+			ConfigPath:    "benchmark.yaml",
+			ConfigSHA256:  "abc123",
+			TargetOrder:   "serial",
+			Targets: []RunTargetMetadata{
+				{
+					TargetID:             "target-a",
+					TargetName:           "Target A",
+					Provider:             "openai",
+					ProviderAPI:          "responses",
+					RequestedServiceTier: "default",
+					Model:                "gpt-a",
+					BaseURL:              "https://user:secret@example.test/v1?api_key=secret&region=a",
+					APIKeyEnv:            "OPENAI_API_KEY_A",
+					IncludeUsage:         true,
+				},
+				{
+					TargetID:             "target-b",
+					Provider:             "openai",
+					ProviderAPI:          "responses",
+					RequestedServiceTier: "priority",
+					Model:                "gpt-b",
+					BaseURL:              "https://example.test/v1?token=secret&region=b",
+					APIKeyEnv:            "OPENAI_API_KEY_B",
+				},
+			},
+			Provider:  "openai",
+			Model:     "model compare",
+			Scenario:  whatttft.Scenario{Name: "short", Prompt: "hello"},
+			RunConfig: whatttft.RunConfig{Scenario: whatttft.Scenario{Name: "short", Prompt: "hello"}, CacheMode: whatttft.CacheBust, ConnectionMode: whatttft.WarmConnections},
+		},
+		Result: result,
+	})
+	if err != nil {
+		t.Fatalf("write multi-target run: %v", err)
+	}
+
+	var metadata RunMetadata
+	readJSONFile(t, filepath.Join(outputDir, runJSONName), &metadata)
+	if metadata.BenchmarkName != "model compare" || metadata.ConfigPath != "benchmark.yaml" || metadata.ConfigSHA256 != "abc123" || metadata.TargetOrder != "serial" {
+		t.Fatalf("metadata benchmark fields unexpected: %#v", metadata)
+	}
+	if len(metadata.Targets) != 2 {
+		t.Fatalf("metadata targets = %d, want 2", len(metadata.Targets))
+	}
+	if strings.Contains(metadata.Targets[0].BaseURL, "secret") || strings.Contains(metadata.Targets[0].BaseURL, "user:") {
+		t.Fatalf("target base URL was not redacted: %q", metadata.Targets[0].BaseURL)
+	}
+	if metadata.Targets[0].ObservedServiceTier != "default" || metadata.Targets[0].ObservedServiceTierCounts["default"] != 1 {
+		t.Fatalf("target observed tier = %q counts %#v, want default", metadata.Targets[0].ObservedServiceTier, metadata.Targets[0].ObservedServiceTierCounts)
+	}
+	if metadata.Targets[1].ObservedServiceTier != "priority" || metadata.Targets[1].ObservedServiceTierCounts["priority"] != 1 {
+		t.Fatalf("target b observed tier = %q counts %#v, want priority", metadata.Targets[1].ObservedServiceTier, metadata.Targets[1].ObservedServiceTierCounts)
+	}
+
+	//nolint:gosec // Tests read fixed report filenames under t.TempDir.
+	markdownBytes, err := os.ReadFile(filepath.Join(outputDir, summaryMarkdownName))
+	if err != nil {
+		t.Fatalf("read summary markdown: %v", err)
+	}
+	markdown := string(markdownBytes)
+	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "target-a", "target-b", "responses", "e2e tps mean", "generation tps mean"} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, markdown)
+		}
+	}
+}
+
 // TestWriteRunFailsForNonEmptyOutputDirUnlessOverwrite verifies existing files are protected by default.
 func TestWriteRunFailsForNonEmptyOutputDirUnlessOverwrite(t *testing.T) {
 	outputDir := t.TempDir()
@@ -163,6 +240,29 @@ func TestWriteRunGeneratesOutputDir(t *testing.T) {
 	}
 }
 
+// TestWriteRunGeneratesBenchmarkOutputDir verifies multi-target benchmark defaults emphasize benchmark and scenario names.
+func TestWriteRunGeneratesBenchmarkOutputDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	metadata := RunMetadata{
+		BenchmarkName: "OpenAI Compare",
+		Scenario:      whatttft.Scenario{Name: "Short Chat"},
+		RunConfig: whatttft.RunConfig{
+			Scenario:       whatttft.Scenario{Name: "Short Chat"},
+			CacheMode:      whatttft.CacheBust,
+			ConnectionMode: whatttft.WarmConnections,
+		},
+		Targets: []RunTargetMetadata{{TargetID: "gpt-a", Provider: "openai", ProviderAPI: "responses", Model: "gpt-a"}},
+	}
+
+	outputDir, err := WriteRun(WriteOptions{Run: metadata, Result: sampleRunResult()})
+	if err != nil {
+		t.Fatalf("write benchmark run: %v", err)
+	}
+	if !strings.HasPrefix(outputDir, filepath.Join(defaultOutputRoot, "openai-compare-short-chat-cache-bust-warm-")) {
+		t.Fatalf("generated benchmark output dir = %q", outputDir)
+	}
+}
+
 // TestResolveOutputDirUsesProvidedDir verifies explicit output directories are preserved exactly.
 func TestResolveOutputDirUsesProvidedDir(t *testing.T) {
 	outputDir := " custom output "
@@ -219,6 +319,60 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
+func sampleMultiTargetRunResult() *whatttft.RunResult {
+	ttftA := 42.0
+	ttftB := 36.0
+	e2eA := 100.0
+	e2eB := 90.0
+	e2eTPS := 20.0
+	genTPS := 25.0
+	records := []whatttft.RequestRecord{
+		{
+			RequestID:            "target-a-req-000000",
+			TargetID:             "target-a",
+			TargetName:           "Target A",
+			Provider:             "openai",
+			Model:                "gpt-a",
+			ScenarioName:         "short",
+			CacheMode:            whatttft.CacheBust,
+			ConnectionMode:       whatttft.WarmConnections,
+			RequestedServiceTier: "default",
+			ObservedServiceTier:  "default",
+			PromptHash:           strings.Repeat("a", 64),
+			CompletionTokens:     intPtr(2),
+			Timeline:             whatttft.Timeline{BaseWallUnixNano: 1000, EventsNS: map[whatttft.EventName]int64{whatttft.EventBodyEOF: 100000000}},
+			Derived: whatttft.DerivedMetrics{
+				TTFTDeltaMS:              &ttftA,
+				E2EDeltaMS:               &e2eA,
+				E2EOutputTPS:             &e2eTPS,
+				GenerationDeltaOutputTPS: &genTPS,
+			},
+		},
+		{
+			RequestID:            "target-b-req-000000",
+			TargetID:             "target-b",
+			Provider:             "openai",
+			Model:                "gpt-b",
+			ScenarioName:         "short",
+			CacheMode:            whatttft.CacheBust,
+			ConnectionMode:       whatttft.WarmConnections,
+			RequestedServiceTier: "priority",
+			ObservedServiceTier:  "priority",
+			PromptHash:           strings.Repeat("b", 64),
+			CompletionTokens:     intPtr(2),
+			Timeline:             whatttft.Timeline{BaseWallUnixNano: 2000, EventsNS: map[whatttft.EventName]int64{whatttft.EventBodyEOF: 90000000}},
+			Derived: whatttft.DerivedMetrics{
+				TTFTDeltaMS:              &ttftB,
+				E2EDeltaMS:               &e2eB,
+				E2EOutputTPS:             &e2eTPS,
+				GenerationDeltaOutputTPS: &genTPS,
+			},
+		},
+	}
+
+	return &whatttft.RunResult{Records: records, Summary: whatttft.Summarize(records)}
+}
+
 func sampleRunResult() *whatttft.RunResult {
 	ttft := 42.0
 	record := whatttft.RequestRecord{
@@ -242,6 +396,10 @@ func sampleRunResult() *whatttft.RunResult {
 		Chunks:  []whatttft.ChunkRecord{chunk},
 		Summary: whatttft.Summarize([]whatttft.RequestRecord{record}),
 	}
+}
+
+func intPtr(value int) *int {
+	return &value
 }
 
 func readJSONFile(t *testing.T, path string, value any) {

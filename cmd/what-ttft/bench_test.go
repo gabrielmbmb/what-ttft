@@ -172,6 +172,18 @@ func TestBenchCommandAgainstFakeOpenAIServer(t *testing.T) {
 
 	var metadata report.RunMetadata
 	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
+	if metadata.BenchmarkName != "bench-test" {
+		t.Fatalf("benchmark name = %q, want bench-test", metadata.BenchmarkName)
+	}
+	if metadata.ConfigPath != configPath {
+		t.Fatalf("config path = %q, want %q", metadata.ConfigPath, configPath)
+	}
+	if metadata.ConfigSHA256 == "" {
+		t.Fatal("config SHA-256 should be recorded")
+	}
+	if metadata.TargetOrder != "serial" {
+		t.Fatalf("target order = %q, want serial", metadata.TargetOrder)
+	}
 	if metadata.Provider != "openai" {
 		t.Fatalf("metadata provider = %q, want openai", metadata.Provider)
 	}
@@ -183,6 +195,15 @@ func TestBenchCommandAgainstFakeOpenAIServer(t *testing.T) {
 	}
 	if metadata.RunConfig.MeasuredRequests != 1 || !metadata.RunConfig.SaveChunks {
 		t.Fatalf("run config measured/save_chunks = %d/%t, want 1/true", metadata.RunConfig.MeasuredRequests, metadata.RunConfig.SaveChunks)
+	}
+	if len(metadata.Targets) != 2 {
+		t.Fatalf("metadata targets = %d, want 2", len(metadata.Targets))
+	}
+	if metadata.Targets[0].TargetID != "target-a" || metadata.Targets[0].ProviderAPI != "responses" || metadata.Targets[0].APIKeyEnv != "WHAT_TTFT_BENCH_KEY" {
+		t.Fatalf("first target metadata unexpected: %#v", metadata.Targets[0])
+	}
+	if metadata.Targets[0].ObservedServiceTier != "default" || metadata.Targets[0].ObservedServiceTierCounts["default"] != 1 {
+		t.Fatalf("first target observed tier = %q counts %#v, want default", metadata.Targets[0].ObservedServiceTier, metadata.Targets[0].ObservedServiceTierCounts)
 	}
 
 	var summary whatttft.RunSummary

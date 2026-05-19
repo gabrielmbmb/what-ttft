@@ -10,6 +10,11 @@ import (
 
 // MarkdownSummary renders a concise Markdown summary focused on p50/p95/p99 metric distributions.
 func MarkdownSummary(summary whatttft.RunSummary) string {
+	return MarkdownSummaryWithMetadata(summary, RunMetadata{})
+}
+
+// MarkdownSummaryWithMetadata renders a Markdown summary with optional multi-target metadata for comparison tables.
+func MarkdownSummaryWithMetadata(summary whatttft.RunSummary, metadata RunMetadata) string {
 	var builder strings.Builder
 	builder.WriteString("# what-ttft summary\n\n")
 	fmt.Fprintf(&builder, "total_requests: %d\n", summary.TotalRequests)
@@ -23,11 +28,155 @@ func MarkdownSummary(summary whatttft.RunSummary) string {
 		return builder.String()
 	}
 
+	if shouldWriteComparisonTable(summary, metadata) {
+		writeComparisonMarkdown(&builder, summary, metadata)
+	}
+
 	for _, group := range summary.Groups {
 		writeGroupMarkdown(&builder, group)
 	}
 
 	return builder.String()
+}
+
+func shouldWriteComparisonTable(summary whatttft.RunSummary, metadata RunMetadata) bool {
+	if len(metadata.Targets) > 0 {
+		return true
+	}
+	for _, group := range summary.Groups {
+		if group.TargetID != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func writeComparisonMarkdown(builder *strings.Builder, summary whatttft.RunSummary, metadata RunMetadata) {
+	builder.WriteString("## Target comparison\n\n")
+	builder.WriteString("| target | provider | api | requested tier | observed tier | model | ok | err | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e tps mean | generation tps mean | system tps | rps |\n")
+	builder.WriteString("|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+
+	groups := groupsByTarget(summary.Groups)
+	if len(metadata.Targets) > 0 {
+		for _, target := range metadata.Targets {
+			writeComparisonRow(builder, comparisonRowForTarget(target, groups[target.TargetID]))
+		}
+		builder.WriteString("\n")
+		return
+	}
+
+	for _, group := range summary.Groups {
+		if group.TargetID == "" {
+			continue
+		}
+		writeComparisonRow(builder, comparisonRowForGroup(group))
+	}
+	builder.WriteString("\n")
+}
+
+type comparisonRow struct {
+	target             string
+	provider           string
+	api                string
+	requestedTier      string
+	observedTier       string
+	model              string
+	successfulRequests int
+	errorRequests      int
+	ttftP50            *float64
+	ttftP95            *float64
+	e2eP50             *float64
+	e2eP95             *float64
+	e2eTPSMean         *float64
+	generationTPSMean  *float64
+	systemTPS          *float64
+	rps                *float64
+}
+
+func comparisonRowForTarget(target RunTargetMetadata, group *whatttft.SummaryGroup) comparisonRow {
+	row := comparisonRow{
+		target:        firstNonEmpty(target.TargetID, "unknown"),
+		provider:      target.Provider,
+		api:           target.ProviderAPI,
+		requestedTier: firstNonEmpty(target.RequestedServiceTier, "unset"),
+		observedTier:  firstNonEmpty(target.ObservedServiceTier, formatStringIntMap(target.ObservedServiceTierCounts), ""),
+		model:         target.Model,
+	}
+	if group == nil {
+		return row
+	}
+
+	row.successfulRequests = group.SuccessfulRequests
+	row.errorRequests = group.ErrorRequests
+	row.ttftP50 = group.Metrics.TTFTDeltaMS.P50
+	row.ttftP95 = group.Metrics.TTFTDeltaMS.P95
+	row.e2eP50 = group.Metrics.E2EDeltaMS.P50
+	row.e2eP95 = group.Metrics.E2EDeltaMS.P95
+	row.e2eTPSMean = group.Metrics.E2EOutputTPS.Mean
+	row.generationTPSMean = group.Metrics.GenerationDeltaOutputTPS.Mean
+	row.systemTPS = group.SystemTPS
+	row.rps = group.RPS
+	if row.observedTier == "" {
+		row.observedTier = formatStringIntMap(group.ObservedServiceTierCounts)
+	}
+
+	return row
+}
+
+func comparisonRowForGroup(group whatttft.SummaryGroup) comparisonRow {
+	return comparisonRow{
+		target:             firstNonEmpty(group.TargetID, "unknown"),
+		provider:           group.Provider,
+		requestedTier:      firstNonEmpty(group.RequestedServiceTier, "unset"),
+		observedTier:       formatStringIntMap(group.ObservedServiceTierCounts),
+		model:              group.Model,
+		successfulRequests: group.SuccessfulRequests,
+		errorRequests:      group.ErrorRequests,
+		ttftP50:            group.Metrics.TTFTDeltaMS.P50,
+		ttftP95:            group.Metrics.TTFTDeltaMS.P95,
+		e2eP50:             group.Metrics.E2EDeltaMS.P50,
+		e2eP95:             group.Metrics.E2EDeltaMS.P95,
+		e2eTPSMean:         group.Metrics.E2EOutputTPS.Mean,
+		generationTPSMean:  group.Metrics.GenerationDeltaOutputTPS.Mean,
+		systemTPS:          group.SystemTPS,
+		rps:                group.RPS,
+	}
+}
+
+func writeComparisonRow(builder *strings.Builder, row comparisonRow) {
+	fmt.Fprintf(
+		builder,
+		"| %s | %s | %s | %s | %s | %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+		row.target,
+		row.provider,
+		row.api,
+		row.requestedTier,
+		firstNonEmpty(row.observedTier, ""),
+		row.model,
+		row.successfulRequests,
+		row.errorRequests,
+		formatOptionalFloat(row.ttftP50),
+		formatOptionalFloat(row.ttftP95),
+		formatOptionalFloat(row.e2eP50),
+		formatOptionalFloat(row.e2eP95),
+		formatOptionalFloat(row.e2eTPSMean),
+		formatOptionalFloat(row.generationTPSMean),
+		formatOptionalFloat(row.systemTPS),
+		formatOptionalFloat(row.rps),
+	)
+}
+
+func groupsByTarget(groups []whatttft.SummaryGroup) map[string]*whatttft.SummaryGroup {
+	byTarget := make(map[string]*whatttft.SummaryGroup, len(groups))
+	for index := range groups {
+		if groups[index].TargetID == "" {
+			continue
+		}
+		byTarget[groups[index].TargetID] = &groups[index]
+	}
+
+	return byTarget
 }
 
 func writeGroupMarkdown(builder *strings.Builder, group whatttft.SummaryGroup) {

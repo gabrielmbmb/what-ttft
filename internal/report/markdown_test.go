@@ -60,6 +60,46 @@ func TestMarkdownSummaryIncludesKeyMetricNames(t *testing.T) {
 	}
 }
 
+// TestMarkdownSummaryWithMetadataIncludesComparisonTable verifies target metadata drives the high-level comparison table.
+func TestMarkdownSummaryWithMetadataIncludesComparisonTable(t *testing.T) {
+	meanTPS := 12.0
+	p50 := 100.0
+	p95 := 150.0
+	summary := whatttft.RunSummary{Groups: []whatttft.SummaryGroup{{
+		TargetID:             "target-a",
+		Provider:             "openai",
+		Model:                "gpt-a",
+		RequestedServiceTier: "default",
+		ObservedServiceTierCounts: map[string]int{
+			"default": 1,
+		},
+		SuccessfulRequests: 1,
+		Metrics: whatttft.MetricDistributions{
+			TTFTDeltaMS:              whatttft.Distribution{Count: 1, P50: &p50, P95: &p95},
+			E2EDeltaMS:               whatttft.Distribution{Count: 1, P50: &p50, P95: &p95},
+			E2EOutputTPS:             whatttft.Distribution{Count: 1, Mean: &meanTPS},
+			GenerationDeltaOutputTPS: whatttft.Distribution{Count: 1, Mean: &meanTPS},
+		},
+		SystemTPS: &meanTPS,
+		RPS:       &meanTPS,
+	}}}
+	metadata := RunMetadata{Targets: []RunTargetMetadata{{
+		TargetID:             "target-a",
+		Provider:             "openai",
+		ProviderAPI:          "responses",
+		RequestedServiceTier: "default",
+		ObservedServiceTier:  "default",
+		Model:                "gpt-a",
+	}}}
+
+	markdown := MarkdownSummaryWithMetadata(summary, metadata)
+	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "| target-a | openai | responses | default | default | gpt-a | 1 | 0 | 100.000 | 150.000", "e2e tps mean", "generation tps mean"} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, markdown)
+		}
+	}
+}
+
 // TestMarkdownSummaryIncludesTargetHeading verifies target IDs and names appear in group headings.
 func TestMarkdownSummaryIncludesTargetHeading(t *testing.T) {
 	markdown := MarkdownSummary(whatttft.RunSummary{Groups: []whatttft.SummaryGroup{{

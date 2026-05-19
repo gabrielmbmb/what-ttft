@@ -45,6 +45,21 @@ type RunMetadata struct {
 	// GOARCH is the CPU architecture reported by the Go runtime; empty is filled from runtime.GOARCH.
 	GOARCH string `json:"goarch"`
 
+	// BenchmarkName is the optional multi-target benchmark name from a YAML config; empty means this was an unnamed or single-target ad-hoc run and it must not contain secrets.
+	BenchmarkName string `json:"benchmark_name,omitempty"`
+
+	// ConfigPath is the YAML config path used for a multi-target benchmark; empty means no config file was used and the path is not treated as secret.
+	ConfigPath string `json:"config_path,omitempty"`
+
+	// ConfigSHA256 is the SHA-256 hex digest of the YAML config bytes used for a multi-target benchmark; empty means unavailable and the digest contains no secrets by itself.
+	ConfigSHA256 string `json:"config_sha256,omitempty"`
+
+	// TargetOrder records how benchmark targets were scheduled, such as serial; empty means unavailable or single-target execution.
+	TargetOrder string `json:"target_order,omitempty"`
+
+	// Targets contains per-target metadata for YAML or multi-target benchmarks; nil means no target list was supplied and all secret-bearing fields must be redacted by the caller or writer.
+	Targets []RunTargetMetadata `json:"targets,omitempty"`
+
 	// Provider is the normalized provider name for this run; empty means unspecified and it must not contain secrets.
 	Provider string `json:"provider"`
 
@@ -74,6 +89,48 @@ type RunMetadata struct {
 
 	// Args is the command-line argument vector with secrets redacted by the caller; nil or empty means unavailable.
 	Args []string `json:"args,omitempty"`
+}
+
+// RunTargetMetadata describes one configured target in run.json for multi-target benchmark reproducibility.
+type RunTargetMetadata struct {
+	// TargetID is the stable sanitized benchmark target identifier used in request records and summary groups; empty means unavailable and it must not contain secrets.
+	TargetID string `json:"target_id"`
+
+	// TargetName is an optional human-readable target label; empty means no separate label was supplied and it must not contain secrets.
+	TargetName string `json:"target_name,omitempty"`
+
+	// Provider is the normalized provider name for this target, such as openai; empty means unavailable and it must not contain secrets.
+	Provider string `json:"provider"`
+
+	// ProviderAPI is the provider API surface requested for this target, such as responses or chat-completions; empty means unspecified and it must not contain secrets.
+	ProviderAPI string `json:"provider_api,omitempty"`
+
+	// RequestedServiceTier is the provider service tier requested for this target, such as OpenAI default or priority; empty means unset and it must not contain secrets.
+	RequestedServiceTier string `json:"requested_service_tier,omitempty"`
+
+	// ObservedServiceTier is the single provider-reported actual service tier when all observed successful requests agree; empty means unreported, unavailable, or mixed and it must not contain secrets.
+	ObservedServiceTier string `json:"observed_service_tier,omitempty"`
+
+	// ObservedServiceTierCounts maps provider-reported actual service tier labels to successful request counts; nil means the provider did not report actual tiers and values must not contain secrets.
+	ObservedServiceTierCounts map[string]int `json:"observed_service_tier_counts,omitempty"`
+
+	// Model is the provider model identifier for this target; empty means unavailable and it must not contain API keys or credentials.
+	Model string `json:"model"`
+
+	// BaseURL is the provider endpoint/base URL with credentials and secret query values redacted; empty means unavailable.
+	BaseURL string `json:"base_url,omitempty"`
+
+	// APIKeyEnv is the environment variable name used to resolve the API key; empty means unavailable, the name is not a secret, and the value is never written.
+	APIKeyEnv string `json:"api_key_env,omitempty"`
+
+	// IncludeUsage records whether Chat Completions usage chunks were requested; false means disabled or irrelevant for Responses.
+	IncludeUsage bool `json:"include_usage"`
+
+	// LegacyMaxTokens records whether Chat Completions legacy max_tokens compatibility was requested; false means the modern field or Responses API was used.
+	LegacyMaxTokens bool `json:"legacy_max_tokens"`
+
+	// Extra contains provider-specific JSON-compatible metadata with secrets redacted; nil or empty means no extra target metadata was recorded.
+	Extra map[string]any `json:"extra,omitempty"`
 }
 
 // WriteOptions configures report file output for one benchmark run.
@@ -106,6 +163,7 @@ func WriteRun(options WriteOptions) (string, error) {
 	}
 
 	metadata := completeRunMetadata(options.Run)
+	metadata = applySummaryMetadata(metadata, options.Result.Summary)
 	metadata.RunConfig.OutputDir = outputDir
 	if err := writeJSON(filepath.Join(outputDir, runJSONName), metadata); err != nil {
 		return "", err
@@ -121,7 +179,7 @@ func WriteRun(options WriteOptions) (string, error) {
 	if err := writeJSON(filepath.Join(outputDir, summaryJSONName), options.Result.Summary); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(outputDir, summaryMarkdownName), []byte(MarkdownSummary(options.Result.Summary)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(outputDir, summaryMarkdownName), []byte(MarkdownSummaryWithMetadata(options.Result.Summary, metadata)), 0o600); err != nil {
 		return "", fmt.Errorf("write summary markdown: %w", err)
 	}
 
@@ -166,12 +224,18 @@ func defaultOutputDir(metadata RunMetadata, at time.Time) string {
 		at = time.Now()
 	}
 
-	provider := pathSlug(metadata.Provider, "provider")
-	model := pathSlug(metadata.Model, "model")
 	scenario := pathSlug(firstNonEmpty(metadata.Scenario.Name, metadata.RunConfig.Scenario.Name), "scenario")
 	cacheMode := pathSlug(string(metadata.RunConfig.CacheMode), "cache")
 	connectionMode := pathSlug(string(metadata.RunConfig.ConnectionMode), "connection")
 	timestamp := at.UTC().Format("20060102T150405.000000000Z")
+	if metadata.BenchmarkName != "" || len(metadata.Targets) > 0 {
+		benchmark := pathSlug(metadata.BenchmarkName, "benchmark")
+		name := strings.Join([]string{benchmark, scenario, cacheMode, connectionMode, timestamp}, "-")
+		return filepath.Join(defaultOutputRoot, name)
+	}
+
+	provider := pathSlug(metadata.Provider, "provider")
+	model := pathSlug(metadata.Model, "model")
 	name := strings.Join([]string{provider, model, scenario, cacheMode, connectionMode, timestamp}, "-")
 
 	return filepath.Join(defaultOutputRoot, name)
@@ -262,8 +326,58 @@ func completeRunMetadata(metadata RunMetadata) RunMetadata {
 		metadata.GOARCH = runtime.GOARCH
 	}
 	metadata.BaseURL = RedactURL(metadata.BaseURL)
+	for index := range metadata.Targets {
+		metadata.Targets[index].BaseURL = RedactURL(metadata.Targets[index].BaseURL)
+	}
 
 	return metadata
+}
+
+func applySummaryMetadata(metadata RunMetadata, summary whatttft.RunSummary) RunMetadata {
+	if len(metadata.Targets) == 0 {
+		return metadata
+	}
+
+	groups := make(map[string]whatttft.SummaryGroup, len(summary.Groups))
+	for _, group := range summary.Groups {
+		if group.TargetID != "" {
+			groups[group.TargetID] = group
+		}
+	}
+	for index := range metadata.Targets {
+		group, ok := groups[metadata.Targets[index].TargetID]
+		if !ok || len(group.ObservedServiceTierCounts) == 0 {
+			continue
+		}
+		metadata.Targets[index].ObservedServiceTierCounts = copyStringIntMap(group.ObservedServiceTierCounts)
+		metadata.Targets[index].ObservedServiceTier = singleMapKey(group.ObservedServiceTierCounts)
+	}
+
+	return metadata
+}
+
+func copyStringIntMap(values map[string]int) map[string]int {
+	if len(values) == 0 {
+		return nil
+	}
+
+	copyValues := make(map[string]int, len(values))
+	for key, value := range values {
+		copyValues[key] = value
+	}
+
+	return copyValues
+}
+
+func singleMapKey(values map[string]int) string {
+	if len(values) != 1 {
+		return ""
+	}
+	for key := range values {
+		return key
+	}
+
+	return ""
 }
 
 func prepareOutputDir(outputDir string, overwrite bool) error {

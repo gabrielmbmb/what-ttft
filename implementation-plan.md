@@ -2026,7 +2026,7 @@ Definition of done:
 
 ---
 
-### [ ] 24. Extend report metadata and Markdown for YAML/multi-target benchmarks
+### [x] 24. Extend report metadata and Markdown for YAML/multi-target benchmarks
 
 Make `run.json`, `summary.json`, and `summary.md` self-explanatory for a benchmark containing multiple targets.
 
@@ -2078,6 +2078,15 @@ Implementation details:
   - config hash is stable for known bytes;
   - Markdown includes target IDs and TPS columns;
   - single-run report output remains compatible.
+
+Implemented details:
+
+- Extended `report.RunMetadata` with benchmark name, YAML config path, config SHA-256, target execution order, and a documented per-target metadata array.
+- Added `RunTargetMetadata` with target ID/name, provider, provider API, requested and observed service tiers, observed tier counts, model, redacted base URL, API-key env var name, usage/legacy-token flags, and provider-specific extra metadata.
+- Updated report writing to redact target base URLs, enrich target metadata with observed service tiers from summary groups, and render Markdown with metadata-aware target comparison tables.
+- Added benchmark-aware default output directory naming that uses benchmark name, scenario, cache mode, connection mode, and timestamp while preserving single-run naming.
+- Updated the `bench` CLI metadata path to record benchmark name, config path, config hash, serial target order, and per-target OpenAI settings without storing API key values.
+- Added report, Markdown, and CLI tests for multi-target `run.json`, config hash presence, target metadata redaction, observed tier enrichment, comparison Markdown target/TPS columns, and single-run compatibility.
 
 Definition of done:
 

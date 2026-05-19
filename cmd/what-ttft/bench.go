@@ -240,6 +240,11 @@ func benchOutputMetadata(plan *configfile.Config, cliCfg benchCLIConfig, args []
 	}
 
 	return report.RunMetadata{
+		BenchmarkName:        plan.Name,
+		ConfigPath:           cliCfg.configPath,
+		ConfigSHA256:         benchConfigSHA256(cliCfg.configPath),
+		TargetOrder:          string(whatttft.SerialTargetOrder),
+		Targets:              benchTargetMetadata(plan),
 		Provider:             commonTargetProvider(plan),
 		Model:                commonTargetModel(plan),
 		BaseURL:              commonTargetBaseURL(plan),
@@ -251,6 +256,40 @@ func benchOutputMetadata(plan *configfile.Config, cliCfg benchCLIConfig, args []
 		WallEndUnixNano:      wallEnd,
 		Args:                 redactArgs(args),
 	}
+}
+
+func benchConfigSHA256(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+
+	//nolint:gosec // Benchmark config paths are caller-provided CLI inputs by design.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	return configfile.SHA256Hex(data)
+}
+
+func benchTargetMetadata(plan *configfile.Config) []report.RunTargetMetadata {
+	targets := make([]report.RunTargetMetadata, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		targets = append(targets, report.RunTargetMetadata{
+			TargetID:             target.ID,
+			TargetName:           target.Name,
+			Provider:             target.Provider,
+			ProviderAPI:          string(target.OpenAI.API),
+			RequestedServiceTier: string(target.OpenAI.ServiceTier),
+			Model:                target.OpenAI.Model,
+			BaseURL:              target.OpenAI.BaseURL,
+			APIKeyEnv:            target.OpenAI.APIKeyEnv,
+			IncludeUsage:         target.OpenAI.IncludeUsage,
+			LegacyMaxTokens:      target.OpenAI.LegacyMaxTokens,
+		})
+	}
+
+	return targets
 }
 
 func commonTargetProvider(plan *configfile.Config) string {
