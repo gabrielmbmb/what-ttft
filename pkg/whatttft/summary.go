@@ -180,7 +180,7 @@ type MetricDistributions struct {
 	// E2EOutputTPS summarizes e2e_output_tps over successful measured requests; units are tokens/second, includes TTFT, and Count zero means no values were observed.
 	E2EOutputTPS Distribution `json:"e2e_output_tps"`
 
-	// GenerationDeltaOutputTPS summarizes generation_delta_output_tps over successful measured requests; units are tokens/second, uses visible-output delta timing after the first delta rather than true token timestamps, and Count zero means no values were observed.
+	// GenerationDeltaOutputTPS summarizes generation_delta_output_tps over successful measured requests; units are tokens/second, uses visible-output delta timing after the first delta rather than true token timestamps, omits short buffered responses, and Count zero means no values were observed.
 	GenerationDeltaOutputTPS Distribution `json:"generation_delta_output_tps"`
 }
 

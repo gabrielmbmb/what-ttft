@@ -169,7 +169,7 @@ For OpenAI Responses streams, TTFT is driven by the first non-empty `response.ou
 
 `what-ttft` does not count empty chunks, role-only chunks, usage chunks, comments, heartbeats, metadata events, reasoning/tool events, or `[DONE]` as TTFT.
 
-OpenAI-compatible streams do not guarantee that one chunk equals one tokenizer token. `generation_delta_output_tps` is useful for comparing post-first-delta streaming speed when provider usage is available and at least two visible output deltas were observed, but it is intentionally not labeled decode TPS, token ITL, or TPOT. It is omitted for single-delta responses because the first and last visible output are the same user-visible event.
+OpenAI-compatible streams do not guarantee that one chunk equals one tokenizer token. `generation_delta_output_tps` is useful for comparing post-first-delta streaming speed when provider usage is available, at least three visible output deltas were observed, and the observed post-first-delta window is at least 50 ms. It is intentionally not labeled decode TPS, token ITL, or TPOT. It is omitted for short/buffered responses because tiny first-to-last delta windows can produce meaningless TPS values.
 
 ## Client-side limits
 

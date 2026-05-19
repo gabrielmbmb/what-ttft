@@ -2,6 +2,11 @@ package whatttft
 
 import "time"
 
+const (
+	minimumGenerationDeltaOutputTPSDeltas = 3
+	minimumGenerationDeltaOutputTPSWindow = 50 * time.Millisecond
+)
+
 // CalculateDerivedMetrics computes standardized request metrics from monotonic-relative timeline events, omitting generation_delta_output_tps because the visible output delta count is unknown.
 func CalculateDerivedMetrics(timeline Timeline, completionTokens *int) DerivedMetrics {
 	return calculateDerivedMetrics(timeline, completionTokens, 0)
@@ -66,7 +71,7 @@ func e2eOutputTPS(timeline Timeline, completionTokens *int) *float64 {
 }
 
 func generationDeltaOutputTPS(timeline Timeline, completionTokens *int, outputDeltaCount int) *float64 {
-	if completionTokens == nil || *completionTokens <= 1 || outputDeltaCount <= 1 {
+	if completionTokens == nil || *completionTokens <= 1 || outputDeltaCount < minimumGenerationDeltaOutputTPSDeltas {
 		return nil
 	}
 
@@ -76,6 +81,10 @@ func generationDeltaOutputTPS(timeline Timeline, completionTokens *int, outputDe
 	}
 	endNS, ok := eventNS(timeline, EventLastOutputDelta)
 	if !ok {
+		return nil
+	}
+
+	if endNS-startNS < minimumGenerationDeltaOutputTPSWindow.Nanoseconds() {
 		return nil
 	}
 

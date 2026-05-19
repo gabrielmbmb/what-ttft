@@ -43,7 +43,18 @@ func TestCalculateDerivedMetricsCompleteTimeline(t *testing.T) {
 	assertMetric(t, "tls_ms", metrics.TLSMS, 3)
 	assertMetric(t, "request_write_ms", metrics.RequestWriteMS, 3)
 	assertMetric(t, "e2e_output_tps", metrics.E2EOutputTPS, 222.22222222222223)
-	assertMetric(t, "generation_delta_output_tps", metrics.GenerationDeltaOutputTPS, 450)
+	assertNilMetric(t, "generation_delta_output_tps", metrics.GenerationDeltaOutputTPS)
+}
+
+// TestCalculateDerivedMetricsGenerationDeltaOutputTPS verifies post-first-delta TPS uses only sustained multi-delta streams.
+func TestCalculateDerivedMetricsGenerationDeltaOutputTPS(t *testing.T) {
+	completionTokens := 10
+	metrics := CalculateDerivedMetricsWithOutputDeltaCount(Timeline{EventsNS: map[EventName]int64{
+		EventFirstOutputDelta: ns(25 * time.Millisecond),
+		EventLastOutputDelta:  ns(125 * time.Millisecond),
+	}}, &completionTokens, 3)
+
+	assertMetric(t, "generation_delta_output_tps", metrics.GenerationDeltaOutputTPS, 90)
 }
 
 // TestCalculateDerivedMetricsMissingEvents verifies metrics are nil when either endpoint event is absent.
@@ -126,7 +137,7 @@ func TestCalculateDerivedMetricsGenerationDeltaOutputTPSNilCases(t *testing.T) {
 		events           map[EventName]int64
 	}{
 		"missing tokens": {
-			outputDeltaCount: 2,
+			outputDeltaCount: 3,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 				EventLastOutputDelta:  ns(10 * time.Millisecond),
@@ -134,7 +145,7 @@ func TestCalculateDerivedMetricsGenerationDeltaOutputTPSNilCases(t *testing.T) {
 		},
 		"one token": {
 			tokens:           intPointerForMetrics(1),
-			outputDeltaCount: 2,
+			outputDeltaCount: 3,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 				EventLastOutputDelta:  ns(10 * time.Millisecond),
@@ -142,21 +153,21 @@ func TestCalculateDerivedMetricsGenerationDeltaOutputTPSNilCases(t *testing.T) {
 		},
 		"missing first output": {
 			tokens:           intPointerForMetrics(2),
-			outputDeltaCount: 2,
+			outputDeltaCount: 3,
 			events: map[EventName]int64{
 				EventLastOutputDelta: ns(10 * time.Millisecond),
 			},
 		},
 		"missing last output": {
 			tokens:           intPointerForMetrics(2),
-			outputDeltaCount: 2,
+			outputDeltaCount: 3,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 			},
 		},
 		"zero generation duration": {
 			tokens:           intPointerForMetrics(2),
-			outputDeltaCount: 2,
+			outputDeltaCount: 3,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 				EventLastOutputDelta:  0,
@@ -165,6 +176,22 @@ func TestCalculateDerivedMetricsGenerationDeltaOutputTPSNilCases(t *testing.T) {
 		"one visible output delta": {
 			tokens:           intPointerForMetrics(6),
 			outputDeltaCount: 1,
+			events: map[EventName]int64{
+				EventFirstOutputDelta: 0,
+				EventLastOutputDelta:  ns(100 * time.Millisecond),
+			},
+		},
+		"two visible output deltas": {
+			tokens:           intPointerForMetrics(6),
+			outputDeltaCount: 2,
+			events: map[EventName]int64{
+				EventFirstOutputDelta: 0,
+				EventLastOutputDelta:  ns(100 * time.Millisecond),
+			},
+		},
+		"short observation window": {
+			tokens:           intPointerForMetrics(6),
+			outputDeltaCount: 3,
 			events: map[EventName]int64{
 				EventFirstOutputDelta: 0,
 				EventLastOutputDelta:  ns(time.Microsecond),
