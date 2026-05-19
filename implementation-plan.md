@@ -1698,7 +1698,7 @@ Definition of done:
 
 ---
 
-### [ ] 20. Add target identity to request records and summaries
+### [x] 20. Add target identity to request records and summaries
 
 Multi-model and YAML benchmarks need a stable comparison label that is distinct from provider/model. Without this, two targets using the same model against different base URLs, deployments, regions, or API accounts could be summarized together incorrectly.
 
@@ -1740,6 +1740,15 @@ Implementation details:
   - two records with the same provider/model/scenario/cache/connection but different requested service tiers must produce two groups;
   - records without `target_id` keep existing grouping behavior;
   - request IDs are unique and chunk join remains correct when prefixes are set.
+
+Implemented details:
+
+- Added `TargetID`, `TargetName`, and `RequestIDPrefix` to `RunConfig` with secret-safety documentation.
+- Added optional `target_id` and `target_name` fields to `RequestRecord` and copied them from the runner into every request record.
+- Added target fields to `SummaryGroup` and included `target_id` in the summary group key while preserving service-tier grouping.
+- Added deterministic prefixed request ID generation for runners, preserving the old `req-000000` shape when no prefix is configured.
+- Updated Markdown group headings to include target ID/name when present.
+- Added tests for JSON shape, target grouping, prefixed request IDs, chunk joins, concurrent runner prefixed IDs, and Markdown target headings.
 
 Definition of done:
 

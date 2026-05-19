@@ -66,6 +66,12 @@ type RunSummary struct {
 
 // SummaryGroup contains aggregate statistics for one measured-request comparison group.
 type SummaryGroup struct {
+	// TargetID is the stable sanitized benchmark target identifier for this group; empty means no target dimension was configured and groups never mix different non-empty target IDs.
+	TargetID string `json:"target_id,omitempty"`
+
+	// TargetName is the human-readable target label for this group; empty means no target label was configured and it must not contain secrets.
+	TargetName string `json:"target_name,omitempty"`
+
 	// Provider is the normalized provider name for this group; it contains no secrets and empty means unspecified.
 	Provider string `json:"provider"`
 
@@ -265,6 +271,8 @@ type summaryGroupBuilder struct {
 
 func newSummaryGroupBuilder(record RequestRecord) *summaryGroupBuilder {
 	return &summaryGroupBuilder{group: SummaryGroup{
+		TargetID:             record.TargetID,
+		TargetName:           record.TargetName,
 		Provider:             record.Provider,
 		Model:                record.Model,
 		ScenarioName:         record.ScenarioName,
@@ -499,7 +507,7 @@ func errorStatusCode(record RequestRecord) int {
 }
 
 func groupKey(record RequestRecord) string {
-	return record.Provider + "\x00" + record.Model + "\x00" + record.ScenarioName + "\x00" + string(record.CacheMode) + "\x00" + string(record.ConnectionMode) + "\x00" + record.RequestedServiceTier
+	return record.TargetID + "\x00" + record.Provider + "\x00" + record.Model + "\x00" + record.ScenarioName + "\x00" + string(record.CacheMode) + "\x00" + string(record.ConnectionMode) + "\x00" + record.RequestedServiceTier
 }
 
 func responseWindowEndpoints(record RequestRecord) (int64, int64, bool) {

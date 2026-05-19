@@ -16,6 +16,7 @@ func TestRunnerRunConcurrentProducesConfiguredMeasuredRecords(t *testing.T) {
 		MeasuredRequests: 7,
 		Concurrency:      3,
 		CacheMode:        CacheReuse,
+		RequestIDPrefix:  "concurrent-",
 	})
 
 	result, err := runner.Run(context.Background())
@@ -36,7 +37,7 @@ func TestRunnerRunConcurrentProducesConfiguredMeasuredRecords(t *testing.T) {
 		if record.Attempt != index {
 			t.Fatalf("record %d attempt = %d, want %d", index, record.Attempt, index)
 		}
-		if record.RequestID != "req-"+sixDigit(index) {
+		if record.RequestID != "concurrent-req-"+sixDigit(index) {
 			t.Fatalf("record %d request ID = %q", index, record.RequestID)
 		}
 		if record.Warmup {

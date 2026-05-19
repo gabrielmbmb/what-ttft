@@ -5,6 +5,12 @@ type RequestRecord struct {
 	// RequestID is a stable unique ID for this benchmark request attempt; it contains no secrets and is required for joining chunk records.
 	RequestID string `json:"request_id"`
 
+	// TargetID is a stable sanitized benchmark target identifier for multi-target runs; empty means no target dimension was configured and the value must not contain secrets.
+	TargetID string `json:"target_id,omitempty"`
+
+	// TargetName is a human-readable benchmark target label for reports; empty means no target label was configured and the value must not contain secrets.
+	TargetName string `json:"target_name,omitempty"`
+
 	// Provider is the normalized provider name, such as "openai"; it contains no secrets and is used for grouping summaries.
 	Provider string `json:"provider"`
 

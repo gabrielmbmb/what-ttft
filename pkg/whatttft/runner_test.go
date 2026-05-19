@@ -89,6 +89,50 @@ func TestRunnerRunExecutesWarmupThenMeasuredSequentially(t *testing.T) {
 	}
 }
 
+// TestRunnerRunAppliesTargetLabelsAndRequestIDPrefix verifies multi-target metadata is copied to records and chunks.
+func TestRunnerRunAppliesTargetLabelsAndRequestIDPrefix(t *testing.T) {
+	provider := &fakeProvider{completionTokens: 1}
+	runner := NewRunner(provider, RunConfig{
+		Scenario:         Scenario{Name: "targeted", Prompt: "Say hello."},
+		MeasuredRequests: 1,
+		CacheMode:        CacheReuse,
+		TargetID:         "target-a",
+		TargetName:       "Target A",
+		RequestIDPrefix:  "target-a-",
+		SaveChunks:       true,
+	})
+
+	result, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(result.Records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(result.Records))
+	}
+	record := result.Records[0]
+	if record.RequestID != "target-a-req-000000" {
+		t.Fatalf("request ID = %q, want prefixed ID", record.RequestID)
+	}
+	if record.TargetID != "target-a" || record.TargetName != "Target A" {
+		t.Fatalf("target = id %q name %q, want target-a/Target A", record.TargetID, record.TargetName)
+	}
+	if len(result.Chunks) == 0 {
+		t.Fatal("expected chunks with save chunks enabled")
+	}
+	for _, chunk := range result.Chunks {
+		if chunk.RequestID != record.RequestID {
+			t.Fatalf("chunk request ID = %q, want %q", chunk.RequestID, record.RequestID)
+		}
+	}
+	calls := provider.callsSnapshot()
+	if len(calls) != 1 || calls[0].requestID != record.RequestID {
+		t.Fatalf("provider calls = %#v, want prefixed request ID", calls)
+	}
+	if len(result.Summary.Groups) != 1 || result.Summary.Groups[0].TargetID != "target-a" || result.Summary.Groups[0].TargetName != "Target A" {
+		t.Fatalf("summary groups = %#v, want target metadata", result.Summary.Groups)
+	}
+}
+
 // TestRunnerRunContinuesAfterRequestErrors verifies provider errors become records and later attempts still run.
 func TestRunnerRunContinuesAfterRequestErrors(t *testing.T) {
 	provider := &fakeProvider{

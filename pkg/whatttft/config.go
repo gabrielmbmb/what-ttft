@@ -48,6 +48,15 @@ type RunConfig struct {
 	// ConnectionMode is the requested HTTP connection reuse behavior; summaries must not mix different connection modes.
 	ConnectionMode ConnectionMode
 
+	// TargetID is an optional stable target identifier for multi-target benchmarks; empty means no target dimension is recorded and the value must not contain secrets.
+	TargetID string
+
+	// TargetName is an optional human-readable target label for reports; empty means no separate target label is recorded and the value must not contain secrets.
+	TargetName string
+
+	// RequestIDPrefix is an optional prefix prepended to generated request IDs; empty preserves req-000000 IDs, non-empty values must be stable and contain no secrets.
+	RequestIDPrefix string
+
 	// OutputDir is the filesystem directory for reports; empty means the report writer or CLI may generate a unique directory under its default output root.
 	OutputDir string
 

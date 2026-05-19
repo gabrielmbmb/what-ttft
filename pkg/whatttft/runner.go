@@ -77,7 +77,7 @@ func (r *Runner) runSequential(ctx context.Context, cfg RunConfig) (*RunResult, 
 
 func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup bool, recorder *Recorder) (RequestRecord, []ChunkRecord) {
 	promptPlan := BuildPromptPlan(cfg, attempt, warmup)
-	requestID := fmt.Sprintf("req-%06d", attempt)
+	requestID := requestIDForAttempt(cfg, attempt)
 	observer := newRequestObserver(requestID, recorder, cfg.SaveChunks)
 
 	err := r.provider.StreamChat(ctx, ProviderRequest{
@@ -92,6 +92,8 @@ func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup 
 	httpRecord := observer.httpSnapshot()
 	record := RequestRecord{
 		RequestID:            requestID,
+		TargetID:             cfg.TargetID,
+		TargetName:           cfg.TargetName,
 		Provider:             r.provider.Name(),
 		Model:                r.provider.Model(),
 		ScenarioName:         cfg.Scenario.Name,
@@ -115,6 +117,14 @@ func (r *Runner) runOne(ctx context.Context, cfg RunConfig, attempt int, warmup 
 	}
 
 	return record, observer.chunkSnapshot()
+}
+
+func requestIDForAttempt(cfg RunConfig, attempt int) string {
+	if cfg.RequestIDPrefix != "" {
+		return fmt.Sprintf("%sreq-%06d", cfg.RequestIDPrefix, attempt)
+	}
+
+	return fmt.Sprintf("req-%06d", attempt)
 }
 
 func normalizeRunConfig(cfg RunConfig) (RunConfig, error) {

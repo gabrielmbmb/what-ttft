@@ -31,7 +31,7 @@ func MarkdownSummary(summary whatttft.RunSummary) string {
 }
 
 func writeGroupMarkdown(builder *strings.Builder, group whatttft.SummaryGroup) {
-	fmt.Fprintf(builder, "## provider=%s model=%s scenario=%s cache=%s connection=%s service_tier=%s\n\n", group.Provider, group.Model, group.ScenarioName, group.CacheMode, group.ConnectionMode, firstNonEmpty(group.RequestedServiceTier, "unset"))
+	fmt.Fprintf(builder, "## %sprovider=%s model=%s scenario=%s cache=%s connection=%s service_tier=%s\n\n", targetHeadingPrefix(group), group.Provider, group.Model, group.ScenarioName, group.CacheMode, group.ConnectionMode, firstNonEmpty(group.RequestedServiceTier, "unset"))
 	fmt.Fprintf(builder, "measured=%d successful=%d errors=%d\n", group.MeasuredRequests, group.SuccessfulRequests, group.ErrorRequests)
 	if len(group.ObservedServiceTierCounts) > 0 {
 		fmt.Fprintf(builder, "observed_service_tiers=%s\n", formatStringIntMap(group.ObservedServiceTierCounts))
@@ -50,6 +50,17 @@ func writeGroupMarkdown(builder *strings.Builder, group whatttft.SummaryGroup) {
 		fmt.Fprintf(builder, "system_tps: %s\n", formatOptionalFloat(group.SystemTPS))
 		fmt.Fprintf(builder, "rps: %s\n\n", formatOptionalFloat(group.RPS))
 	}
+}
+
+func targetHeadingPrefix(group whatttft.SummaryGroup) string {
+	if group.TargetID == "" {
+		return ""
+	}
+	if group.TargetName == "" {
+		return fmt.Sprintf("target=%s ", group.TargetID)
+	}
+
+	return fmt.Sprintf("target=%s target_name=%s ", group.TargetID, group.TargetName)
 }
 
 type metricRow struct {

@@ -76,6 +76,24 @@ func TestSummarizeExcludesWarmupAndAggregatesMeasuredRequests(t *testing.T) {
 	}
 }
 
+// TestSummarizeSeparatesTargetIDs verifies different configured target IDs are never combined.
+func TestSummarizeSeparatesTargetIDs(t *testing.T) {
+	summary := Summarize([]RequestRecord{
+		summaryRecord(summaryRecordConfig{cacheMode: CacheBust, targetID: "target-a", targetName: "Target A", ttftMS: 10, completionTokens: 1, bodyEOFMS: 50}),
+		summaryRecord(summaryRecordConfig{cacheMode: CacheBust, targetID: "target-b", targetName: "Target B", ttftMS: 20, completionTokens: 1, bodyEOFMS: 50}),
+	})
+
+	if len(summary.Groups) != 2 {
+		t.Fatalf("group count = %d, want 2", len(summary.Groups))
+	}
+	if summary.Groups[0].TargetID != "target-a" || summary.Groups[0].TargetName != "Target A" {
+		t.Fatalf("first group target = id %q name %q, want target-a/Target A", summary.Groups[0].TargetID, summary.Groups[0].TargetName)
+	}
+	if summary.Groups[1].TargetID != "target-b" || summary.Groups[1].TargetName != "Target B" {
+		t.Fatalf("second group target = id %q name %q, want target-b/Target B", summary.Groups[1].TargetID, summary.Groups[1].TargetName)
+	}
+}
+
 // TestSummarizeSeparatesServiceTiers verifies different requested provider service tiers are never combined.
 func TestSummarizeSeparatesServiceTiers(t *testing.T) {
 	summary := Summarize([]RequestRecord{
@@ -156,6 +174,8 @@ type summaryRecordConfig struct {
 	bodyEOFMS            float64
 	serviceTier          string
 	observedServiceTier  string
+	targetID             string
+	targetName           string
 }
 
 func summaryRecord(cfg summaryRecordConfig) RequestRecord {
@@ -171,6 +191,8 @@ func summaryRecord(cfg summaryRecordConfig) RequestRecord {
 
 	return RequestRecord{
 		RequestID:            "req-summary",
+		TargetID:             cfg.targetID,
+		TargetName:           cfg.targetName,
 		Provider:             "provider",
 		Model:                "model",
 		ScenarioName:         "scenario",

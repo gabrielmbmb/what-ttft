@@ -16,6 +16,8 @@ func TestRequestRecordJSONShape(t *testing.T) {
 
 	rec := RequestRecord{
 		RequestID:            "req-001",
+		TargetID:             "target-a",
+		TargetName:           "Target A",
 		Provider:             "openai",
 		Model:                "test-model",
 		ScenarioName:         "short",
@@ -77,6 +79,9 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	}
 	if got.ConnectionMode != WarmConnections {
 		t.Fatalf("connection mode = %q, want %q", got.ConnectionMode, WarmConnections)
+	}
+	if got.TargetID != "target-a" || got.TargetName != "Target A" {
+		t.Fatalf("target = id %q name %q, want target-a/Target A", got.TargetID, got.TargetName)
 	}
 	if got.RequestedServiceTier != "priority" || got.ObservedServiceTier != "priority" {
 		t.Fatalf("service tiers = requested %q observed %q, want priority/priority", got.RequestedServiceTier, got.ObservedServiceTier)

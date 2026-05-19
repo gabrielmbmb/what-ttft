@@ -60,6 +60,23 @@ func TestMarkdownSummaryIncludesKeyMetricNames(t *testing.T) {
 	}
 }
 
+// TestMarkdownSummaryIncludesTargetHeading verifies target IDs and names appear in group headings.
+func TestMarkdownSummaryIncludesTargetHeading(t *testing.T) {
+	markdown := MarkdownSummary(whatttft.RunSummary{Groups: []whatttft.SummaryGroup{{
+		TargetID:       "target-a",
+		TargetName:     "Target A",
+		Provider:       "openai",
+		Model:          "gpt-test",
+		ScenarioName:   "short",
+		CacheMode:      whatttft.CacheReuse,
+		ConnectionMode: whatttft.WarmConnections,
+	}}})
+
+	if !strings.Contains(markdown, "target=target-a target_name=Target A provider=openai") {
+		t.Fatalf("markdown missing target heading:\n%s", markdown)
+	}
+}
+
 // TestMarkdownSummaryHandlesEmptyGroups verifies an empty summary still renders useful counts.
 func TestMarkdownSummaryHandlesEmptyGroups(t *testing.T) {
 	markdown := MarkdownSummary(whatttft.RunSummary{TotalRequests: 1, WarmupRequests: 1})
