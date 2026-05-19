@@ -1,0 +1,38 @@
+schema_version: 1
+name: openai-short-model-compare
+
+defaults:
+  provider: openai
+  api: responses
+  base_url: https://user:secret@api.openai.com/v1?api_key=secret&region=test
+  api_key_env: OPENAI_API_KEY
+  service_tier: default
+  include_usage: true
+  legacy_max_tokens: false
+
+run:
+  samples: 50
+  warmup: 5
+  concurrency: 1
+  cache_mode: cache-bust
+  connection_mode: warm
+  timeout: 120s
+  save_chunks: false
+
+scenario:
+  name: short-capital
+  system_prompt: You are a concise assistant.
+  prompt: "Answer in one short sentence: what is the capital of France?"
+  max_output_tokens: 64
+  temperature: 0
+  top_p: 1
+  reasoning_effort: none
+
+targets:
+  - id: gpt-5.5
+    name: GPT 5.5
+    model: gpt-5.5
+  - id: gpt-5.2
+    name: GPT 5.2 priority
+    model: gpt-5.2
+    service_tier: priority

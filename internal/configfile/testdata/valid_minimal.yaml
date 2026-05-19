@@ -1,0 +1,16 @@
+schema_version: 1
+name: minimal-benchmark
+
+defaults:
+  api_key_env: OPENAI_API_KEY
+
+run:
+  samples: 1
+
+scenario:
+  prompt: "Answer briefly: what is the capital of France?"
+  max_output_tokens: 16
+  temperature: 0
+
+targets:
+  - model: gpt-5.5

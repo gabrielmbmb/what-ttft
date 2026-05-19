@@ -1,0 +1,14 @@
+schema_version: 1
+
+defaults:
+  api_key_env: OPENAI_API_KEY
+
+run:
+  samples: 1
+  timeout: 120
+
+scenario:
+  prompt: hello
+
+targets:
+  - model: gpt-5.5

@@ -1,0 +1,15 @@
+schema_version: 1
+name: unknown-field
+unexpected: true
+
+defaults:
+  api_key_env: OPENAI_API_KEY
+
+run:
+  samples: 1
+
+scenario:
+  prompt: hello
+
+targets:
+  - model: gpt-5.5

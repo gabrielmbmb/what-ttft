@@ -1,0 +1,13 @@
+schema_version: 1
+
+defaults:
+  api_key_env: OPENAI_API_KEY
+
+run:
+  samples: 1
+
+scenario:
+  name: missing-prompt
+
+targets:
+  - model: gpt-5.5

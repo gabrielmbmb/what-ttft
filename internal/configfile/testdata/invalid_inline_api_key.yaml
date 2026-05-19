@@ -1,0 +1,14 @@
+schema_version: 1
+
+defaults:
+  api_key: sk-not-a-real-secret
+
+run:
+  samples: 1
+
+scenario:
+  prompt: hello
+
+targets:
+  - model: gpt-5.5
+    api_key_env: OPENAI_API_KEY

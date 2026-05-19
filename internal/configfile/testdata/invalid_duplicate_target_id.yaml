@@ -1,0 +1,17 @@
+schema_version: 1
+
+defaults:
+  api_key_env: OPENAI_API_KEY
+
+run:
+  samples: 1
+
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+
+targets:
+  - id: same target
+    model: gpt-5.5
+  - id: same-target
+    model: gpt-5.2

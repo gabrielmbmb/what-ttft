@@ -1758,7 +1758,7 @@ Definition of done:
 
 ---
 
-### [ ] 21. Define the v0.2 YAML benchmark schema and loader
+### [x] 21. Define the v0.2 YAML benchmark schema and loader
 
 Add strict YAML configuration support for repeatable benchmarks. The schema should cover the user's requested multi-model use case first and leave obvious extension points for providers/scenarios later.
 
@@ -1846,6 +1846,15 @@ Implementation details:
   - `invalid_bad_duration.yaml`;
   - `invalid_bad_service_tier.yaml`;
   - `invalid_inline_api_key.yaml` if the schema explicitly rejects that field.
+
+Implemented details:
+
+- Added `internal/configfile` with strict YAML loading via `go.yaml.in/yaml/v3` and `Decoder.KnownFields(true)`.
+- Added normalized config types for shared run settings, shared `whatttft.Scenario`, and inherited OpenAI target settings, including default `api: responses`, optional `service_tier`, `include_usage`, and `legacy_max_tokens`.
+- Added validation for schema version, target presence, inherited provider/model/API-key-env requirements, duplicate sanitized target IDs, cache/connection modes, OpenAI API mode, service tier, reasoning effort, non-negative counts/timeouts, explicit-zero floats, and Responses `max_output_tokens` minimums.
+- Added custom YAML duration parsing that accepts Go duration strings and rejects integer nanosecond-looking values.
+- Rejected inline `api_key` fields with actionable errors, added target ID sanitization/generation, request-run config construction for targets, base URL redaction helpers, and config byte SHA-256 hashing.
+- Added valid and invalid YAML fixtures plus loader tests covering defaults, inheritance/overrides, unknown fields, duplicate IDs, missing prompt/target fields, bad durations, bad service tiers, inline API keys, explicit chat-completions compatibility, generated IDs, redaction, and stable config hashes.
 
 Definition of done:
 
