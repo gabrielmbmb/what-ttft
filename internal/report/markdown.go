@@ -75,6 +75,7 @@ func metricRows(metrics whatttft.MetricDistributions) []metricRow {
 		{name: "tls_ms", distribution: metrics.TLSMS},
 		{name: "request_write_ms", distribution: metrics.RequestWriteMS},
 		{name: "e2e_output_tps", distribution: metrics.E2EOutputTPS},
+		{name: "generation_delta_output_tps", distribution: metrics.GenerationDeltaOutputTPS},
 	}
 }
 

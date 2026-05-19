@@ -12,6 +12,7 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	cacheHit := false
 	providerProcessingMS := 42.0
 	ttfbMS := 123.45
+	generationTPS := 456.7
 
 	rec := RequestRecord{
 		RequestID:            "req-001",
@@ -52,7 +53,8 @@ func TestRequestRecordJSONShape(t *testing.T) {
 			},
 		},
 		Derived: DerivedMetrics{
-			HTTPTTFBMS: &ttfbMS,
+			HTTPTTFBMS:               &ttfbMS,
+			GenerationDeltaOutputTPS: &generationTPS,
 		},
 	}
 
@@ -84,6 +86,9 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	}
 	if got.Derived.HTTPTTFBMS == nil || *got.Derived.HTTPTTFBMS != ttfbMS {
 		t.Fatalf("http_ttfb_ms = %v, want %v", got.Derived.HTTPTTFBMS, ttfbMS)
+	}
+	if got.Derived.GenerationDeltaOutputTPS == nil || *got.Derived.GenerationDeltaOutputTPS != generationTPS {
+		t.Fatalf("generation_delta_output_tps = %v, want %v", got.Derived.GenerationDeltaOutputTPS, generationTPS)
 	}
 	if got.Cache.Hit == nil || *got.Cache.Hit {
 		t.Fatalf("cache hit = %v, want pointer to false", got.Cache.Hit)

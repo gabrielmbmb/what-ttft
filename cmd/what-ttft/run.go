@@ -243,14 +243,22 @@ func printRunSummary(output io.Writer, cfg runCLIConfig, result *whatttft.RunRes
 	writeLine(output, "metric                                      p50      p95      p99      mean")
 
 	var metrics whatttft.MetricDistributions
+	var systemTPS *float64
+	var rps *float64
 	if len(result.Summary.Groups) > 0 {
-		metrics = result.Summary.Groups[0].Metrics
+		group := result.Summary.Groups[0]
+		metrics = group.Metrics
+		systemTPS = group.SystemTPS
+		rps = group.RPS
 	}
 	printMetricLine(output, "http_ttfb_ms", metrics.HTTPTTFBMS)
 	printMetricLine(output, "provider_processing_ms", metrics.ProviderProcessingMS)
 	printMetricLine(output, "server_wait_minus_provider_processing_ms", metrics.ServerWaitMinusProviderProcessingMS)
 	printMetricLine(output, "ttft_delta_ms", metrics.TTFTDeltaMS)
 	printMetricLine(output, "e2e_delta_ms", metrics.E2EDeltaMS)
+	printMetricLine(output, "e2e_output_tps", metrics.E2EOutputTPS)
+	printMetricLine(output, "generation_delta_output_tps", metrics.GenerationDeltaOutputTPS)
+	writeFormatted(output, "\nsystem_tps=%s rps=%s\n", formatCLIOptionalFloat(systemTPS), formatCLIOptionalFloat(rps))
 }
 
 func printMetricLine(output io.Writer, name string, distribution whatttft.Distribution) {

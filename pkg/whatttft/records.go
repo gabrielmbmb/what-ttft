@@ -236,8 +236,11 @@ type DerivedMetrics struct {
 	// GenerationDeltaMS is last_output_delta minus first_output_delta in milliseconds, or nil when either event is missing.
 	GenerationDeltaMS *float64 `json:"generation_delta_ms,omitempty"`
 
-	// E2EOutputTPS is completion tokens divided by e2e_delta seconds, or nil when completion tokens or e2e_delta are unavailable.
+	// E2EOutputTPS is completion tokens divided by e2e_delta seconds, or nil when completion tokens or e2e_delta are unavailable; units are tokens/second and this user-perceived metric includes TTFT.
 	E2EOutputTPS *float64 `json:"e2e_output_tps,omitempty"`
+
+	// GenerationDeltaOutputTPS is max(completion tokens minus one, zero) divided by generation_delta seconds, or nil when completion tokens, first_output_delta, last_output_delta, or positive generation duration are unavailable; units are tokens/second, timing bounds are visible-output delta timestamps rather than true token timestamps, and this must not be interpreted as decode_tps.
+	GenerationDeltaOutputTPS *float64 `json:"generation_delta_output_tps,omitempty"`
 
 	// ServerWaitToFirstByteMS is first_response_byte minus wrote_request in milliseconds, or nil when either event is missing.
 	ServerWaitToFirstByteMS *float64 `json:"server_wait_to_first_byte_ms,omitempty"`

@@ -160,11 +160,16 @@ Important metrics:
 | `generation_delta_ms` | Time between first and last visible output deltas. |
 | `server_wait_to_first_byte_ms` | Time from request write completion to first response byte. |
 | `stream_protocol_to_first_output_ms` | Time from first response byte to first visible output delta. |
-| `e2e_output_tps` | Provider-reported output/completion tokens divided by E2E seconds, when usage is available. For Responses reasoning models, provider output tokens may include hidden reasoning tokens. |
+| `e2e_output_tps` | User-perceived output-token throughput: provider-reported output/completion tokens divided by request-start-to-last-visible-delta seconds, when usage is available. This includes TTFT. For Responses reasoning models, provider output tokens may include hidden reasoning tokens. |
+| `generation_delta_output_tps` | Post-first-delta output-token throughput: `max(output_tokens - 1, 0)` divided by first-visible-delta-to-last-visible-delta seconds. This uses visible chunk/delta timestamps, not true per-token timestamps, so it is not `decode_tps` or token ITL. |
+| `system_tps` | Total successful output tokens divided by the first-successful-request to last-successful-response window for a summary group. |
+| `rps` | Successful measured requests divided by the first-successful-request to last-successful-response window for a summary group. |
 
 For OpenAI Responses streams, TTFT is driven by the first non-empty `response.output_text.delta` or visible refusal delta, not by metadata events such as `response.created`, `response.in_progress`, tool events, reasoning events, or empty content-part events.
 
 `what-ttft` does not count empty chunks, role-only chunks, usage chunks, comments, heartbeats, metadata events, reasoning/tool events, or `[DONE]` as TTFT.
+
+OpenAI-compatible streams do not guarantee that one chunk equals one tokenizer token. `generation_delta_output_tps` is useful for comparing post-first-delta streaming speed when provider usage is available, but it is intentionally not labeled decode TPS, token ITL, or TPOT.
 
 ## Client-side limits
 

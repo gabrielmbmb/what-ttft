@@ -49,6 +49,8 @@ func TestMarkdownSummaryIncludesKeyMetricNames(t *testing.T) {
 		"provider_processing_ms",
 		"server_wait_minus_provider_processing_ms",
 		"e2e_delta_ms",
+		"e2e_output_tps",
+		"generation_delta_output_tps",
 		"system_tps: 100.000",
 		"rps: 90.000",
 	} {

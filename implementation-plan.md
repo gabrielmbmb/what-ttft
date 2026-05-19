@@ -1639,7 +1639,7 @@ Definition of done:
 
 ---
 
-### [ ] 19. Make tokens-per-second first-class and rigorously named
+### [x] 19. Make tokens-per-second first-class and rigorously named
 
 Current state:
 
@@ -1680,6 +1680,14 @@ Implementation details:
   - `generation_delta_output_tps` p50/p95/p99/mean;
   - group-level `system_tps` and `rps` when available.
 - Update README metric definitions to explain the difference between user-perceived TPS, post-first-delta TPS, and system TPS.
+
+Implemented details:
+
+- Added `generation_delta_output_tps` to per-request derived metrics with nil semantics for missing token counts, zero/one output token, missing first/last visible output delta, and non-positive generation duration.
+- Kept `e2e_output_tps` unchanged as user-perceived throughput including TTFT.
+- Added `generation_delta_output_tps` to summary distributions, Markdown reports, JSON record tests, summary tests, and CLI output.
+- Updated the CLI summary to print `e2e_output_tps`, `generation_delta_output_tps`, `system_tps`, and `rps`.
+- Updated README metric descriptions to distinguish user-perceived TPS, post-first-delta output TPS, system TPS, and RPS, with a warning not to treat chunk/delta timing as true decode TPS or token ITL/TPOT.
 
 Definition of done:
 

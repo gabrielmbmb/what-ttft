@@ -20,6 +20,7 @@ func CalculateDerivedMetrics(timeline Timeline, completionTokens *int) DerivedMe
 		RequestWriteMS:                durationMS(timeline, EventGotConn, EventWroteRequest),
 	}
 	metrics.E2EOutputTPS = e2eOutputTPS(timeline, completionTokens)
+	metrics.GenerationDeltaOutputTPS = generationDeltaOutputTPS(timeline, completionTokens)
 
 	return metrics
 }
@@ -52,12 +53,32 @@ func e2eOutputTPS(timeline Timeline, completionTokens *int) *float64 {
 		return nil
 	}
 
-	durationNS := endNS - startNS
+	return tokensPerSecond(*completionTokens, endNS-startNS)
+}
+
+func generationDeltaOutputTPS(timeline Timeline, completionTokens *int) *float64 {
+	if completionTokens == nil || *completionTokens <= 1 {
+		return nil
+	}
+
+	startNS, ok := eventNS(timeline, EventFirstOutputDelta)
+	if !ok {
+		return nil
+	}
+	endNS, ok := eventNS(timeline, EventLastOutputDelta)
+	if !ok {
+		return nil
+	}
+
+	return tokensPerSecond(*completionTokens-1, endNS-startNS)
+}
+
+func tokensPerSecond(tokens int, durationNS int64) *float64 {
 	if durationNS <= 0 {
 		return nil
 	}
 
-	value := float64(*completionTokens) / (float64(durationNS) / float64(time.Second))
+	value := float64(tokens) / (float64(durationNS) / float64(time.Second))
 	return &value
 }
 

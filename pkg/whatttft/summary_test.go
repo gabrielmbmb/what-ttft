@@ -49,6 +49,7 @@ func TestSummarizeExcludesWarmupAndAggregatesMeasuredRequests(t *testing.T) {
 	assertSummaryDistribution(t, "ttft_delta_ms", group.Metrics.TTFTDeltaMS, 1, 10)
 	assertSummaryDistribution(t, "provider_processing_ms", group.Metrics.ProviderProcessingMS, 1, 3)
 	assertSummaryDistribution(t, "server_wait_minus_provider_processing_ms", group.Metrics.ServerWaitMinusProviderProcessingMS, 1, 2)
+	assertSummaryDistribution(t, "generation_delta_output_tps", group.Metrics.GenerationDeltaOutputTPS, 1, 112.5)
 	if group.Metrics.TTFTDeltaMS.P50 != nil && *group.Metrics.TTFTDeltaMS.P50 == 999 {
 		t.Fatal("warmup TTFT leaked into measured distribution")
 	}
@@ -213,6 +214,7 @@ func summaryRecord(cfg summaryRecordConfig) RequestRecord {
 			ServerWaitToFirstByteMS:       summaryFloatPointer(cfg.ttftMS / 2),
 			StreamProtocolToFirstOutputMS: summaryFloatPointer(cfg.ttftMS / 2),
 			E2EOutputTPS:                  summaryFloatPointer(float64(cfg.completionTokens) / (lastOutputMS / 1000)),
+			GenerationDeltaOutputTPS:      summaryGenerationTPS(cfg.completionTokens, lastOutputMS-cfg.ttftMS),
 		},
 	}
 }
@@ -252,6 +254,14 @@ func assertFloatPointer(t *testing.T, name string, got *float64, want float64) {
 	if math.Abs(*got-want) > 1e-9 {
 		t.Fatalf("%s = %.12g, want %.12g", name, *got, want)
 	}
+}
+
+func summaryGenerationTPS(completionTokens int, generationMS float64) *float64 {
+	if completionTokens <= 1 || generationMS <= 0 {
+		return nil
+	}
+
+	return summaryFloatPointer(float64(completionTokens-1) / (generationMS / 1000))
 }
 
 func summaryFloatPointer(value float64) *float64 {

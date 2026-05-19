@@ -171,8 +171,11 @@ type MetricDistributions struct {
 	// RequestWriteMS summarizes request_write_ms over successful measured requests; units are milliseconds and Count zero means no values were observed.
 	RequestWriteMS Distribution `json:"request_write_ms"`
 
-	// E2EOutputTPS summarizes e2e_output_tps over successful measured requests; units are tokens/second and Count zero means no values were observed.
+	// E2EOutputTPS summarizes e2e_output_tps over successful measured requests; units are tokens/second, includes TTFT, and Count zero means no values were observed.
 	E2EOutputTPS Distribution `json:"e2e_output_tps"`
+
+	// GenerationDeltaOutputTPS summarizes generation_delta_output_tps over successful measured requests; units are tokens/second, uses visible-output delta timing after the first delta rather than true token timestamps, and Count zero means no values were observed.
+	GenerationDeltaOutputTPS Distribution `json:"generation_delta_output_tps"`
 }
 
 // CacheSummary contains observed prompt/KV cache aggregate metadata for one summary group.
@@ -246,6 +249,7 @@ type metricValueSet struct {
 	tls                         []float64
 	requestWrite                []float64
 	e2eOutputTPS                []float64
+	generationDeltaOutputTPS    []float64
 }
 
 type summaryGroupBuilder struct {
@@ -307,6 +311,7 @@ func (b *summaryGroupBuilder) addMetrics(record RequestRecord) {
 	appendMetric(&b.metrics.tls, metrics.TLSMS)
 	appendMetric(&b.metrics.requestWrite, metrics.RequestWriteMS)
 	appendMetric(&b.metrics.e2eOutputTPS, metrics.E2EOutputTPS)
+	appendMetric(&b.metrics.generationDeltaOutputTPS, metrics.GenerationDeltaOutputTPS)
 }
 
 func (b *summaryGroupBuilder) addUsage(record RequestRecord) {
@@ -376,6 +381,7 @@ func (b *summaryGroupBuilder) build() SummaryGroup {
 		TLSMS:                               summarizeValues(b.metrics.tls),
 		RequestWriteMS:                      summarizeValues(b.metrics.requestWrite),
 		E2EOutputTPS:                        summarizeValues(b.metrics.e2eOutputTPS),
+		GenerationDeltaOutputTPS:            summarizeValues(b.metrics.generationDeltaOutputTPS),
 	}
 	b.group.Cache.CachedPromptTokens = summarizeValues(b.cachedPromptTokens)
 	b.group.CompletionTokenRecords = b.completionTokenCount
