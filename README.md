@@ -49,6 +49,28 @@ Or run directly from a checkout:
 go run ./cmd/what-ttft --help
 ```
 
+## Testing and smoke checks
+
+Unit tests do not call real providers. Before submitting changes, run:
+
+```sh
+go test ./...
+go test -race ./...
+golangci-lint run
+go build ./...
+go run ./cmd/what-ttft run --help
+go run ./cmd/what-ttft bench --help
+```
+
+No-network fake-server smoke tests exercise the CLI and report writers end to end:
+
+```sh
+scripts/smoke-fake-openai.sh
+scripts/smoke-fake-openai-bench.sh
+```
+
+The first script covers the single-target `run` path. The second script covers the YAML multi-target `bench` path, verifies `/responses` is used by default, checks service-tier and TPS metadata, and ensures fake API keys are not written to reports.
+
 ## Quick start
 
 Set your API key:

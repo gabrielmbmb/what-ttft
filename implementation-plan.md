@@ -2147,7 +2147,7 @@ Definition of done:
 
 ---
 
-### [ ] 26. Add quality gates and fake-server smoke coverage for `bench`
+### [x] 26. Add quality gates and fake-server smoke coverage for `bench`
 
 Mirror the v0.1 quality gate for the new multi-target path.
 
@@ -2177,6 +2177,13 @@ Implementation details:
   scripts/smoke-fake-openai.sh
   scripts/smoke-fake-openai-bench.sh
   ```
+
+Implemented details:
+
+- Added `scripts/smoke-fake-openai-bench.sh`, a no-network smoke script that builds the CLI, starts a local deterministic Responses-compatible fake OpenAI server, writes a temporary two-target YAML config, runs `what-ttft bench`, and validates the generated reports.
+- The bench smoke script verifies `/responses` is used by default, two target/model groups are present, configured `service_tier=default` is sent and reported, TPS distributions are present from terminal Responses usage events, and fake API key values are absent from all report files.
+- Updated README testing instructions with the full local gate, `run` and `bench` help checks, and both fake-server smoke scripts.
+- Ran the full v0.2 quality gate successfully, including both fake-server smoke scripts.
 
 Definition of done:
 
