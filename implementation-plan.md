@@ -2736,7 +2736,7 @@ Definition of done:
 
 ---
 
-### [ ] 32. Implement live dashboard store, summaries, and terminal chart renderers
+### [x] 32. Implement live dashboard store, summaries, and terminal chart renderers
 
 Build the reusable state and chart pieces that make the TUI useful for `what-ttft` metrics.
 
@@ -2808,6 +2808,15 @@ Implementation details:
   - waterfall omits missing phases and labels observed phases correctly;
   - store summaries match `whatttft.Summarize` for a known record set;
   - target comparison order is stable.
+
+Implemented details:
+
+- Extended the live TUI store with stable completed-record snapshots, recomputed `whatttft.Summarize` groups, progress counters derived from records when live counts are unavailable, metric rows, slowest request/metric rows, status-code/error-category counts, and current-target helpers.
+- Deepened store defensive copies for request records, cache/HTTP/timeline/derived metric pointers, summary groups, distributions, connection maps, and cache summaries so live state is isolated from caller mutation.
+- Added `internal/tui/charts` with pure deterministic renderers for sparklines, histograms, percentile bars, request waterfalls, and target comparison tables.
+- Added request waterfall phases for DNS, TCP, TLS, connection acquire, request write, server wait to first byte, first byte to first SSE, stream protocol to first output, and visible-generation deltas, with missing phases omitted rather than rendered as zero.
+- Updated the placeholder TUI panes to render metric rows, TTFT sparkline/histogram, E2E sparkline/TPS rows, slowest-request waterfalls, and target comparison tables from completed request records.
+- Added unit tests for chart empty/one/many/tiny/non-finite behavior, deterministic percentile/histogram output, waterfall phase omission, target table ordering/unavailable TPS markers, store summary equivalence with `whatttft.Summarize`, metric rows, slowest requests, status counts, and copy isolation.
 
 Definition of done:
 

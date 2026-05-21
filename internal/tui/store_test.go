@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -92,6 +93,79 @@ func TestLiveStoreCopiesSummaryMaps(t *testing.T) {
 	}
 }
 
+// TestLiveStoreGroupsMatchSummarize verifies live groups are recomputed from completed records.
+func TestLiveStoreGroupsMatchSummarize(t *testing.T) {
+	store := newLiveStore()
+	records := []whatttft.RequestRecord{
+		tuiTestRecord("req-1", "target-b", 30, 100, nil),
+		tuiTestRecord("req-2", "target-a", 20, 90, nil),
+	}
+	for _, record := range records {
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+	}
+
+	got := store.Groups()
+	want := whatttft.Summarize(records).Groups
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("groups = %#v, want %#v", got, want)
+	}
+}
+
+// TestLiveStoreMetricRows verifies core metric rows are calculated over successful measured records.
+func TestLiveStoreMetricRows(t *testing.T) {
+	store := newLiveStore()
+	for _, record := range []whatttft.RequestRecord{
+		tuiTestRecord("req-1", "target-a", 10, 100, nil),
+		tuiTestRecord("req-2", "target-a", 20, 200, nil),
+		tuiTestRecord("req-3", "target-a", 999, 999, &whatttft.ErrorRecord{Category: "provider"}),
+	} {
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+	}
+
+	rows := store.MetricRows()
+	if len(rows) == 0 || rows[1].Name != metricTTFTDeltaMS || rows[1].Count != 2 || rows[1].P50 == nil || *rows[1].P50 != 10 {
+		t.Fatalf("metric rows = %#v, want ttft count 2 p50 10", rows)
+	}
+}
+
+// TestLiveStoreSlowestRequests verifies slowest request rows include TTFT, E2E, and stream-total metrics.
+func TestLiveStoreSlowestRequests(t *testing.T) {
+	store := newLiveStore()
+	for _, record := range []whatttft.RequestRecord{
+		tuiTestRecord("req-1", "target-a", 10, 100, nil),
+		tuiTestRecord("req-2", "target-a", 50, 200, nil),
+	} {
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+	}
+
+	slowest := store.SlowestRequests(2)
+	if len(slowest) != 2 || slowest[0].RequestID != "req-2" || slowest[0].MetricName != metricStreamTotalMS || slowest[0].ValueMS != 220 {
+		t.Fatalf("slowest = %#v, want req-2 stream_total_ms 220 first", slowest)
+	}
+}
+
+// TestLiveStoreStatusCounts verifies status-code and error-category counts are tracked for measured records.
+func TestLiveStoreStatusCounts(t *testing.T) {
+	store := newLiveStore()
+	errorRecord := tuiTestRecord("req-1", "target-a", 10, 100, &whatttft.ErrorRecord{Category: "http_status"})
+	errorRecord.HTTP.StatusCode = 429
+	successRecord := tuiTestRecord("req-2", "target-a", 20, 200, nil)
+	successRecord.HTTP.StatusCode = 200
+	warmupRecord := tuiTestRecord("req-3", "target-a", 30, 300, &whatttft.ErrorRecord{Category: "warmup"})
+	warmupRecord.Warmup = true
+	for _, record := range []whatttft.RequestRecord{errorRecord, successRecord, warmupRecord} {
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+	}
+
+	counts := store.StatusCounts()
+	if counts.ErrorCategories["http_status"] != 1 || counts.StatusCodes["429"] != 1 || counts.StatusCodes["200"] != 1 {
+		t.Fatalf("status counts = %#v, want http_status=1 status 429/200=1", counts)
+	}
+	if _, ok := counts.ErrorCategories["warmup"]; ok {
+		t.Fatalf("status counts included warmup error: %#v", counts)
+	}
+}
+
 // TestLiveStoreCurrentTargetFallbacks verifies target labels degrade gracefully when IDs or names are missing.
 func TestLiveStoreCurrentTargetFallbacks(t *testing.T) {
 	store := newLiveStore()
@@ -106,4 +180,42 @@ func TestLiveStoreCurrentTargetFallbacks(t *testing.T) {
 	if got := store.currentTarget(); got != "target-a (Target A)" {
 		t.Fatalf("named current target = %q, want target-a (Target A)", got)
 	}
+}
+
+func tuiTestRecord(requestID string, targetID string, ttftMS float64, e2eMS float64, err *whatttft.ErrorRecord) whatttft.RequestRecord {
+	completionTokens := 4
+	streamTotalMS := e2eMS + 20
+	return whatttft.RequestRecord{
+		RequestID:        requestID,
+		TargetID:         targetID,
+		Provider:         "openai",
+		Model:            "gpt-test",
+		ScenarioName:     "short",
+		CacheMode:        whatttft.CacheReuse,
+		ConnectionMode:   whatttft.WarmConnections,
+		PromptHash:       "hash-" + requestID,
+		CompletionTokens: &completionTokens,
+		OutputDeltaCount: 3,
+		Timeline: whatttft.Timeline{BaseWallUnixNano: 1_000_000_000, EventsNS: map[whatttft.EventName]int64{
+			whatttft.EventRequestStart:      0,
+			whatttft.EventFirstOutputDelta:  int64(ttftMS * 1_000_000),
+			whatttft.EventLastOutputDelta:   int64(e2eMS * 1_000_000),
+			whatttft.EventBodyEOF:           int64(streamTotalMS * 1_000_000),
+			whatttft.EventFirstResponseByte: 5_000_000,
+			whatttft.EventWroteRequest:      1_000_000,
+		}},
+		Derived: whatttft.DerivedMetrics{
+			HTTPTTFBMS:              tuiFloatPointer(5),
+			TTFTDeltaMS:             &ttftMS,
+			E2EDeltaMS:              &e2eMS,
+			StreamTotalMS:           &streamTotalMS,
+			ServerWaitToFirstByteMS: tuiFloatPointer(4),
+			E2EOutputTPS:            tuiFloatPointer(40),
+		},
+		Error: err,
+	}
+}
+
+func tuiFloatPointer(value float64) *float64 {
+	return &value
 }

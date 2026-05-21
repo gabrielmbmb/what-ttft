@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/gabrielmbmb/what-ttft/internal/tui/charts"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 
 	"charm.land/bubbles/v2/help"
@@ -202,16 +204,92 @@ func (m model) renderHeader() string {
 }
 
 func (m model) renderPane() string {
+	width := m.contentWidth()
 	switch m.pane {
 	case paneTTFT:
-		return "TTFT distribution placeholder\nrequest records: " + fmt.Sprint(len(m.store.records))
+		values := m.store.metricValues(metricTTFTDeltaMS)
+		return lipgloss.JoinVertical(lipgloss.Left,
+			"ttft_delta_ms over request order",
+			charts.Sparkline(values, width),
+			charts.Histogram(values, 8, width),
+		)
 	case paneE2E:
-		return "E2E/TPS distribution placeholder\nrequest records: " + fmt.Sprint(len(m.store.records))
+		values := m.store.metricValues(metricE2EDeltaMS)
+		return lipgloss.JoinVertical(lipgloss.Left,
+			"e2e_delta_ms over request order",
+			charts.Sparkline(values, width),
+			renderMetricRows(m.store.MetricRows()),
+		)
 	case paneWaterfall:
-		return "slowest-request waterfall placeholder\nrequest records: " + fmt.Sprint(len(m.store.records))
+		slowest := m.store.SlowestRequests(1)
+		if len(slowest) == 0 {
+			return "slowest-request waterfall\n(no successful requests with waterfall metrics)"
+		}
+		return "slowest request " + slowest[0].RequestID + " " + slowest[0].MetricName + "\n" + charts.Waterfall(slowest[0].Record, width)
 	default:
-		return fmt.Sprintf("summary pane  focus=%d  records=%d  target=%s", m.focus, len(m.store.records), m.store.currentTarget())
+		return lipgloss.JoinVertical(lipgloss.Left,
+			fmt.Sprintf("summary pane  focus=%d  records=%d  target=%s", m.focus, len(m.store.records), m.store.currentTarget()),
+			renderMetricRows(m.store.MetricRows()),
+			renderStatusCounts(m.store.StatusCounts()),
+			charts.TargetTable(m.store.Groups(), width),
+		)
 	}
+}
+
+func (m model) contentWidth() int {
+	if m.width <= 4 {
+		return 80
+	}
+	return m.width - 4
+}
+
+func renderMetricRows(rows []metricRow) string {
+	var builder strings.Builder
+	builder.WriteString("metric                         count  p50       p95       mean")
+	for _, row := range rows {
+		builder.WriteByte('\n')
+		fmt.Fprintf(
+			&builder,
+			"%-30s %5d  %-8s %-8s %-8s %s",
+			row.Name,
+			row.Count,
+			formatMetricValue(row.P50),
+			formatMetricValue(row.P95),
+			formatMetricValue(row.Mean),
+			row.Unit,
+		)
+	}
+	return builder.String()
+}
+
+func formatMetricValue(value *float64) string {
+	if value == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f", *value)
+}
+
+func renderStatusCounts(counts statusCounts) string {
+	if len(counts.ErrorCategories) == 0 && len(counts.StatusCodes) == 0 {
+		return "statuses: -  errors: -"
+	}
+	return "statuses: " + formatStringIntMap(counts.StatusCodes) + "  errors: " + formatStringIntMap(counts.ErrorCategories)
+}
+
+func formatStringIntMap(values map[string]int) string {
+	if len(values) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, values[key]))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (m model) renderStatus() string {

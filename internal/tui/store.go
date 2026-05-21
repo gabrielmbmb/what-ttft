@@ -1,6 +1,23 @@
 package tui
 
-import "github.com/gabrielmbmb/what-ttft/pkg/whatttft"
+import (
+	"sort"
+	"strconv"
+
+	"github.com/gabrielmbmb/what-ttft/internal/stats"
+	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
+)
+
+const (
+	metricHTTPTTFBMS                    = "http_ttfb_ms"
+	metricTTFTDeltaMS                   = "ttft_delta_ms"
+	metricE2EDeltaMS                    = "e2e_delta_ms"
+	metricStreamTotalMS                 = "stream_total_ms"
+	metricServerWaitToFirstByteMS       = "server_wait_to_first_byte_ms"
+	metricE2EOutputTPS                  = "e2e_output_tps"
+	metricGenerationDeltaOutputTPS      = "generation_delta_output_tps"
+	metricStreamProtocolToFirstOutputMS = "stream_protocol_to_first_output_ms"
+)
 
 type liveStore struct {
 	benchmarkName string
@@ -144,19 +161,40 @@ func (s *liveStore) addRecord(record whatttft.RequestRecord) {
 	}
 }
 
-func (s liveStore) progress() progressSnapshot {
+// Progress returns a copy of the current request progress counters tracked from events and completed records.
+func (s liveStore) Progress() progressSnapshot {
+	completed := s.completedRequests
+	successful := s.successfulRequests
+	errors := s.errorRequests
+	records := s.completedRecords()
+	if len(records) > completed {
+		completed = len(records)
+	}
+	computedSuccessful, computedErrors := measuredOutcomeCounts(records)
+	if computedSuccessful > successful {
+		successful = computedSuccessful
+	}
+	if computedErrors > errors {
+		errors = computedErrors
+	}
+
 	return progressSnapshot{
 		Total:      s.totalRequests,
 		Warmup:     s.warmupRequests,
 		Measured:   s.measuredRequests,
-		Completed:  s.completedRequests,
-		Successful: s.successfulRequests,
-		Errors:     s.errorRequests,
+		Completed:  completed,
+		Successful: successful,
+		Errors:     errors,
 		Active:     len(s.activeRequests),
 	}
 }
 
-func (s liveStore) currentTarget() string {
+func (s liveStore) progress() progressSnapshot {
+	return s.Progress()
+}
+
+// CurrentTarget returns the best current target label from target ID and target name fields.
+func (s liveStore) CurrentTarget() string {
 	if s.targetID != "" && s.targetName != "" {
 		return s.targetID + " (" + s.targetName + ")"
 	}
@@ -169,6 +207,139 @@ func (s liveStore) currentTarget() string {
 	return "-"
 }
 
+func (s liveStore) currentTarget() string {
+	return s.CurrentTarget()
+}
+
+// Groups returns summary groups sorted in the same stable order as whatttft.Summarize.
+func (s liveStore) Groups() []whatttft.SummaryGroup {
+	summary := s.summarySnapshot()
+	return copyRunSummary(summary).Groups
+}
+
+// MetricRows returns dashboard metric rows for core latency and throughput metrics over successful measured requests.
+func (s liveStore) MetricRows() []metricRow {
+	return []metricRow{
+		metricRowFromValues(metricHTTPTTFBMS, "ms", s.metricValues(metricHTTPTTFBMS)),
+		metricRowFromValues(metricTTFTDeltaMS, "ms", s.metricValues(metricTTFTDeltaMS)),
+		metricRowFromValues(metricE2EDeltaMS, "ms", s.metricValues(metricE2EDeltaMS)),
+		metricRowFromValues(metricServerWaitToFirstByteMS, "ms", s.metricValues(metricServerWaitToFirstByteMS)),
+		metricRowFromValues(metricE2EOutputTPS, "tokens/s", s.metricValues(metricE2EOutputTPS)),
+		metricRowFromValues(metricGenerationDeltaOutputTPS, "tokens/s", s.metricValues(metricGenerationDeltaOutputTPS)),
+	}
+}
+
+// SlowestRequests returns the n slowest successful measured request/metric pairs by observed milliseconds.
+func (s liveStore) SlowestRequests(n int) []slowRequest {
+	if n <= 0 {
+		return nil
+	}
+
+	var requests []slowRequest
+	for _, record := range s.completedRecords() {
+		if record.Warmup || record.Error != nil {
+			continue
+		}
+		appendSlowRequestMetric(&requests, record, metricTTFTDeltaMS, record.Derived.TTFTDeltaMS)
+		appendSlowRequestMetric(&requests, record, metricE2EDeltaMS, record.Derived.E2EDeltaMS)
+		appendSlowRequestMetric(&requests, record, metricStreamTotalMS, record.Derived.StreamTotalMS)
+	}
+	sort.Slice(requests, func(i int, j int) bool {
+		if requests[i].ValueMS != requests[j].ValueMS {
+			return requests[i].ValueMS > requests[j].ValueMS
+		}
+		if requests[i].RequestID != requests[j].RequestID {
+			return requests[i].RequestID < requests[j].RequestID
+		}
+		return requests[i].MetricName < requests[j].MetricName
+	})
+	if len(requests) > n {
+		requests = requests[:n]
+	}
+
+	return requests
+}
+
+// StatusCounts returns copied HTTP status-code and error-category counts for completed measured requests.
+func (s liveStore) StatusCounts() statusCounts {
+	counts := statusCounts{ErrorCategories: make(map[string]int), StatusCodes: make(map[string]int)}
+	for _, record := range s.completedRecords() {
+		if record.Warmup {
+			continue
+		}
+		if record.HTTP.StatusCode != 0 {
+			counts.StatusCodes[statusCodeString(record.HTTP.StatusCode)]++
+		}
+		if record.Error != nil {
+			category := record.Error.Category
+			if category == "" {
+				category = "unknown"
+			}
+			counts.ErrorCategories[category]++
+		}
+	}
+	if len(counts.ErrorCategories) == 0 {
+		counts.ErrorCategories = nil
+	}
+	if len(counts.StatusCodes) == 0 {
+		counts.StatusCodes = nil
+	}
+
+	return counts
+}
+
+func (s liveStore) summarySnapshot() whatttft.RunSummary {
+	records := s.completedRecords()
+	if len(records) > 0 {
+		return whatttft.Summarize(records)
+	}
+	if s.summary != nil {
+		return copyRunSummary(*s.summary)
+	}
+	return whatttft.RunSummary{}
+}
+
+func (s liveStore) completedRecords() []whatttft.RequestRecord {
+	records := make([]whatttft.RequestRecord, 0, len(s.records))
+	for _, requestID := range s.recordOrder {
+		record, ok := s.records[requestID]
+		if !ok {
+			continue
+		}
+		records = append(records, copyRequestRecord(record))
+	}
+
+	return records
+}
+
+func measuredOutcomeCounts(records []whatttft.RequestRecord) (int, int) {
+	successful := 0
+	errors := 0
+	for _, record := range records {
+		if record.Warmup {
+			continue
+		}
+		if record.Error == nil {
+			successful++
+		} else {
+			errors++
+		}
+	}
+	return successful, errors
+}
+
+func (s liveStore) metricValues(name string) []float64 {
+	var values []float64
+	for _, record := range s.completedRecords() {
+		if record.Warmup || record.Error != nil {
+			continue
+		}
+		appendMetricValue(&values, metricValue(record, name))
+	}
+
+	return values
+}
+
 type progressSnapshot struct {
 	Total      int
 	Warmup     int
@@ -179,17 +350,116 @@ type progressSnapshot struct {
 	Active     int
 }
 
+type metricRow struct {
+	Name  string
+	Unit  string
+	Count int
+	P50   *float64
+	P95   *float64
+	Mean  *float64
+}
+
+type slowRequest struct {
+	RequestID  string
+	TargetID   string
+	MetricName string
+	ValueMS    float64
+	Record     whatttft.RequestRecord
+}
+
+type statusCounts struct {
+	ErrorCategories map[string]int
+	StatusCodes     map[string]int
+}
+
+func metricRowFromValues(name string, unit string, values []float64) metricRow {
+	distribution := stats.Summarize(values)
+	return metricRow{
+		Name:  name,
+		Unit:  unit,
+		Count: distribution.Count,
+		P50:   copyFloat64Pointer(distribution.P50),
+		P95:   copyFloat64Pointer(distribution.P95),
+		Mean:  copyFloat64Pointer(distribution.Mean),
+	}
+}
+
+func appendSlowRequestMetric(requests *[]slowRequest, record whatttft.RequestRecord, name string, value *float64) {
+	if value == nil {
+		return
+	}
+	*requests = append(*requests, slowRequest{
+		RequestID:  record.RequestID,
+		TargetID:   record.TargetID,
+		MetricName: name,
+		ValueMS:    *value,
+		Record:     copyRequestRecord(record),
+	})
+}
+
+func metricValue(record whatttft.RequestRecord, name string) *float64 {
+	switch name {
+	case metricHTTPTTFBMS:
+		return record.Derived.HTTPTTFBMS
+	case metricTTFTDeltaMS:
+		return record.Derived.TTFTDeltaMS
+	case metricE2EDeltaMS:
+		return record.Derived.E2EDeltaMS
+	case metricStreamTotalMS:
+		return record.Derived.StreamTotalMS
+	case metricServerWaitToFirstByteMS:
+		return record.Derived.ServerWaitToFirstByteMS
+	case metricE2EOutputTPS:
+		return record.Derived.E2EOutputTPS
+	case metricGenerationDeltaOutputTPS:
+		return record.Derived.GenerationDeltaOutputTPS
+	case metricStreamProtocolToFirstOutputMS:
+		return record.Derived.StreamProtocolToFirstOutputMS
+	default:
+		return nil
+	}
+}
+
+func appendMetricValue(values *[]float64, value *float64) {
+	if value != nil {
+		*values = append(*values, *value)
+	}
+}
+
+func statusCodeString(statusCode int) string {
+	return strconv.Itoa(statusCode)
+}
+
 func copyRequestRecord(record whatttft.RequestRecord) whatttft.RequestRecord {
 	copied := record
 	copied.PromptTokens = copyIntPointer(record.PromptTokens)
 	copied.CompletionTokens = copyIntPointer(record.CompletionTokens)
 	copied.TotalTokens = copyIntPointer(record.TotalTokens)
+	copied.Cache = copyCacheRecord(record.Cache)
+	copied.HTTP = copyHTTPRecord(record.HTTP)
 	copied.Timeline = copyTimeline(record.Timeline)
-	copied.Cache.Extra = copyAnyMap(record.Cache.Extra)
+	copied.Derived = copyDerivedMetrics(record.Derived)
 	if record.Error != nil {
 		errorRecord := *record.Error
 		copied.Error = &errorRecord
 	}
+	return copied
+}
+
+func copyCacheRecord(record whatttft.CacheRecord) whatttft.CacheRecord {
+	copied := record
+	copied.Hit = copyBoolPointer(record.Hit)
+	copied.PromptCachedTokens = copyIntPointer(record.PromptCachedTokens)
+	copied.CacheReadTokens = copyIntPointer(record.CacheReadTokens)
+	copied.CacheCreationTokens = copyIntPointer(record.CacheCreationTokens)
+	copied.CacheTTLSeconds = copyInt64Pointer(record.CacheTTLSeconds)
+	copied.Extra = copyAnyMap(record.Extra)
+	return copied
+}
+
+func copyHTTPRecord(record whatttft.HTTPRecord) whatttft.HTTPRecord {
+	copied := record
+	copied.ProviderProcessingMS = copyFloat64Pointer(record.ProviderProcessingMS)
 	return copied
 }
 
@@ -204,6 +474,26 @@ func copyTimeline(timeline whatttft.Timeline) whatttft.Timeline {
 	return copied
 }
 
+func copyDerivedMetrics(metrics whatttft.DerivedMetrics) whatttft.DerivedMetrics {
+	return whatttft.DerivedMetrics{
+		HTTPTTFBMS:                    copyFloat64Pointer(metrics.HTTPTTFBMS),
+		HeadersLatencyMS:              copyFloat64Pointer(metrics.HeadersLatencyMS),
+		FirstEventMS:                  copyFloat64Pointer(metrics.FirstEventMS),
+		TTFTDeltaMS:                   copyFloat64Pointer(metrics.TTFTDeltaMS),
+		E2EDeltaMS:                    copyFloat64Pointer(metrics.E2EDeltaMS),
+		StreamTotalMS:                 copyFloat64Pointer(metrics.StreamTotalMS),
+		GenerationDeltaMS:             copyFloat64Pointer(metrics.GenerationDeltaMS),
+		E2EOutputTPS:                  copyFloat64Pointer(metrics.E2EOutputTPS),
+		GenerationDeltaOutputTPS:      copyFloat64Pointer(metrics.GenerationDeltaOutputTPS),
+		ServerWaitToFirstByteMS:       copyFloat64Pointer(metrics.ServerWaitToFirstByteMS),
+		StreamProtocolToFirstOutputMS: copyFloat64Pointer(metrics.StreamProtocolToFirstOutputMS),
+		DNSMS:                         copyFloat64Pointer(metrics.DNSMS),
+		TCPConnectMS:                  copyFloat64Pointer(metrics.TCPConnectMS),
+		TLSMS:                         copyFloat64Pointer(metrics.TLSMS),
+		RequestWriteMS:                copyFloat64Pointer(metrics.RequestWriteMS),
+	}
+}
+
 func copyRunSummary(summary whatttft.RunSummary) whatttft.RunSummary {
 	copied := summary
 	copied.ErrorCategories = copyStringIntMap(summary.ErrorCategories)
@@ -211,16 +501,98 @@ func copyRunSummary(summary whatttft.RunSummary) whatttft.RunSummary {
 	if summary.Groups != nil {
 		copied.Groups = append([]whatttft.SummaryGroup(nil), summary.Groups...)
 		for index := range copied.Groups {
-			copied.Groups[index].ObservedServiceTierCounts = copyStringIntMap(summary.Groups[index].ObservedServiceTierCounts)
-			copied.Groups[index].ErrorCategories = copyStringIntMap(summary.Groups[index].ErrorCategories)
-			copied.Groups[index].ErrorStatusCodes = copyStringIntMap(summary.Groups[index].ErrorStatusCodes)
-			copied.Groups[index].Connection.ProtocolCounts = copyStringIntMap(summary.Groups[index].Connection.ProtocolCounts)
+			copied.Groups[index] = copySummaryGroup(summary.Groups[index])
 		}
 	}
 	return copied
 }
 
+func copySummaryGroup(group whatttft.SummaryGroup) whatttft.SummaryGroup {
+	copied := group
+	copied.ObservedServiceTierCounts = copyStringIntMap(group.ObservedServiceTierCounts)
+	copied.ErrorCategories = copyStringIntMap(group.ErrorCategories)
+	copied.ErrorStatusCodes = copyStringIntMap(group.ErrorStatusCodes)
+	copied.Metrics = copyMetricDistributions(group.Metrics)
+	copied.SystemTPS = copyFloat64Pointer(group.SystemTPS)
+	copied.RPS = copyFloat64Pointer(group.RPS)
+	copied.Cache = copyCacheSummary(group.Cache)
+	copied.Connection = copyConnectionSummary(group.Connection)
+	return copied
+}
+
+func copyMetricDistributions(metrics whatttft.MetricDistributions) whatttft.MetricDistributions {
+	return whatttft.MetricDistributions{
+		HTTPTTFBMS:                          copyDistribution(metrics.HTTPTTFBMS),
+		HeadersLatencyMS:                    copyDistribution(metrics.HeadersLatencyMS),
+		FirstEventMS:                        copyDistribution(metrics.FirstEventMS),
+		TTFTDeltaMS:                         copyDistribution(metrics.TTFTDeltaMS),
+		E2EDeltaMS:                          copyDistribution(metrics.E2EDeltaMS),
+		StreamTotalMS:                       copyDistribution(metrics.StreamTotalMS),
+		GenerationDeltaMS:                   copyDistribution(metrics.GenerationDeltaMS),
+		ProviderProcessingMS:                copyDistribution(metrics.ProviderProcessingMS),
+		ServerWaitToFirstByteMS:             copyDistribution(metrics.ServerWaitToFirstByteMS),
+		ServerWaitMinusProviderProcessingMS: copyDistribution(metrics.ServerWaitMinusProviderProcessingMS),
+		StreamProtocolToFirstOutputMS:       copyDistribution(metrics.StreamProtocolToFirstOutputMS),
+		DNSMS:                               copyDistribution(metrics.DNSMS),
+		TCPConnectMS:                        copyDistribution(metrics.TCPConnectMS),
+		TLSMS:                               copyDistribution(metrics.TLSMS),
+		RequestWriteMS:                      copyDistribution(metrics.RequestWriteMS),
+		E2EOutputTPS:                        copyDistribution(metrics.E2EOutputTPS),
+		GenerationDeltaOutputTPS:            copyDistribution(metrics.GenerationDeltaOutputTPS),
+	}
+}
+
+func copyCacheSummary(summary whatttft.CacheSummary) whatttft.CacheSummary {
+	copied := summary
+	copied.CachedPromptTokens = copyDistribution(summary.CachedPromptTokens)
+	return copied
+}
+
+func copyConnectionSummary(summary whatttft.ConnectionSummary) whatttft.ConnectionSummary {
+	copied := summary
+	copied.ProtocolCounts = copyStringIntMap(summary.ProtocolCounts)
+	return copied
+}
+
+func copyDistribution(distribution whatttft.Distribution) whatttft.Distribution {
+	return whatttft.Distribution{
+		Count:  distribution.Count,
+		Min:    copyFloat64Pointer(distribution.Min),
+		Mean:   copyFloat64Pointer(distribution.Mean),
+		P50:    copyFloat64Pointer(distribution.P50),
+		P90:    copyFloat64Pointer(distribution.P90),
+		P95:    copyFloat64Pointer(distribution.P95),
+		P99:    copyFloat64Pointer(distribution.P99),
+		Max:    copyFloat64Pointer(distribution.Max),
+		StdDev: copyFloat64Pointer(distribution.StdDev),
+	}
+}
+
 func copyIntPointer(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func copyInt64Pointer(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func copyBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func copyFloat64Pointer(value *float64) *float64 {
 	if value == nil {
 		return nil
 	}
