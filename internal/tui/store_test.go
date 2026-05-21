@@ -1,0 +1,109 @@
+package tui
+
+import (
+	"testing"
+
+	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
+)
+
+// TestLiveStoreRequestLifecycle verifies request events update active and completed progress counts.
+func TestLiveStoreRequestLifecycle(t *testing.T) {
+	store := newLiveStore()
+	store.applyEvent(whatttft.RunEvent{
+		Kind:             whatttft.EventRunStarted,
+		BenchmarkName:    "bench",
+		TotalRequests:    3,
+		WarmupRequests:   1,
+		MeasuredRequests: 2,
+	})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestScheduled, RequestID: "req-1"})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestDispatched, RequestID: "req-1"})
+
+	progress := store.progress()
+	if progress.Total != 3 || progress.Warmup != 1 || progress.Measured != 2 || progress.Active != 1 {
+		t.Fatalf("progress after dispatch = %#v, want total/warmup/measured/active 3/1/2/1", progress)
+	}
+
+	record := whatttft.RequestRecord{RequestID: "req-1", Timeline: whatttft.Timeline{EventsNS: map[whatttft.EventName]int64{whatttft.EventRequestStart: 0}}}
+	store.applyEvent(whatttft.RunEvent{
+		Kind:               whatttft.EventRequestFinished,
+		RequestID:          "req-1",
+		CompletedRequests:  1,
+		SuccessfulRequests: 1,
+		Record:             &record,
+	})
+
+	progress = store.progress()
+	if progress.Active != 0 || progress.Completed != 1 || progress.Successful != 1 {
+		t.Fatalf("progress after finish = %#v, want active/completed/success 0/1/1", progress)
+	}
+	if len(store.recordOrder) != 1 || store.recordOrder[0] != "req-1" {
+		t.Fatalf("record order = %#v, want req-1", store.recordOrder)
+	}
+}
+
+// TestLiveStoreCopiesRecords verifies stored request records are isolated from caller mutation.
+func TestLiveStoreCopiesRecords(t *testing.T) {
+	store := newLiveStore()
+	record := whatttft.RequestRecord{
+		RequestID: "req-1",
+		Timeline:  whatttft.Timeline{EventsNS: map[whatttft.EventName]int64{whatttft.EventFirstOutputDelta: 100}},
+		Cache:     whatttft.CacheRecord{Extra: map[string]any{"safe": "value"}},
+	}
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: "req-1", Record: &record})
+
+	record.Timeline.EventsNS[whatttft.EventFirstOutputDelta] = 999
+	record.Cache.Extra["safe"] = "mutated"
+
+	stored := store.records["req-1"]
+	if got := stored.Timeline.EventsNS[whatttft.EventFirstOutputDelta]; got != 100 {
+		t.Fatalf("stored first output delta = %d, want copied value 100", got)
+	}
+	if got := stored.Cache.Extra["safe"]; got != "value" {
+		t.Fatalf("stored cache extra = %#v, want copied value", got)
+	}
+}
+
+// TestLiveStoreCopiesSummaryMaps verifies summary maps are isolated from caller mutation.
+func TestLiveStoreCopiesSummaryMaps(t *testing.T) {
+	store := newLiveStore()
+	summary := whatttft.RunSummary{
+		ErrorCategories: map[string]int{"provider": 1},
+		Groups: []whatttft.SummaryGroup{{
+			TargetID:                  "target-a",
+			ObservedServiceTierCounts: map[string]int{"default": 1},
+			Connection:                whatttft.ConnectionSummary{ProtocolCounts: map[string]int{"HTTP/2.0": 1}},
+		}},
+	}
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventSummaryUpdated, Summary: &summary})
+
+	summary.ErrorCategories["provider"] = 99
+	summary.Groups[0].ObservedServiceTierCounts["default"] = 99
+	summary.Groups[0].Connection.ProtocolCounts["HTTP/2.0"] = 99
+
+	if got := store.summary.ErrorCategories["provider"]; got != 1 {
+		t.Fatalf("stored summary error category = %d, want 1", got)
+	}
+	if got := store.summary.Groups[0].ObservedServiceTierCounts["default"]; got != 1 {
+		t.Fatalf("stored observed tier count = %d, want 1", got)
+	}
+	if got := store.summary.Groups[0].Connection.ProtocolCounts["HTTP/2.0"]; got != 1 {
+		t.Fatalf("stored protocol count = %d, want 1", got)
+	}
+}
+
+// TestLiveStoreCurrentTargetFallbacks verifies target labels degrade gracefully when IDs or names are missing.
+func TestLiveStoreCurrentTargetFallbacks(t *testing.T) {
+	store := newLiveStore()
+	if got := store.currentTarget(); got != "-" {
+		t.Fatalf("empty current target = %q, want -", got)
+	}
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventTargetStarted, TargetID: "target-a"})
+	if got := store.currentTarget(); got != "target-a" {
+		t.Fatalf("id current target = %q, want target-a", got)
+	}
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventTargetStarted, TargetName: "Target A"})
+	if got := store.currentTarget(); got != "target-a (Target A)" {
+		t.Fatalf("named current target = %q, want target-a (Target A)", got)
+	}
+}

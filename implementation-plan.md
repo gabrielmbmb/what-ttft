@@ -2647,7 +2647,7 @@ Definition of done:
 
 ---
 
-### [ ] 31. Add Bubble Tea dependencies and a minimal internal TUI application skeleton
+### [x] 31. Add Bubble Tea dependencies and a minimal internal TUI application skeleton
 
 Introduce Bubble Tea v2 in an internal package without wiring it into the commands yet.
 
@@ -2716,6 +2716,17 @@ Implementation details:
   - `View()` returns a non-empty `tea.View` with `AltScreen` set;
   - `q`/`ctrl+c` moves to confirmation state while running and quits immediately after completion;
   - no test requires a real terminal.
+
+Implemented details:
+
+- Added Bubble Tea v2, Bubbles v2, and Lip Gloss v2 dependencies using `charm.land/.../v2` import paths.
+- Added `internal/tui` package documentation stating that the TUI consumes live events and must not execute benchmarks, call providers, write reports, or own timing math.
+- Added an internal `runEventMsg` adapter and event-channel close message while keeping core event values as `whatttft.RunEvent`.
+- Added a Bubble Tea v2 root model with terminal size state, pane/focus state, live event store, running/completed/canceled/error flags, cancel confirmation, keymap/help state, and deterministic placeholder rendering.
+- Implemented `Init`, `Update`, and `View` with `tea.WindowSizeMsg`, `runEventMsg`, `tea.KeyPressMsg`, event-channel close handling, `tea.View` output, alt-screen mode, window titles, and mouse mode left disabled.
+- Added Lip Gloss styles and Bubbles key/help bindings for help, quit/cancel confirmation, focus navigation, and pane selection.
+- Added a live store that tracks context labels, active request IDs, completed request records, summary snapshots, report status, progress counts, and defensive copies of records/maps.
+- Added unit tests for resize handling, event-driven store updates, alt-screen view output, quit/cancel behavior, help/pane keys, event-channel commands, store progress, record-copy isolation, summary-copy isolation, and target label fallbacks without requiring a terminal.
 
 Definition of done:
 
