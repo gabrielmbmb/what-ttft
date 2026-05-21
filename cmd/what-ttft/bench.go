@@ -19,6 +19,14 @@ import (
 )
 
 func benchCommand(args []string, stdout io.Writer, stderr io.Writer) int {
+	return benchCommandContext(context.Background(), args, stdout, stderr)
+}
+
+func benchCommandContext(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	cliCfg, _, err := parseBenchFlags(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -40,6 +48,7 @@ func benchCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	metadata := benchOutputMetadata(plan, cliCfg, args, 0, 0)
 	outputDir := report.ResolveOutputDir(cliCfg.outputDir, metadata, time.Now())
+	cliCfg.outputDir = outputDir
 	if cliCfg.dryRun {
 		if envErr := validateBenchmarkAPIKeyEnvs(plan); envErr != nil {
 			writeFormatted(stderr, "%v\n", envErr)
@@ -53,36 +62,110 @@ func benchCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
+	execute := func(execCtx context.Context, observer whatttft.RunObserver) commandExecution {
+		return executeBenchCommand(execCtx, plan, cliCfg, args, observer)
+	}
+	if cliCfg.tui {
+		return benchTUILauncher(ctx, benchTUILaunchRequest{
+			Plan:    plan,
+			Config:  cliCfg,
+			Args:    append([]string(nil), args...),
+			Stdout:  stdout,
+			Stderr:  stderr,
+			Execute: execute,
+		})
+	}
+
+	execution := execute(ctx, nil)
+	return finishBenchCommand(stdout, stderr, plan, execution)
+}
+
+type benchTUILaunchRequest struct {
+	Plan    *configfile.Config
+	Config  benchCLIConfig
+	Args    []string
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Execute func(context.Context, whatttft.RunObserver) commandExecution
+}
+
+type benchTUILaunchFunc func(context.Context, benchTUILaunchRequest) int
+
+var benchTUILauncher benchTUILaunchFunc = defaultBenchTUILauncher
+
+func defaultBenchTUILauncher(_ context.Context, request benchTUILaunchRequest) int {
+	writeText(request.Stderr, "bench --tui is not wired yet; live dashboards will be enabled in a later v0.3 task\n")
+	return 1
+}
+
+func executeBenchCommand(ctx context.Context, plan *configfile.Config, cliCfg benchCLIConfig, args []string, observer whatttft.RunObserver) commandExecution {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	sequencedObserver := newSequencedCommandObserver(observer)
+	benchmarkResult, metadata, err := executeBench(ctx, plan, cliCfg, args, sequencedObserver)
+	var runResult *whatttft.RunResult
+	if benchmarkResult != nil {
+		runResult = benchmarkResult.RunResult()
+	}
+	execution := commandExecution{
+		Result:          runResult,
+		BenchmarkResult: benchmarkResult,
+		Metadata:        metadata,
+		Err:             err,
+		Canceled:        isContextError(err),
+		Partial:         isContextError(err) && hasRunRecords(runResult),
+	}
+	if shouldWriteReports(err, runResult) {
+		outputDir, reportErr := writeCommandReports(ctx, cliCfg.outputDir, cliCfg.overwrite, plan.Run.SaveChunks, metadata, runResult, sequencedObserver)
+		execution.OutputDir = outputDir
+		execution.ReportErr = reportErr
+	}
+
+	return execution
+}
+
+func executeBench(ctx context.Context, plan *configfile.Config, cliCfg benchCLIConfig, args []string, observer whatttft.RunObserver) (*whatttft.BenchmarkResult, report.RunMetadata, error) {
+	start := time.Now()
 	benchmarkConfig, err := buildBenchmarkConfig(plan)
 	if err != nil {
-		writeFormatted(stderr, "%v\n", err)
-		return 1
+		end := time.Now()
+		metadata := benchOutputMetadata(plan, cliCfg, args, start.UnixNano(), end.UnixNano())
+		metadata.RunConfig.OutputDir = cliCfg.outputDir
+		return nil, metadata, err
 	}
 
-	start := time.Now()
-	benchmarkResult, err := whatttft.RunBenchmark(context.Background(), benchmarkConfig)
+	benchmarkResult, err := whatttft.RunBenchmarkWithOptions(ctx, benchmarkConfig, whatttft.BenchmarkOptions{Observer: observer})
 	end := time.Now()
-	metadata = benchOutputMetadata(plan, cliCfg, args, start.UnixNano(), end.UnixNano())
-	metadata.RunConfig.OutputDir = outputDir
-	if err != nil {
-		writeFormatted(stderr, "benchmark failed: %v\n", err)
+	metadata := benchOutputMetadata(plan, cliCfg, args, start.UnixNano(), end.UnixNano())
+	metadata.RunConfig.OutputDir = cliCfg.outputDir
+
+	return benchmarkResult, metadata, err
+}
+
+func finishBenchCommand(stdout io.Writer, stderr io.Writer, plan *configfile.Config, execution commandExecution) int {
+	if execution.ReportErr != nil {
+		writeFormatted(stderr, "write reports: %v\n", execution.ReportErr)
+		return 1
+	}
+	if execution.Err != nil {
+		if execution.Canceled {
+			if execution.Partial && execution.OutputDir != "" && execution.BenchmarkResult != nil {
+				printBenchSummary(stdout, plan, execution.BenchmarkResult)
+				writeFormatted(stdout, "\nbenchmark canceled; wrote partial results to %s\n", execution.OutputDir)
+			} else {
+				writeFormatted(stderr, "benchmark canceled: %v\n", execution.Err)
+			}
+			return interruptedExitCode
+		}
+
+		writeFormatted(stderr, "benchmark failed: %v\n", execution.Err)
 		return 1
 	}
 
-	writtenDir, err := report.WriteRun(report.WriteOptions{
-		OutputDir:  outputDir,
-		Overwrite:  cliCfg.overwrite,
-		SaveChunks: plan.Run.SaveChunks,
-		Run:        metadata,
-		Result:     benchmarkResult.RunResult(),
-	})
-	if err != nil {
-		writeFormatted(stderr, "write reports: %v\n", err)
-		return 1
-	}
-
-	printBenchSummary(stdout, plan, benchmarkResult)
-	writeFormatted(stdout, "\nwrote results to %s\n", writtenDir)
+	printBenchSummary(stdout, plan, execution.BenchmarkResult)
+	writeFormatted(stdout, "\nwrote results to %s\n", execution.OutputDir)
 	return 0
 }
 
@@ -101,6 +184,7 @@ func parseBenchFlags(args []string, stderr io.Writer) (benchCLIConfig, *flag.Fla
 	flagSet.Var(&cfg.concurrency, "concurrency", "optional override for run.concurrency")
 	flagSet.Var(&cfg.timeout, "timeout", "optional override for run.timeout, e.g. 120s")
 	flagSet.Var(&cfg.serviceTier, "service-tier", "optional override for every OpenAI target service_tier: auto|default|flex|scale|priority")
+	flagSet.BoolVar(&cfg.tui, "tui", false, "show the live terminal dashboard when available")
 
 	if err := flagSet.Parse(args); err != nil {
 		return benchCLIConfig{}, flagSet, err
@@ -132,6 +216,7 @@ Common flags:
   --concurrency N
   --timeout DURATION
   --service-tier auto|default|flex|scale|priority
+  --tui
 `)
 }
 
@@ -477,6 +562,7 @@ type benchCLIConfig struct {
 	concurrency optionalInt
 	timeout     optionalDuration
 	serviceTier optionalString
+	tui         bool
 }
 
 type optionalInt struct {

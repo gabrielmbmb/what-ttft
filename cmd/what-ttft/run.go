@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gabrielmbmb/what-ttft/internal/httptracecap"
@@ -18,9 +19,56 @@ import (
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
-const adHocScenarioName = "ad-hoc"
+const (
+	adHocScenarioName   = "ad-hoc"
+	interruptedExitCode = 130
+)
+
+type commandExecution struct {
+	Result          *whatttft.RunResult
+	BenchmarkResult *whatttft.BenchmarkResult
+	Metadata        report.RunMetadata
+	OutputDir       string
+	Err             error
+	ReportErr       error
+	Canceled        bool
+	Partial         bool
+}
+
+type sequencedCommandObserver struct {
+	downstream whatttft.RunObserver
+	sequence   atomic.Int64
+}
+
+func newSequencedCommandObserver(observer whatttft.RunObserver) whatttft.RunObserver {
+	if observer == nil {
+		return nil
+	}
+
+	return &sequencedCommandObserver{downstream: observer}
+}
+
+func (o *sequencedCommandObserver) OnRunEvent(ctx context.Context, event whatttft.RunEvent) {
+	if o == nil || o.downstream == nil {
+		return
+	}
+
+	event.Sequence = o.sequence.Add(1)
+	if event.WallUnixNano == 0 {
+		event.WallUnixNano = time.Now().UnixNano()
+	}
+	o.downstream.OnRunEvent(ctx, event.Clone())
+}
 
 func runCommand(args []string, stdout io.Writer, stderr io.Writer) int {
+	return runCommandContext(context.Background(), args, stdout, stderr)
+}
+
+func runCommandContext(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	cfg, _, err := parseRunFlags(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -36,26 +84,85 @@ func runCommand(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	result, metadata, err := executeRun(context.Background(), cfg, args)
-	if err != nil {
-		writeFormatted(stderr, "run failed: %v\n", err)
+	execute := func(execCtx context.Context, observer whatttft.RunObserver) commandExecution {
+		return executeRunCommand(execCtx, cfg, args, observer)
+	}
+	if cfg.tui {
+		return runTUILauncher(ctx, runTUILaunchRequest{
+			Config:  cfg,
+			Args:    append([]string(nil), args...),
+			Stdout:  stdout,
+			Stderr:  stderr,
+			Execute: execute,
+		})
+	}
+
+	execution := execute(ctx, nil)
+	return finishRunCommand(stdout, stderr, cfg, execution)
+}
+
+type runTUILaunchRequest struct {
+	Config  runCLIConfig
+	Args    []string
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Execute func(context.Context, whatttft.RunObserver) commandExecution
+}
+
+type runTUILaunchFunc func(context.Context, runTUILaunchRequest) int
+
+var runTUILauncher runTUILaunchFunc = defaultRunTUILauncher
+
+func defaultRunTUILauncher(_ context.Context, request runTUILaunchRequest) int {
+	writeText(request.Stderr, "run --tui is not wired yet; live dashboards will be enabled in a later v0.3 task\n")
+	return 1
+}
+
+func executeRunCommand(ctx context.Context, cfg runCLIConfig, args []string, observer whatttft.RunObserver) commandExecution {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	sequencedObserver := newSequencedCommandObserver(observer)
+	result, metadata, err := executeRun(ctx, cfg, args, sequencedObserver)
+	execution := commandExecution{
+		Result:   result,
+		Metadata: metadata,
+		Err:      err,
+		Canceled: isContextError(err),
+		Partial:  isContextError(err) && hasRunRecords(result),
+	}
+	if shouldWriteReports(err, result) {
+		outputDir, reportErr := writeCommandReports(ctx, cfg.outputDir, cfg.overwrite, cfg.saveChunks, metadata, result, sequencedObserver)
+		execution.OutputDir = outputDir
+		execution.ReportErr = reportErr
+	}
+
+	return execution
+}
+
+func finishRunCommand(stdout io.Writer, stderr io.Writer, cfg runCLIConfig, execution commandExecution) int {
+	if execution.ReportErr != nil {
+		writeFormatted(stderr, "write reports: %v\n", execution.ReportErr)
+		return 1
+	}
+	if execution.Err != nil {
+		if execution.Canceled {
+			if execution.Partial && execution.OutputDir != "" {
+				printRunSummary(stdout, cfg, execution.Result)
+				writeFormatted(stdout, "\nrun canceled; wrote partial results to %s\n", execution.OutputDir)
+			} else {
+				writeFormatted(stderr, "run canceled: %v\n", execution.Err)
+			}
+			return interruptedExitCode
+		}
+
+		writeFormatted(stderr, "run failed: %v\n", execution.Err)
 		return 1
 	}
 
-	outputDir, err := report.WriteRun(report.WriteOptions{
-		OutputDir:  cfg.outputDir,
-		Overwrite:  cfg.overwrite,
-		SaveChunks: cfg.saveChunks,
-		Run:        metadata,
-		Result:     result,
-	})
-	if err != nil {
-		writeFormatted(stderr, "write reports: %v\n", err)
-		return 1
-	}
-
-	printRunSummary(stdout, cfg, result)
-	writeFormatted(stdout, "\nwrote results to %s\n", outputDir)
+	printRunSummary(stdout, cfg, execution.Result)
+	writeFormatted(stdout, "\nwrote results to %s\n", execution.OutputDir)
 	return 0
 }
 
@@ -89,6 +196,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet.BoolVar(&cfg.includeUsage, "include-usage", true, "request stream usage chunks when supported")
 	flagSet.BoolVar(&cfg.legacyMaxTokens, "legacy-max-tokens", false, "send max_tokens instead of max_completion_tokens")
 	flagSet.BoolVar(&cfg.overwrite, "overwrite", false, "overwrite non-empty output directory")
+	flagSet.BoolVar(&cfg.tui, "tui", false, "show the live terminal dashboard when available")
 
 	if err := flagSet.Parse(args); err != nil {
 		return runCLIConfig{}, flagSet, err
@@ -133,10 +241,11 @@ Common flags:
   --save-chunks
   --include-usage
   --legacy-max-tokens
+  --tui
 `)
 }
 
-func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft.RunResult, report.RunMetadata, error) {
+func executeRun(ctx context.Context, cfg runCLIConfig, args []string, observer whatttft.RunObserver) (*whatttft.RunResult, report.RunMetadata, error) {
 	cacheMode := whatttft.CacheMode(cfg.cacheMode)
 	connectionMode := whatttft.ConnectionMode(cfg.connectionMode)
 	scenario := whatttft.Scenario{
@@ -185,7 +294,7 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 	})
 
 	start := time.Now()
-	result, err := whatttft.NewRunner(provider, runConfig).Run(ctx)
+	result, err := whatttft.NewRunnerWithOptions(provider, runConfig, whatttft.RunnerOptions{Observer: observer}).Run(ctx)
 	end := time.Now()
 	metadata := report.RunMetadata{
 		Provider:             provider.Name(),
@@ -204,6 +313,87 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string) (*whatttft
 	}
 
 	return result, metadata, nil
+}
+
+func writeCommandReports(
+	ctx context.Context,
+	outputDir string,
+	overwrite bool,
+	saveChunks bool,
+	metadata report.RunMetadata,
+	result *whatttft.RunResult,
+	observer whatttft.RunObserver,
+) (string, error) {
+	emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteStarted, metadata, result, outputDir, nil)
+	writtenDir, err := report.WriteRun(report.WriteOptions{
+		OutputDir:  outputDir,
+		Overwrite:  overwrite,
+		SaveChunks: saveChunks,
+		Run:        metadata,
+		Result:     result,
+	})
+	if err != nil {
+		emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteFailed, metadata, result, outputDir, err)
+		return "", err
+	}
+
+	emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteFinished, metadata, result, writtenDir, nil)
+	return writtenDir, nil
+}
+
+func emitReportWriteEvent(
+	ctx context.Context,
+	observer whatttft.RunObserver,
+	kind whatttft.RunEventKind,
+	metadata report.RunMetadata,
+	result *whatttft.RunResult,
+	outputDir string,
+	err error,
+) {
+	if observer == nil {
+		return
+	}
+
+	event := whatttft.RunEvent{
+		Kind:                 kind,
+		BenchmarkName:        metadata.BenchmarkName,
+		Provider:             metadata.Provider,
+		Model:                metadata.Model,
+		ScenarioName:         firstNonEmptyString(metadata.Scenario.Name, metadata.RunConfig.Scenario.Name),
+		CacheMode:            metadata.RunConfig.CacheMode,
+		ConnectionMode:       metadata.RunConfig.ConnectionMode,
+		RequestedServiceTier: metadata.RequestedServiceTier,
+		OutputDir:            outputDir,
+		TotalRequests:        metadata.RunConfig.WarmupRequests + metadata.RunConfig.MeasuredRequests,
+		WarmupRequests:       metadata.RunConfig.WarmupRequests,
+		MeasuredRequests:     metadata.RunConfig.MeasuredRequests,
+	}
+	if result != nil {
+		event.CompletedRequests = len(result.Records)
+		event.SuccessfulRequests = result.Summary.SuccessfulRequests
+		event.ErrorRequests = result.Summary.ErrorRequests
+		event.Summary = &result.Summary
+	}
+	if err != nil {
+		event.Error = &whatttft.RunEventError{Category: "report_write", Message: err.Error()}
+	}
+	observer.OnRunEvent(ctx, event)
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func hasRunRecords(result *whatttft.RunResult) bool {
+	return result != nil && len(result.Records) > 0
+}
+
+func shouldWriteReports(err error, result *whatttft.RunResult) bool {
+	if !hasRunRecords(result) {
+		return false
+	}
+
+	return err == nil || isContextError(err)
 }
 
 func outputDirMetadata(cfg runCLIConfig) report.RunMetadata {
@@ -348,6 +538,7 @@ type runCLIConfig struct {
 	includeUsage    bool
 	legacyMaxTokens bool
 	overwrite       bool
+	tui             bool
 }
 
 func (c runCLIConfig) validate() error {

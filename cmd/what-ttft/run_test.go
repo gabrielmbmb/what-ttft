@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -27,9 +29,128 @@ func TestRunCommandHelp(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "--provider openai") || !strings.Contains(stderr.String(), "--model MODEL") || !strings.Contains(stderr.String(), "--openai-api") {
+	if !strings.Contains(stderr.String(), "--provider openai") || !strings.Contains(stderr.String(), "--model MODEL") || !strings.Contains(stderr.String(), "--openai-api") || !strings.Contains(stderr.String(), "--tui") {
 		t.Fatalf("stderr missing run help:\n%s", stderr.String())
 	}
+}
+
+// TestRunCommandTUILauncherIsInjectable verifies --tui routes through the launcher seam without starting provider requests.
+func TestRunCommandTUILauncherIsInjectable(t *testing.T) {
+	oldLauncher := runTUILauncher
+	defer func() { runTUILauncher = oldLauncher }()
+
+	var invoked atomic.Bool
+	runTUILauncher = func(_ context.Context, request runTUILaunchRequest) int {
+		invoked.Store(true)
+		if !request.Config.tui {
+			t.Error("launcher config tui = false, want true")
+		}
+		if request.Config.model != "gpt-test" {
+			t.Errorf("launcher model = %q, want gpt-test", request.Config.model)
+		}
+		if request.Execute == nil {
+			t.Error("launcher Execute callback is nil")
+		}
+		return 123
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "openai",
+		"--api-key", "placeholder",
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "1",
+		"--warmup", "0",
+		"--out", filepath.Join(t.TempDir(), "reports"),
+		"--tui",
+	}, &stdout, &stderr)
+	if exitCode != 123 {
+		t.Fatalf("exit code = %d, want launcher code 123", exitCode)
+	}
+	if !invoked.Load() {
+		t.Fatal("launcher was not invoked")
+	}
+}
+
+// TestRunCommandCanceledWithPartialRecordsWritesReports verifies interrupted runs preserve partial canonical reports and report-write events.
+func TestRunCommandCanceledWithPartialRecordsWritesReports(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "cli-cancel-key"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeCLISSEEvent(t, w, "response.output_text.delta", `{"type":"response.output_text.delta","delta":"Hello"}`)
+		writeCLISSEEvent(t, w, "response.completed", `{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2}}}`)
+	}))
+	defer server.Close()
+
+	outputDir := filepath.Join(t.TempDir(), "reports")
+	args := []string{
+		"--provider", "openai",
+		"--base-url", server.URL,
+		"--api-key", placeholderAPIKey,
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "2",
+		"--warmup", "0",
+		"--cache-mode", "cache-reuse",
+		"--max-output-tokens", "16",
+		"--out", outputDir,
+	}
+	var parseStderr bytes.Buffer
+	cfg, _, err := parseRunFlags(args, &parseStderr)
+	if err != nil {
+		t.Fatalf("parse run flags: %v\nstderr:%s", err, parseStderr.String())
+	}
+	cfg.outputDir = report.ResolveOutputDir(cfg.outputDir, outputDirMetadata(cfg), time.Now())
+	if err := report.ValidateOutputDir(cfg.outputDir, cfg.overwrite); err != nil {
+		t.Fatalf("validate output dir: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var events []whatttft.RunEvent
+	observer := whatttft.RunObserverFunc(func(_ context.Context, event whatttft.RunEvent) {
+		events = append(events, event)
+		if event.Kind == whatttft.EventRequestFinished {
+			cancel()
+		}
+	})
+
+	execution := executeRunCommand(ctx, cfg, args, observer)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := finishRunCommand(&stdout, &stderr, cfg, execution)
+	if exitCode != interruptedExitCode {
+		t.Fatalf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", exitCode, interruptedExitCode, stdout.String(), stderr.String())
+	}
+	if !execution.Canceled || !execution.Partial {
+		t.Fatalf("execution canceled/partial = %t/%t, want true/true", execution.Canceled, execution.Partial)
+	}
+	if !strings.Contains(stdout.String(), "run canceled; wrote partial results") {
+		t.Fatalf("stdout missing partial cancellation status:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked in cancellation output\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	for _, name := range []string{"run.json", "requests.jsonl", "summary.json", "summary.md"} {
+		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
+			t.Fatalf("stat partial %s: %v", name, err)
+		}
+	}
+
+	var summary whatttft.RunSummary
+	readCLIJSONFile(t, filepath.Join(outputDir, "summary.json"), &summary)
+	if summary.MeasuredRequests != 1 || summary.SuccessfulRequests != 1 {
+		t.Fatalf("partial summary measured/successful = %d/%d, want 1/1", summary.MeasuredRequests, summary.SuccessfulRequests)
+	}
+	if !containsRunEventKind(events, whatttft.EventReportWriteStarted) || !containsRunEventKind(events, whatttft.EventReportWriteFinished) {
+		t.Fatalf("report write events missing from %#v", runEventKinds(events))
+	}
+	assertIncreasingEventSequences(t, events)
 }
 
 // TestRunCommandAgainstFakeOpenAIServer verifies the CLI writes reports against an httptest OpenAI Responses-compatible stream.
@@ -391,6 +512,37 @@ func writeCLISSEData(t *testing.T, w http.ResponseWriter, data string) {
 	}
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
+	}
+}
+
+func containsRunEventKind(events []whatttft.RunEvent, kind whatttft.RunEventKind) bool {
+	for _, event := range events {
+		if event.Kind == kind {
+			return true
+		}
+	}
+
+	return false
+}
+
+func runEventKinds(events []whatttft.RunEvent) []whatttft.RunEventKind {
+	kinds := make([]whatttft.RunEventKind, 0, len(events))
+	for _, event := range events {
+		kinds = append(kinds, event.Kind)
+	}
+
+	return kinds
+}
+
+func assertIncreasingEventSequences(t *testing.T, events []whatttft.RunEvent) {
+	t.Helper()
+
+	var previous int64
+	for index, event := range events {
+		if event.Sequence <= previous {
+			t.Fatalf("event %d sequence = %d after %d", index, event.Sequence, previous)
+		}
+		previous = event.Sequence
 	}
 }
 

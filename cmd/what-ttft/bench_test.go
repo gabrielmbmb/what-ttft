@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func TestBenchCommandHelp(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "--config PATH") || !strings.Contains(stderr.String(), "--dry-run") || !strings.Contains(stderr.String(), "--service-tier") {
+	if !strings.Contains(stderr.String(), "--config PATH") || !strings.Contains(stderr.String(), "--dry-run") || !strings.Contains(stderr.String(), "--service-tier") || !strings.Contains(stderr.String(), "--tui") {
 		t.Fatalf("stderr missing bench help:\n%s", stderr.String())
 	}
 }
@@ -45,6 +46,43 @@ func TestBenchCommandRequiresConfig(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+// TestBenchCommandTUILauncherIsInjectable verifies --tui routes through the launcher seam without sending requests.
+func TestBenchCommandTUILauncherIsInjectable(t *testing.T) {
+	oldLauncher := benchTUILauncher
+	defer func() { benchTUILauncher = oldLauncher }()
+
+	var invoked bool
+	benchTUILauncher = func(_ context.Context, request benchTUILaunchRequest) int {
+		invoked = true
+		if !request.Config.tui {
+			t.Error("launcher config tui = false, want true")
+		}
+		if request.Plan == nil || request.Plan.Name != "bench-test" {
+			t.Fatalf("launcher plan name = %#v, want bench-test", request.Plan)
+		}
+		if request.Execute == nil {
+			t.Error("launcher Execute callback is nil")
+		}
+		return 124
+	}
+
+	configPath := writeBenchConfig(t, benchYAML("http://127.0.0.1:1", "WHAT_TTFT_BENCH_KEY", "default"))
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"bench",
+		"--config", configPath,
+		"--out", filepath.Join(t.TempDir(), "reports"),
+		"--tui",
+	}, &stdout, &stderr)
+	if exitCode != 124 {
+		t.Fatalf("exit code = %d, want launcher code 124", exitCode)
+	}
+	if !invoked {
+		t.Fatal("launcher was not invoked")
 	}
 }
 

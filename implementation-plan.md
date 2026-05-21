@@ -2552,7 +2552,7 @@ Definition of done:
 
 ---
 
-### [ ] 30. Refactor `run` and `bench` command execution to accept observers, contexts, and report-write events
+### [x] 30. Refactor `run` and `bench` command execution to accept observers, contexts, and report-write events
 
 Prepare the existing commands for `--tui` by separating benchmark execution, event fanout, report writing, and final console output.
 
@@ -2629,6 +2629,15 @@ Implementation details:
   - `run --help` and `bench --help` include `--tui`;
   - canceled run with partial records writes partial reports and returns the documented interrupted code;
   - non-TUI run/bench behavior remains compatible.
+
+Implemented details:
+
+- Added `--tui` parsing and help text for both `run` and `bench`, plus top-level usage examples for TUI presentation mode.
+- Split command execution into context-aware execution/write/finalization helpers, with observer parameters for both single-run and YAML benchmark paths.
+- Added injectable run and bench TUI launcher seams that receive validated configs plus an `Execute(ctx, observer)` callback; the default implementation is a clear placeholder until tasks 33/34 wire Bubble Tea.
+- Added command-level event sequencing and report lifecycle events for `report_write_started`, `report_write_finished`, and `report_write_failed` around canonical report writing.
+- Implemented interrupted exit code `130` for context cancellation, partial report writing when at least one record exists, and canceled/interrupted console messages without creating empty report directories.
+- Added CLI tests for `--tui` help, launcher injection, report-write event visibility, increasing event sequences, and partial canceled runs writing canonical report files.
 
 Definition of done:
 

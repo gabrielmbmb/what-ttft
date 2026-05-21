@@ -13,7 +13,9 @@ const usageText = `what-ttft benchmarks AI provider latency.
 Usage:
   what-ttft --help
   what-ttft run [flags]
+  what-ttft run --tui [flags]
   what-ttft bench --config benchmark.yaml [flags]
+  what-ttft bench --config benchmark.yaml --tui [flags]
 
 Commands:
   run      benchmark one OpenAI-compatible model from flags; Responses API is the OpenAI default
