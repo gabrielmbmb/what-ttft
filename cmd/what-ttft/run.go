@@ -13,8 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gabrielmbmb/what-ttft/internal/eventbus"
 	"github.com/gabrielmbmb/what-ttft/internal/httptracecap"
 	"github.com/gabrielmbmb/what-ttft/internal/report"
+	"github.com/gabrielmbmb/what-ttft/internal/tui"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
@@ -113,9 +115,50 @@ type runTUILaunchFunc func(context.Context, runTUILaunchRequest) int
 
 var runTUILauncher runTUILaunchFunc = defaultRunTUILauncher
 
-func defaultRunTUILauncher(_ context.Context, request runTUILaunchRequest) int {
-	writeText(request.Stderr, "run --tui is not wired yet; live dashboards will be enabled in a later v0.3 task\n")
-	return 1
+func defaultRunTUILauncher(ctx context.Context, request runTUILaunchRequest) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	events := make(chan whatttft.RunEvent, 1024)
+	tuiSink := tui.NewEventSink(events)
+	bus := eventbus.New([]eventbus.Sink{tuiSink}, eventbus.Options{})
+	executionCh := make(chan commandExecution, 1)
+	go func() {
+		execution := request.Execute(runCtx, bus)
+		if closeErr := bus.Close(context.Background()); closeErr != nil && execution.ReportErr == nil {
+			execution.ReportErr = fmt.Errorf("close event bus: %w", closeErr)
+		}
+		executionCh <- execution
+	}()
+
+	tuiErr := tui.Run(runCtx, tui.RunOptions{
+		Events: events,
+		Cancel: cancel,
+		Output: request.Stdout,
+	})
+	if tuiErr != nil {
+		cancel()
+		execution := <-executionCh
+		writeFormatted(request.Stderr, "run TUI failed: %v\n", tuiErr)
+		if execution.ReportErr != nil {
+			writeFormatted(request.Stderr, "write reports: %v\n", execution.ReportErr)
+		}
+		return 1
+	}
+
+	var execution commandExecution
+	select {
+	case execution = <-executionCh:
+	default:
+		cancel()
+		execution = <-executionCh
+	}
+
+	return finishRunCommand(request.Stdout, request.Stderr, request.Config, execution)
 }
 
 func executeRunCommand(ctx context.Context, cfg runCLIConfig, args []string, observer whatttft.RunObserver) commandExecution {

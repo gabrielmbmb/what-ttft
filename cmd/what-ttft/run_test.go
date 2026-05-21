@@ -75,6 +75,119 @@ func TestRunCommandTUILauncherIsInjectable(t *testing.T) {
 	}
 }
 
+// TestRunCommandTUIPathExecutesBenchmarkAndWritesReports verifies the --tui path uses the shared execution callback and report writer.
+func TestRunCommandTUIPathExecutesBenchmarkAndWritesReports(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "cli-tui-test-key"
+
+	oldLauncher := runTUILauncher
+	defer func() { runTUILauncher = oldLauncher }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeCLISSEEvent(t, w, "response.output_text.delta", `{"type":"response.output_text.delta","delta":"Hello"}`)
+		writeCLISSEEvent(t, w, "response.completed", `{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2}}}`)
+	}))
+	defer server.Close()
+
+	var observedEvents []whatttft.RunEvent
+	runTUILauncher = func(ctx context.Context, request runTUILaunchRequest) int {
+		execution := request.Execute(ctx, whatttft.RunObserverFunc(func(_ context.Context, event whatttft.RunEvent) {
+			observedEvents = append(observedEvents, event)
+		}))
+		return finishRunCommand(request.Stdout, request.Stderr, request.Config, execution)
+	}
+
+	outputDir := filepath.Join(t.TempDir(), "reports")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "openai",
+		"--base-url", server.URL,
+		"--api-key", placeholderAPIKey,
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "1",
+		"--warmup", "0",
+		"--cache-mode", "cache-reuse",
+		"--max-output-tokens", "16",
+		"--out", outputDir,
+		"--tui",
+	}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !containsRunEventKind(observedEvents, whatttft.EventRunStarted) || !containsRunEventKind(observedEvents, whatttft.EventReportWriteFinished) {
+		t.Fatalf("TUI execution events missing from %#v", runEventKinds(observedEvents))
+	}
+	if !strings.Contains(stdout.String(), "wrote results to "+outputDir) {
+		t.Fatalf("stdout missing final output dir:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked in TUI path output\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	for _, name := range []string{"run.json", "requests.jsonl", "summary.json", "summary.md"} {
+		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
+			t.Fatalf("stat TUI %s: %v", name, err)
+		}
+	}
+}
+
+// TestRunCommandTUIPathCancellationWritesPartialReports verifies a TUI-triggered cancellation writes partial reports.
+func TestRunCommandTUIPathCancellationWritesPartialReports(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "cli-tui-cancel-key"
+
+	oldLauncher := runTUILauncher
+	defer func() { runTUILauncher = oldLauncher }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeCLISSEEvent(t, w, "response.output_text.delta", `{"type":"response.output_text.delta","delta":"Hello"}`)
+		writeCLISSEEvent(t, w, "response.completed", `{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2}}}`)
+	}))
+	defer server.Close()
+
+	runTUILauncher = func(ctx context.Context, request runTUILaunchRequest) int {
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		execution := request.Execute(runCtx, whatttft.RunObserverFunc(func(_ context.Context, event whatttft.RunEvent) {
+			if event.Kind == whatttft.EventRequestFinished {
+				cancel()
+			}
+		}))
+		return finishRunCommand(request.Stdout, request.Stderr, request.Config, execution)
+	}
+
+	outputDir := filepath.Join(t.TempDir(), "reports")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "openai",
+		"--base-url", server.URL,
+		"--api-key", placeholderAPIKey,
+		"--model", "gpt-test",
+		"--prompt", "Say hello.",
+		"--samples", "2",
+		"--warmup", "0",
+		"--cache-mode", "cache-reuse",
+		"--max-output-tokens", "16",
+		"--out", outputDir,
+		"--tui",
+	}, &stdout, &stderr)
+	if exitCode != interruptedExitCode {
+		t.Fatalf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", exitCode, interruptedExitCode, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "run canceled; wrote partial results") {
+		t.Fatalf("stdout missing partial TUI cancellation status:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "requests.jsonl")); err != nil {
+		t.Fatalf("partial TUI requests.jsonl missing: %v", err)
+	}
+}
+
 // TestRunCommandCanceledWithPartialRecordsWritesReports verifies interrupted runs preserve partial canonical reports and report-write events.
 func TestRunCommandCanceledWithPartialRecordsWritesReports(t *testing.T) {
 	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.

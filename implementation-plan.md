@@ -2826,7 +2826,7 @@ Definition of done:
 
 ---
 
-### [ ] 33. Wire `what-ttft run --tui` to the live dashboard
+### [x] 33. Wire `what-ttft run --tui` to the live dashboard
 
 Connect the single-run CLI path to Bubble Tea using the event bus and shared execution code.
 
@@ -2895,6 +2895,16 @@ Implementation details:
   - fake TUI cancellation cancels context and writes partial reports when records exist;
   - fake OpenAI run with `--tui` path executes the same provider/runner/report code as non-TUI;
   - final stdout after TUI exit includes output directory and no API key.
+
+Implemented details:
+
+- Replaced the `run --tui` placeholder with a real launcher that creates a cancelable benchmark context, event bus, TUI event sink/channel, benchmark execution goroutine, foreground Bubble Tea dashboard, and final post-alt-screen command status output.
+- Added `internal/tui.Run` and `RunOptions` to launch the Bubble Tea v2 dashboard without embedding benchmark execution, provider calls, or report writing in the TUI package.
+- Added `internal/tui.EventSink` to bridge `whatttft.RunEvent` values from `internal/eventbus` into the dashboard event channel with cloned best-effort delivery and dropped-event counting.
+- Wired confirmed TUI cancellation (`q`/`ctrl+c`, then `y`) to call the benchmark cancel function; early UI exit also cancels any still-running benchmark before waiting for partial report writing.
+- Preserved canonical report behavior: reports are still written through the shared run execution path, `report_write_*` events update the dashboard, partial canceled runs use exit code `130`, and non-TUI output remains unchanged.
+- Added CLI tests for fake TUI execution through the real run callback, fake TUI cancellation producing partial reports, final stdout output directory reporting, and API-key non-leakage.
+- Added TUI runner/sink tests for cloned event forwarding, non-blocking drops when the channel is full, channel close behavior, and cancel callback invocation.
 
 Definition of done:
 

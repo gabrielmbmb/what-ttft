@@ -28,6 +28,7 @@ var _ tea.Model = model{}
 
 type model struct {
 	events <-chan whatttft.RunEvent
+	cancel func()
 	width  int
 	height int
 
@@ -48,11 +49,16 @@ type model struct {
 }
 
 func newModel(events <-chan whatttft.RunEvent) model {
+	return newModelWithCancel(events, nil)
+}
+
+func newModelWithCancel(events <-chan whatttft.RunEvent, cancel func()) model {
 	helpModel := help.New()
 	helpModel.ShowAll = false
 
 	return model{
 		events: events,
+		cancel: cancel,
 		store:  newLiveStore(),
 		keys:   defaultKeyMap(),
 		help:   helpModel,
@@ -118,6 +124,9 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.running = false
 			m.canceled = true
 			m.store.status = "cancel requested"
+			if m.cancel != nil {
+				m.cancel()
+			}
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Cancel):
 			m.confirmingCancel = false
