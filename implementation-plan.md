@@ -25,7 +25,7 @@ cmd/what-ttft/                  CLI entrypoint for run and bench
 pkg/whatttft/                   Public runner, config, scenario, records, metrics, events
 pkg/provider/openai/            Public OpenAI-compatible Responses and Chat Completions provider
 internal/configfile/            Strict YAML benchmark config loader
-internal/eventbus/              v0.3 planned bounded CLI event fanout and JSONL event sink
+internal/eventbus/              v0.3 planned bounded CLI event fanout
 internal/tui/                   v0.3 planned Bubble Tea live dashboard
 internal/httptracecap/          HTTP client trace capture
 internal/sse/                   Server-Sent Events parser
@@ -2206,7 +2206,7 @@ what-ttft run --tui [existing run flags]
 what-ttft bench --config benchmark.yaml --tui [existing bench flags]
 ```
 
-The architectural change underneath is more important than the initial UI: `run` and `bench` should emit structured benchmark events that can be consumed by the Bubble Tea dashboard, a JSONL event log, or future integrations. The event stream is a live side channel. It must not replace the canonical raw result files (`requests.jsonl`, optional `chunks.jsonl`, `run.json`, `summary.json`, and `summary.md`) until a later milestone deliberately adopts event sourcing.
+The architectural change underneath is more important than the initial UI: `run` and `bench` should emit structured benchmark events that can be consumed by the Bubble Tea dashboard and future in-process integrations. The event stream is a live side channel. It must not replace the canonical raw result files (`requests.jsonl`, optional `chunks.jsonl`, `run.json`, `summary.json`, and `summary.md`) until a later milestone deliberately adopts event sourcing.
 
 ### Research notes and adopted design decisions
 
@@ -2494,16 +2494,14 @@ Definition of done:
 
 ---
 
-### [x] 29. Add a bounded asynchronous event bus and optional JSONL event sink for CLI consumers
+### [x] 29. Add a bounded asynchronous event bus for CLI/TUI consumers
 
-The CLI should fan out runner events to the TUI and optional machine-readable logs without letting slow rendering or disk I/O perturb benchmark timing.
+The CLI should fan out runner events to the TUI without letting slow rendering perturb benchmark timing.
 
 Files:
 
 - `internal/eventbus/eventbus.go`
-- `internal/eventbus/jsonl.go`
 - `internal/eventbus/eventbus_test.go`
-- `internal/eventbus/jsonl_test.go`
 
 Implementation details:
 
@@ -2528,47 +2526,29 @@ Implementation details:
 
 - Keep the v0.3 implementation simple but safe:
   - it is acceptable to make the bus non-blocking and count drops for all events if the buffer is full, as long as docs/tests state that event streams are best-effort live telemetry;
-  - if a JSONL event sink is enabled, consider a larger buffer and return a final sink error when writes fail;
   - do not block request streaming or provider parsing on TUI rendering.
 
-- Add optional event JSONL export flags to both `run` and `bench` in this task or the CLI plumbing task:
-
-  ```text
-  --events-jsonl PATH   write best-effort live RunEvent JSONL for external consumers
-  ```
-
-  If implemented here, the flag parser changes can be completed in task 30.
-
-- JSONL event sink rules:
-  - one `RunEvent` JSON object per line;
-  - omit event log by default;
-  - create parent directories if needed only when this matches existing report-writer behavior, otherwise fail clearly;
-  - fail on invalid path or write error and surface the error after the run;
-  - never write API keys, Authorization headers, cookies, or signed URLs;
-  - respect the same redaction assumptions as request records and report metadata.
+- Do not add a public persisted event sink in v0.3. Canonical report files already provide machine-readable analysis data, and a persisted best-effort live event log could confuse users about which files are authoritative.
 
 - Tests:
   - bus delivers events to one and multiple sinks;
   - slow sink cannot deadlock publisher;
   - dropped-count behavior is visible and deterministic under tiny buffer capacity;
   - sink close is called;
-  - JSONL sink writes parseable events;
-  - JSONL sink propagates write/open errors;
-  - fake API keys do not appear in event JSONL when request records and metadata are present.
+  - sink publish and close errors are surfaced.
 
 Implemented details:
 
 - Added `internal/eventbus` with a documented `Sink` interface, `Options`, and `Bus` that implements `whatttft.RunObserver`.
 - Implemented bounded asynchronous fanout with non-blocking `OnRunEvent`, default queue capacity, nil-sink filtering, dropped-event counting, safe close, queue draining, and sink error aggregation.
-- Added `JSONLSink` and `NewJSONLSink` for writing one `whatttft.RunEvent` JSON object per line with 0600 file permissions, parent-directory creation, per-event flushes for live tailing, and parseable event output.
-- Kept CLI flag wiring out of this task; `--events-jsonl` will be added when `run` and `bench` command execution are refactored in the next task.
-- Added tests for multiple sinks, slow-sink non-deadlock behavior, deterministic drops with tiny capacity, close behavior, publish/close errors, JSONL parseability, open/write/closed errors, parent directory creation, and secret non-leakage for already-redacted events.
+- Deliberately omitted a persisted event sink from v0.3 because canonical `requests.jsonl` and `summary.json` remain the machine-readable analysis outputs.
+- Added tests for multiple sinks, slow-sink non-deadlock behavior, deterministic drops with tiny capacity, close behavior, and publish/close errors.
 
 Definition of done:
 
 - CLI code can pass one observer to runners and fan out to multiple consumers.
 - Slow or failing sinks cannot leave benchmark goroutines permanently blocked.
-- Optional event JSONL output is parseable and documented as live telemetry, not canonical raw results.
+- The bus remains internal plumbing for TUI/live consumers and does not create another persisted output format.
 
 ---
 
@@ -2592,17 +2572,15 @@ Implementation details:
   type runCLIConfig struct {
       // existing fields...
       tui bool
-      eventsJSONL string
   }
 
   type benchCLIConfig struct {
       // existing fields...
       tui bool
-      eventsJSONL string
   }
   ```
 
-- Add `--tui` and `--events-jsonl PATH` to both `run` and `bench` help text, even if `--tui` is wired to a placeholder until task 33/34.
+- Add `--tui` to both `run` and `bench` help text, even if it is wired to a placeholder until task 33/34.
 - Refactor execution helpers so tests and TUI launchers can call the same code:
 
   ```go
@@ -2640,7 +2618,6 @@ Implementation details:
 
 - Non-TUI behavior should remain familiar:
   - without `--tui`, commands still print concise final summaries and output directory path;
-  - `--events-jsonl` works without `--tui`;
   - output directory preflight still happens before sending provider requests;
   - `--dry-run` on `bench` must not start event bus sinks that write files unless explicitly requested.
 
@@ -2649,16 +2626,13 @@ Implementation details:
   - use an injectable `liveRunner`/`tuiLauncher` function variable or interface in `cmd/what-ttft` tests to assert `--tui` would be invoked with the right config and event channel.
 
 - Tests:
-  - `run --help` and `bench --help` include `--tui` and `--events-jsonl`;
-  - `run --events-jsonl` writes parseable events against fake OpenAI;
-  - `bench --events-jsonl` writes benchmark/target/request events against fake OpenAI;
-  - event JSONL does not contain fake API keys;
+  - `run --help` and `bench --help` include `--tui`;
   - canceled run with partial records writes partial reports and returns the documented interrupted code;
   - non-TUI run/bench behavior remains compatible.
 
 Definition of done:
 
-- Existing CLI behavior remains unchanged unless `--tui` or `--events-jsonl` is provided.
+- Existing CLI behavior remains unchanged unless `--tui` is provided.
 - Report write lifecycle events are available to live consumers.
 - Partial cancellation behavior is explicit and tested.
 
@@ -2841,7 +2815,7 @@ Implementation details:
   1. parse and validate existing flags;
   2. resolve and preflight the output directory before starting provider requests;
   3. create a cancelable context;
-  4. create an event bus with at least one TUI sink/channel and optional JSONL event sink;
+  4. create an event bus with at least one TUI sink/channel;
   5. start the benchmark execution in a goroutine;
   6. run the Bubble Tea program in the foreground;
   7. wait for benchmark/report completion when the UI exits normally;
@@ -2958,55 +2932,9 @@ Definition of done:
 
 ---
 
-### [ ] 35. Add optional event JSONL CLI output for external consumers
+### [ ] 35. Update README and examples for v0.3 live dashboards and events
 
-If task 29 only created the sink infrastructure, expose and document event JSONL as a supported CLI feature in this task. If the flag was already fully implemented, use this task to harden tests and docs.
-
-Files:
-
-- `cmd/what-ttft/run.go`
-- `cmd/what-ttft/bench.go`
-- `internal/eventbus/jsonl.go`
-- CLI tests
-
-Command shape:
-
-```sh
-what-ttft run --events-jsonl runs/latest/events.jsonl ...
-what-ttft bench --config benchmark.yaml --events-jsonl runs/latest/events.jsonl
-```
-
-Implementation details:
-
-- Event JSONL should work with and without `--tui`.
-- If both `--tui` and `--events-jsonl` are set, the same event bus should fan out to both consumers.
-- Event JSONL should include report-writing events so external consumers can discover the final output directory.
-- The file should be closed before the process exits.
-- The event JSONL file should not be placed inside the benchmark output directory by default unless the user explicitly chooses that path. This avoids recursively treating events as part of the canonical report schema before the project commits to an `events.jsonl` output file.
-- Add a README warning:
-  - event JSONL is live telemetry and may be best-effort;
-  - `requests.jsonl` and `summary.json` remain canonical for analysis;
-  - per-chunk/generated text is not included in events by default.
-
-- Tests:
-  - run event JSONL has run/request/report events;
-  - bench event JSONL has benchmark/target/request/report events;
-  - events parse into `whatttft.RunEvent`;
-  - event sequence numbers are monotonic within one process;
-  - file is closed/flushed before command returns;
-  - write failures return non-zero;
-  - fake API keys and Authorization headers are absent.
-
-Definition of done:
-
-- External consumers can tail a structured event stream from `run` and `bench` without using Bubble Tea.
-- Event JSONL behavior is tested and documented as non-canonical telemetry.
-
----
-
-### [ ] 36. Update README and examples for v0.3 live dashboards and events
-
-Document the new user-facing behavior only after `run --tui`, `bench --tui`, and event JSONL behavior exist.
+Document the new user-facing behavior only after `run --tui` and `bench --tui` exist.
 
 Files:
 
@@ -3023,13 +2951,6 @@ Documentation details:
   - keyboard shortcuts;
   - cancellation behavior and partial report behavior.
 
-- Add a section titled `Live event stream` or similar with:
-  - `--events-jsonl PATH` examples for `run` and `bench`;
-  - event kind overview;
-  - warning that event wall times are not metric timings;
-  - warning that event JSONL is live telemetry and `requests.jsonl`/`summary.json` remain canonical;
-  - note that generated chunk content is not emitted by default.
-
 - Update output file docs if partial/canceled reports are now possible:
   - explain whether partial reports have the same file names;
   - explain how failures/cancellations appear in request records and summaries;
@@ -3044,30 +2965,23 @@ Documentation details:
 Definition of done:
 
 - README includes copy-paste `--tui` examples for both `run` and `bench`.
-- README documents event JSONL and its limitations.
 - README documents cancellation/partial result behavior.
 
 ---
 
-### [ ] 37. Add v0.3 quality gates, TUI model tests, and smoke coverage
+### [ ] 36. Add v0.3 quality gates, TUI model tests, and smoke coverage
 
 Finish the milestone with tests and smoke checks that exercise events and TUI paths without requiring real providers.
 
 Files:
 
 - existing smoke scripts, or new scripts such as:
-  - `scripts/smoke-fake-openai-events.sh`
   - `scripts/smoke-fake-openai-tui-headless.sh` only if a stable headless TUI mode is implemented
 - README testing instructions
 
 Implementation details:
 
-- Extend fake-server smoke coverage:
-  - run command with `--events-jsonl` against fake OpenAI Responses server;
-  - bench command with `--events-jsonl` against fake OpenAI Responses server;
-  - verify events include run/benchmark, target, request, summary, and report events;
-  - verify event JSONL contains no fake API keys;
-  - verify normal report files are still produced and parseable.
+- Extend fake-server smoke coverage for `--tui` paths if a stable headless TUI launcher exists; otherwise keep TUI coverage in unit tests with injected launchers. Normal report files must still be produced and parseable.
 
 - TUI automated tests should be unit/model tests, not terminal screenshots:
   - Bubble Tea model update/view tests;
@@ -3087,7 +3001,6 @@ Implementation details:
   go run ./cmd/what-ttft bench --help
   scripts/smoke-fake-openai.sh
   scripts/smoke-fake-openai-bench.sh
-  scripts/smoke-fake-openai-events.sh
   ```
 
   Add any stable TUI-specific smoke command only after it works reliably in non-interactive CI/local environments.
@@ -3095,9 +3008,9 @@ Implementation details:
 Definition of done:
 
 - Full local gate passes.
-- Event stream and TUI code have race-detector coverage.
+- Event bus and TUI code have race-detector coverage.
 - Fake-provider smoke tests use no external network.
-- Report files and event files from smoke tests contain no API keys.
+- Report files from smoke tests contain no API keys.
 - `implementation-plan.md` v0.3 tasks are marked `[x]` only as they are completed.
 
 ---
@@ -3137,6 +3050,10 @@ Extend the v0.2 YAML benchmark format beyond one shared scenario to full matrice
 ### [ ] Future: event-sourced report writing
 
 After the v0.3 event schema has proven stable, evaluate whether report writing should consume the same event stream. Do not make this change until event ordering, backpressure, persistence, and schema-versioning rules are mature enough that canonical `requests.jsonl` output cannot be degraded by live telemetry concerns.
+
+### [ ] Future: persisted live event streams
+
+If external integrations need a tail-able live event stream, revisit an opt-in persisted event sink. It should not be named or documented in a way that competes with canonical `requests.jsonl`, `summary.json`, and `run.json`, and it must have explicit delivery guarantees and schema-versioning rules.
 
 ### [ ] Future: opt-in stream/chunk debug events
 
