@@ -1,6 +1,10 @@
 package whatttft
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+	"time"
+)
 
 // RunEventKind identifies the kind of lifecycle, progress, or reporting event emitted by a benchmark runner.
 type RunEventKind string
@@ -223,6 +227,28 @@ func notifyRunObserver(ctx context.Context, observer RunObserver, event RunEvent
 		return
 	}
 	observer.OnRunEvent(ctx, event)
+}
+
+type eventEmitter struct {
+	observer RunObserver
+	sequence *atomic.Int64
+}
+
+func newEventEmitter(observer RunObserver) *eventEmitter {
+	return &eventEmitter{observer: observer, sequence: &atomic.Int64{}}
+}
+
+func (e *eventEmitter) emit(ctx context.Context, event RunEvent) {
+	if e == nil || e.observer == nil {
+		return
+	}
+	if event.Sequence == 0 {
+		event.Sequence = e.sequence.Add(1)
+	}
+	if event.WallUnixNano == 0 {
+		event.WallUnixNano = time.Now().UnixNano()
+	}
+	notifyRunObserver(ctx, e.observer, event.Clone())
 }
 
 func cloneRequestRecord(record RequestRecord) RequestRecord {

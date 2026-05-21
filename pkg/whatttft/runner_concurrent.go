@@ -33,6 +33,7 @@ func (r *Runner) runConcurrent(ctx context.Context, cfg RunConfig) (*RunResult, 
 	}
 
 	result.Summary = Summarize(result.Records)
+	r.emitSummaryUpdated(ctx, cfg, result)
 	return result, nil
 }
 
@@ -44,10 +45,18 @@ func (r *Runner) appendConcurrentPhase(
 	count int,
 	warmup bool,
 ) error {
+	if count == 0 {
+		return nil
+	}
+
+	r.emitPhaseEvent(ctx, cfg, EventPhaseStarted, warmup, len(result.Records), &result.Summary)
 	outputs, err := r.runConcurrentPhase(ctx, cfg, startAttempt, count, warmup)
 	for _, output := range outputs {
 		appendRunOutput(result, output.record, output.chunks, cfg.SaveChunks)
 	}
+	result.Summary = Summarize(result.Records)
+	r.emitSummaryUpdated(ctx, cfg, result)
+	r.emitPhaseEvent(ctx, cfg, EventPhaseFinished, warmup, len(result.Records), &result.Summary)
 
 	return err
 }
@@ -78,12 +87,13 @@ func (r *Runner) runConcurrentPhase(
 			defer wg.Done()
 			for job := range jobs {
 				record, chunks := r.runOne(ctx, cfg, job.attempt, job.warmup, job.recorder)
+				r.emitRequestFinished(ctx, cfg, record, 0, nil)
 				outputs <- runnerOutput{attempt: job.attempt, record: record, chunks: chunks}
 			}
 		}()
 	}
 
-	enqueueErr := enqueueRunnerJobs(ctx, jobs, startAttempt, count, warmup)
+	enqueueErr := r.enqueueRunnerJobs(ctx, cfg, jobs, startAttempt, count, warmup)
 	close(jobs)
 	wg.Wait()
 	close(outputs)
@@ -99,7 +109,7 @@ func (r *Runner) runConcurrentPhase(
 	return collected, nil
 }
 
-func enqueueRunnerJobs(ctx context.Context, jobs chan<- runnerJob, startAttempt int, count int, warmup bool) error {
+func (r *Runner) enqueueRunnerJobs(ctx context.Context, cfg RunConfig, jobs chan<- runnerJob, startAttempt int, count int, warmup bool) error {
 	for offset := range count {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -110,6 +120,7 @@ func enqueueRunnerJobs(ctx context.Context, jobs chan<- runnerJob, startAttempt 
 			warmup:   warmup,
 			recorder: newScheduledRecorder(),
 		}
+		r.emitRequestScheduled(ctx, cfg, job.attempt, job.warmup)
 
 		select {
 		case jobs <- job:

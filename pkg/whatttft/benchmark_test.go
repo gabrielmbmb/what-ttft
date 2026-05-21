@@ -118,6 +118,101 @@ func TestRunBenchmarkExecutesTargetsSerially(t *testing.T) {
 	}
 }
 
+// TestRunBenchmarkWithOptionsEmitsBenchmarkAndTargetEvents verifies multi-target event ordering and target identity propagation.
+func TestRunBenchmarkWithOptionsEmitsBenchmarkAndTargetEvents(t *testing.T) {
+	recorder := &eventRecorder{}
+	providerA := &benchmarkModelProvider{fakeProvider: &fakeProvider{completionTokens: 1}, model: "model-a"}
+	providerB := &benchmarkModelProvider{fakeProvider: &fakeProvider{completionTokens: 1}, model: "model-b"}
+
+	result, err := RunBenchmarkWithOptions(context.Background(), BenchmarkConfig{
+		Name: "event-benchmark",
+		Targets: []BenchmarkTarget{
+			{ID: "target-a", Name: "Target A", Provider: providerA, Config: benchmarkMeasuredConfig()},
+			{ID: "target-b", Name: "Target B", Provider: providerB, Config: benchmarkMeasuredConfig()},
+		},
+	}, BenchmarkOptions{Observer: recorder})
+	if err != nil {
+		t.Fatalf("run benchmark: %v", err)
+	}
+	if len(result.Records) != 2 {
+		t.Fatalf("records = %d, want 2", len(result.Records))
+	}
+
+	events := recorder.snapshot()
+	if len(events) == 0 || events[0].Kind != EventBenchmarkStarted {
+		t.Fatalf("first event = %#v, want benchmark_started", events)
+	}
+	if countEvents(events, EventBenchmarkFinished) != 1 {
+		t.Fatalf("benchmark_finished count = %d, want 1", countEvents(events, EventBenchmarkFinished))
+	}
+	if countEvents(events, EventTargetStarted) != 2 || countEvents(events, EventTargetFinished) != 2 {
+		t.Fatalf("target event counts start/finish = %d/%d", countEvents(events, EventTargetStarted), countEvents(events, EventTargetFinished))
+	}
+	requestEvents := eventsByKind(events, EventRequestFinished)
+	if len(requestEvents) != 2 {
+		t.Fatalf("request_finished events = %d, want 2", len(requestEvents))
+	}
+	seenTargets := map[string]string{}
+	for _, event := range requestEvents {
+		if event.TargetID == "" || event.Record == nil {
+			t.Fatalf("request event missing target or record: %#v", event)
+		}
+		seenTargets[event.TargetID] = event.Record.RequestID
+		if event.Record.TargetID != event.TargetID {
+			t.Fatalf("record target %q does not match event target %q", event.Record.TargetID, event.TargetID)
+		}
+	}
+	if seenTargets["target-a"] != "target-a-req-000000" || seenTargets["target-b"] != "target-b-req-000000" {
+		t.Fatalf("request events by target = %#v, want prefixed request IDs", seenTargets)
+	}
+	finished := eventsByKind(events, EventBenchmarkFinished)[0]
+	if finished.BenchmarkName != "event-benchmark" || finished.CompletedRequests != 2 || finished.Summary == nil || finished.Summary.SuccessfulRequests != 2 {
+		t.Fatalf("benchmark_finished = %#v", finished)
+	}
+	for index, event := range events {
+		if event.Sequence == 0 {
+			t.Fatalf("event %d has zero sequence: %#v", index, event)
+		}
+		if event.WallUnixNano == 0 {
+			t.Fatalf("event %d has zero wall time: %#v", index, event)
+		}
+	}
+}
+
+// TestRunBenchmarkWithOptionsEmitsCanceledEvent verifies benchmark cancellation is represented in events with partial summary data.
+func TestRunBenchmarkWithOptionsEmitsCanceledEvent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	recorder := &eventRecorder{}
+	providerA := &benchmarkModelProvider{fakeProvider: &fakeProvider{completionTokens: 1, afterCall: cancel}, model: "model-a"}
+	providerB := &benchmarkModelProvider{fakeProvider: &fakeProvider{completionTokens: 1}, model: "model-b"}
+
+	result, err := RunBenchmarkWithOptions(ctx, BenchmarkConfig{Targets: []BenchmarkTarget{
+		{ID: "target-a", Provider: providerA, Config: RunConfig{Scenario: Scenario{Prompt: "hello"}, MeasuredRequests: 5, CacheMode: CacheReuse}},
+		{ID: "target-b", Provider: providerB, Config: benchmarkMeasuredConfig()},
+	}}, BenchmarkOptions{Observer: recorder})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run error = %v, want context.Canceled", err)
+	}
+	if result == nil || len(result.Records) != 1 {
+		t.Fatalf("partial result = %#v, want one record", result)
+	}
+
+	events := recorder.snapshot()
+	if countEvents(events, EventBenchmarkCanceled) != 1 {
+		t.Fatalf("benchmark_canceled count = %d, want 1 in %#v", countEvents(events, EventBenchmarkCanceled), eventKinds(events))
+	}
+	if countEvents(events, EventBenchmarkFinished) != 0 {
+		t.Fatalf("benchmark_finished count = %d, want 0", countEvents(events, EventBenchmarkFinished))
+	}
+	canceled := eventsByKind(events, EventBenchmarkCanceled)[0]
+	if canceled.Error == nil || canceled.Error.Category != "context" {
+		t.Fatalf("canceled error = %#v, want context", canceled.Error)
+	}
+	if canceled.CompletedRequests != 1 || canceled.Summary == nil || canceled.Summary.MeasuredRequests != 1 {
+		t.Fatalf("canceled event = completed %d summary %#v", canceled.CompletedRequests, canceled.Summary)
+	}
+}
+
 // TestRunBenchmarkGroupsSameModelByTargetID verifies target IDs split otherwise identical provider/model summaries.
 func TestRunBenchmarkGroupsSameModelByTargetID(t *testing.T) {
 	providerA := &benchmarkModelProvider{fakeProvider: &fakeProvider{completionTokens: 1}, model: "same-model"}

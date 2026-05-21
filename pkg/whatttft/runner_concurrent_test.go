@@ -49,6 +49,63 @@ func TestRunnerRunConcurrentProducesConfiguredMeasuredRecords(t *testing.T) {
 	}
 }
 
+// TestRunnerRunConcurrentEmitsLiveRequestEvents verifies fixed-concurrency request completion events are emitted before final sorted results are returned.
+func TestRunnerRunConcurrentEmitsLiveRequestEvents(t *testing.T) {
+	recorder := &eventRecorder{}
+	provider := &concurrentProvider{delay: time.Millisecond}
+	runner := NewRunnerWithOptions(provider, RunConfig{
+		Scenario:         Scenario{Name: "concurrent-events", Prompt: "Say hello."},
+		MeasuredRequests: 7,
+		Concurrency:      3,
+		CacheMode:        CacheReuse,
+		RequestIDPrefix:  "events-",
+	}, RunnerOptions{Observer: recorder})
+
+	result, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(result.Records) != 7 {
+		t.Fatalf("records = %d, want 7", len(result.Records))
+	}
+	for index, record := range result.Records {
+		if record.Attempt != index {
+			t.Fatalf("record %d attempt = %d, want sorted attempt", index, record.Attempt)
+		}
+	}
+
+	events := recorder.snapshot()
+	if countEvents(events, EventRequestScheduled) != 7 {
+		t.Fatalf("request_scheduled count = %d, want 7 in %#v", countEvents(events, EventRequestScheduled), eventKinds(events))
+	}
+	if countEvents(events, EventRequestDispatched) != 7 {
+		t.Fatalf("request_dispatched count = %d, want 7", countEvents(events, EventRequestDispatched))
+	}
+	requestFinished := eventsByKind(events, EventRequestFinished)
+	if len(requestFinished) != 7 {
+		t.Fatalf("request_finished events = %d, want 7", len(requestFinished))
+	}
+	seen := make(map[string]bool, len(requestFinished))
+	for _, event := range requestFinished {
+		if event.Record == nil {
+			t.Fatalf("request_finished missing record: %#v", event)
+		}
+		if event.Attempt == nil || event.Warmup == nil || *event.Warmup {
+			t.Fatalf("request event attempt/warmup = %v/%v", event.Attempt, event.Warmup)
+		}
+		seen[event.RequestID] = true
+	}
+	for index := range 7 {
+		requestID := "events-req-" + sixDigit(index)
+		if !seen[requestID] {
+			t.Fatalf("missing request_finished event for %s in %#v", requestID, requestFinished)
+		}
+	}
+	if countEvents(events, EventRunFinished) != 1 {
+		t.Fatalf("run_finished count = %d, want 1", countEvents(events, EventRunFinished))
+	}
+}
+
 // TestRunnerRunConcurrentWarmupBarrier verifies all warmups finish before measured requests begin.
 func TestRunnerRunConcurrentWarmupBarrier(t *testing.T) {
 	provider := &concurrentProvider{delay: time.Millisecond, warmupTotal: 4}

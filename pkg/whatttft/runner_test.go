@@ -133,6 +133,148 @@ func TestRunnerRunAppliesTargetLabelsAndRequestIDPrefix(t *testing.T) {
 	}
 }
 
+// TestRunnerWithOptionsEmitsSequentialLifecycleEvents verifies sequential runs emit ordered live events with phase and request metadata.
+func TestRunnerWithOptionsEmitsSequentialLifecycleEvents(t *testing.T) {
+	recorder := &eventRecorder{}
+	provider := &fakeProvider{completionTokens: 2}
+	runner := NewRunnerWithOptions(provider, RunConfig{
+		Scenario:         Scenario{Name: "events", Prompt: "Say hello."},
+		WarmupRequests:   1,
+		MeasuredRequests: 1,
+		CacheMode:        CacheReuse,
+		ConnectionMode:   WarmConnections,
+	}, RunnerOptions{Observer: recorder})
+
+	result, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(result.Records) != 2 {
+		t.Fatalf("records = %d, want 2", len(result.Records))
+	}
+
+	events := recorder.snapshot()
+	wantKinds := []RunEventKind{
+		EventRunStarted,
+		EventPhaseStarted,
+		EventRequestScheduled,
+		EventRequestDispatched,
+		EventRequestFinished,
+		EventSummaryUpdated,
+		EventPhaseFinished,
+		EventPhaseStarted,
+		EventRequestScheduled,
+		EventRequestDispatched,
+		EventRequestFinished,
+		EventSummaryUpdated,
+		EventPhaseFinished,
+		EventSummaryUpdated,
+		EventRunFinished,
+	}
+	assertEventKinds(t, events, wantKinds)
+	assertSequentialEventSequence(t, events)
+
+	if events[0].Provider != "fake" || events[0].Model != "fake-model" || events[0].ScenarioName != "events" {
+		t.Fatalf("run_started context = provider %q model %q scenario %q", events[0].Provider, events[0].Model, events[0].ScenarioName)
+	}
+	if events[1].Phase != PhaseWarmup || events[1].Warmup == nil || !*events[1].Warmup {
+		t.Fatalf("warmup phase event = phase %q warmup %v", events[1].Phase, events[1].Warmup)
+	}
+	if events[7].Phase != PhaseMeasured || events[7].Warmup == nil || *events[7].Warmup {
+		t.Fatalf("measured phase event = phase %q warmup %v", events[7].Phase, events[7].Warmup)
+	}
+	warmRequest := events[4]
+	if warmRequest.Attempt == nil || *warmRequest.Attempt != 0 || warmRequest.Warmup == nil || !*warmRequest.Warmup {
+		t.Fatalf("warm request event attempt/warmup = %v/%v", warmRequest.Attempt, warmRequest.Warmup)
+	}
+	if warmRequest.Record == nil || !warmRequest.Record.Warmup || warmRequest.Record.RequestID != "req-000000" {
+		t.Fatalf("warm request record = %#v", warmRequest.Record)
+	}
+	measuredRequest := events[10]
+	if measuredRequest.Attempt == nil || *measuredRequest.Attempt != 1 || measuredRequest.Warmup == nil || *measuredRequest.Warmup {
+		t.Fatalf("measured request event attempt/warmup = %v/%v", measuredRequest.Attempt, measuredRequest.Warmup)
+	}
+	if measuredRequest.Record == nil || measuredRequest.Record.Warmup || measuredRequest.Record.RequestID != "req-000001" {
+		t.Fatalf("measured request record = %#v", measuredRequest.Record)
+	}
+	if measuredRequest.SuccessfulRequests != 1 || measuredRequest.ErrorRequests != 0 {
+		t.Fatalf("measured request counts = success %d errors %d", measuredRequest.SuccessfulRequests, measuredRequest.ErrorRequests)
+	}
+	finished := events[len(events)-1]
+	if finished.CompletedRequests != 2 || finished.Summary == nil || finished.Summary.SuccessfulRequests != 1 {
+		t.Fatalf("run_finished = completed %d summary %#v", finished.CompletedRequests, finished.Summary)
+	}
+}
+
+// TestRunnerWithOptionsDoesNotPromoteRequestErrorsToRunFailures verifies provider errors remain request events.
+func TestRunnerWithOptionsDoesNotPromoteRequestErrorsToRunFailures(t *testing.T) {
+	recorder := &eventRecorder{}
+	provider := &fakeProvider{completionTokens: 1, errorsByAttempt: map[int]error{0: errors.New("synthetic provider failure")}}
+	runner := NewRunnerWithOptions(provider, RunConfig{
+		Scenario:         Scenario{Prompt: "Say hello."},
+		MeasuredRequests: 1,
+		CacheMode:        CacheReuse,
+	}, RunnerOptions{Observer: recorder})
+
+	result, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.Summary.ErrorRequests != 1 {
+		t.Fatalf("summary errors = %d, want 1", result.Summary.ErrorRequests)
+	}
+
+	events := recorder.snapshot()
+	if countEvents(events, EventRunFailed) != 0 {
+		t.Fatalf("events contain run_failed: %#v", eventKinds(events))
+	}
+	if countEvents(events, EventRunFinished) != 1 {
+		t.Fatalf("run_finished count = %d, want 1", countEvents(events, EventRunFinished))
+	}
+	requestEvents := eventsByKind(events, EventRequestFinished)
+	if len(requestEvents) != 1 {
+		t.Fatalf("request_finished events = %d, want 1", len(requestEvents))
+	}
+	if requestEvents[0].Record == nil || requestEvents[0].Record.Error == nil {
+		t.Fatalf("request event record error = %#v", requestEvents[0].Record)
+	}
+}
+
+// TestRunnerWithOptionsEmitsCancellationEvent verifies context cancellation is represented as a run_canceled event.
+func TestRunnerWithOptionsEmitsCancellationEvent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	recorder := &eventRecorder{}
+	provider := &fakeProvider{completionTokens: 1, afterCall: cancel}
+	runner := NewRunnerWithOptions(provider, RunConfig{
+		Scenario:         Scenario{Prompt: "Say hello."},
+		MeasuredRequests: 5,
+		CacheMode:        CacheReuse,
+	}, RunnerOptions{Observer: recorder})
+
+	result, err := runner.Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run error = %v, want context.Canceled", err)
+	}
+	if result == nil || len(result.Records) != 1 {
+		t.Fatalf("partial result = %#v, want one record", result)
+	}
+
+	events := recorder.snapshot()
+	if countEvents(events, EventRunCanceled) != 1 {
+		t.Fatalf("run_canceled count = %d, want 1 in %#v", countEvents(events, EventRunCanceled), eventKinds(events))
+	}
+	if countEvents(events, EventRunFinished) != 0 {
+		t.Fatalf("run_finished count = %d, want 0", countEvents(events, EventRunFinished))
+	}
+	canceled := eventsByKind(events, EventRunCanceled)[0]
+	if canceled.Error == nil || canceled.Error.Category != "context" {
+		t.Fatalf("canceled error = %#v, want context category", canceled.Error)
+	}
+	if canceled.CompletedRequests != 1 || canceled.Summary == nil || canceled.Summary.MeasuredRequests != 1 {
+		t.Fatalf("canceled event = completed %d summary %#v", canceled.CompletedRequests, canceled.Summary)
+	}
+}
+
 // TestRunnerRunContinuesAfterRequestErrors verifies provider errors become records and later attempts still run.
 func TestRunnerRunContinuesAfterRequestErrors(t *testing.T) {
 	provider := &fakeProvider{
@@ -313,4 +455,81 @@ func (p *fakeProvider) callsSnapshot() []fakeProviderCall {
 
 func fakeIntPointer(value int) *int {
 	return &value
+}
+
+type eventRecorder struct {
+	mu     sync.Mutex
+	events []RunEvent
+}
+
+func (r *eventRecorder) OnRunEvent(_ context.Context, event RunEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.events = append(r.events, event)
+}
+
+func (r *eventRecorder) snapshot() []RunEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]RunEvent(nil), r.events...)
+}
+
+func eventKinds(events []RunEvent) []RunEventKind {
+	kinds := make([]RunEventKind, 0, len(events))
+	for _, event := range events {
+		kinds = append(kinds, event.Kind)
+	}
+
+	return kinds
+}
+
+func assertEventKinds(t *testing.T, events []RunEvent, want []RunEventKind) {
+	t.Helper()
+
+	got := eventKinds(events)
+	if len(got) != len(want) {
+		t.Fatalf("event kinds = %#v, want %#v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("event kinds = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func assertSequentialEventSequence(t *testing.T, events []RunEvent) {
+	t.Helper()
+
+	for index, event := range events {
+		if event.Sequence != int64(index+1) {
+			t.Fatalf("event %d sequence = %d, want %d", index, event.Sequence, index+1)
+		}
+		if event.WallUnixNano == 0 {
+			t.Fatalf("event %d has zero wall time", index)
+		}
+	}
+}
+
+func countEvents(events []RunEvent, kind RunEventKind) int {
+	count := 0
+	for _, event := range events {
+		if event.Kind == kind {
+			count++
+		}
+	}
+
+	return count
+}
+
+func eventsByKind(events []RunEvent, kind RunEventKind) []RunEvent {
+	matched := make([]RunEvent, 0)
+	for _, event := range events {
+		if event.Kind == kind {
+			matched = append(matched, event)
+		}
+	}
+
+	return matched
 }

@@ -69,50 +69,160 @@ func (r *BenchmarkResult) RunResult() *RunResult {
 
 // BenchmarkRunner executes a multi-target benchmark in target order.
 type BenchmarkRunner struct {
-	cfg BenchmarkConfig
+	cfg    BenchmarkConfig
+	events *eventEmitter
+}
+
+// BenchmarkOptions configures optional multi-target benchmark behavior that is not part of the serialized benchmark scenario.
+type BenchmarkOptions struct {
+	// Observer receives live benchmark events; nil disables live events and does not change canonical result records.
+	Observer RunObserver
 }
 
 // NewBenchmarkRunner creates a runner for a multi-target benchmark configuration.
 func NewBenchmarkRunner(cfg BenchmarkConfig) *BenchmarkRunner {
-	return &BenchmarkRunner{cfg: cfg}
+	return NewBenchmarkRunnerWithOptions(cfg, BenchmarkOptions{})
+}
+
+// NewBenchmarkRunnerWithOptions creates a runner for a multi-target benchmark configuration with optional live-event observation.
+func NewBenchmarkRunnerWithOptions(cfg BenchmarkConfig, options BenchmarkOptions) *BenchmarkRunner {
+	return &BenchmarkRunner{cfg: cfg, events: newEventEmitter(options.Observer)}
 }
 
 // Run executes all benchmark targets serially and returns combined records, chunks, and summaries.
 func (r *BenchmarkRunner) Run(ctx context.Context) (*BenchmarkResult, error) {
-	return RunBenchmark(ctx, r.cfg)
+	return r.run(ctx)
 }
 
 // RunBenchmark executes cfg across all targets serially and returns combined records, chunks, and summaries.
 func RunBenchmark(ctx context.Context, cfg BenchmarkConfig) (*BenchmarkResult, error) {
+	return RunBenchmarkWithOptions(ctx, cfg, BenchmarkOptions{})
+}
+
+// RunBenchmarkWithOptions executes cfg across all targets serially with optional live-event observation.
+func RunBenchmarkWithOptions(ctx context.Context, cfg BenchmarkConfig, options BenchmarkOptions) (*BenchmarkResult, error) {
+	return NewBenchmarkRunnerWithOptions(cfg, options).Run(ctx)
+}
+
+func (r *BenchmarkRunner) run(ctx context.Context) (*BenchmarkResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	targets, err := normalizeBenchmarkConfig(cfg)
+	targets, err := normalizeBenchmarkConfig(r.cfg)
 	if err != nil {
+		r.emitBenchmarkError(ctx, EventBenchmarkFailed, err, nil)
 		return nil, err
 	}
 
 	result := &BenchmarkResult{TargetOrder: SerialTargetOrder}
+	r.emit(ctx, r.baseBenchmarkEvent(EventBenchmarkStarted, targets, result))
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
 			result.Summary = Summarize(result.Records)
+			r.emitBenchmarkError(ctx, EventBenchmarkCanceled, err, result)
 			return result, err
 		}
 
-		targetResult, runErr := NewRunner(target.provider, target.config).Run(ctx)
+		r.emit(ctx, benchmarkTargetEvent(EventTargetStarted, r.cfg.Name, target, result))
+		targetResult, runErr := newRunnerWithEmitter(target.provider, target.config, r.events).Run(ctx)
 		if targetResult != nil {
 			result.Records = append(result.Records, targetResult.Records...)
 			result.Chunks = append(result.Chunks, targetResult.Chunks...)
+			result.Summary = Summarize(result.Records)
 		}
 		if runErr != nil {
-			result.Summary = Summarize(result.Records)
+			targetFailed := benchmarkTargetEvent(EventTargetFailed, r.cfg.Name, target, result)
+			targetFailed.Error = runEventErrorFromError(runErr)
+			r.emit(ctx, targetFailed)
+			kind := EventBenchmarkFailed
+			if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+				kind = EventBenchmarkCanceled
+			}
+			r.emitBenchmarkError(ctx, kind, runErr, result)
 			return result, runErr
 		}
+		r.emit(ctx, benchmarkTargetEvent(EventTargetFinished, r.cfg.Name, target, result))
 	}
 
 	result.Summary = Summarize(result.Records)
+	finished := r.baseBenchmarkEvent(EventBenchmarkFinished, targets, result)
+	finished.Summary = &result.Summary
+	r.emit(ctx, finished)
 	return result, nil
+}
+
+func (r *BenchmarkRunner) emit(ctx context.Context, event RunEvent) {
+	if r == nil || r.events == nil {
+		return
+	}
+	r.events.emit(ctx, event)
+}
+
+func (r *BenchmarkRunner) emitBenchmarkError(ctx context.Context, kind RunEventKind, err error, result *BenchmarkResult) {
+	event := RunEvent{
+		Kind:          kind,
+		BenchmarkName: r.cfg.Name,
+		Error:         runEventErrorFromError(err),
+	}
+	if result != nil {
+		event.CompletedRequests = len(result.Records)
+		event.SuccessfulRequests = result.Summary.SuccessfulRequests
+		event.ErrorRequests = result.Summary.ErrorRequests
+		event.Summary = &result.Summary
+	}
+	r.emit(ctx, event)
+}
+
+func (r *BenchmarkRunner) baseBenchmarkEvent(kind RunEventKind, targets []normalizedBenchmarkTarget, result *BenchmarkResult) RunEvent {
+	totalWarmup := 0
+	totalMeasured := 0
+	for _, target := range targets {
+		totalWarmup += target.config.WarmupRequests
+		totalMeasured += target.config.MeasuredRequests
+	}
+	event := RunEvent{
+		Kind:             kind,
+		BenchmarkName:    r.cfg.Name,
+		TotalRequests:    totalWarmup + totalMeasured,
+		WarmupRequests:   totalWarmup,
+		MeasuredRequests: totalMeasured,
+	}
+	if result != nil {
+		event.CompletedRequests = len(result.Records)
+		event.SuccessfulRequests = result.Summary.SuccessfulRequests
+		event.ErrorRequests = result.Summary.ErrorRequests
+	}
+
+	return event
+}
+
+func benchmarkTargetEvent(kind RunEventKind, benchmarkName string, target normalizedBenchmarkTarget, result *BenchmarkResult) RunEvent {
+	event := RunEvent{
+		Kind:             kind,
+		BenchmarkName:    benchmarkName,
+		TargetID:         target.config.TargetID,
+		TargetName:       target.config.TargetName,
+		ScenarioName:     target.config.Scenario.Name,
+		CacheMode:        target.config.CacheMode,
+		ConnectionMode:   target.config.ConnectionMode,
+		TotalRequests:    target.config.WarmupRequests + target.config.MeasuredRequests,
+		WarmupRequests:   target.config.WarmupRequests,
+		MeasuredRequests: target.config.MeasuredRequests,
+		Concurrency:      target.config.Concurrency,
+	}
+	if target.provider != nil {
+		event.Provider = target.provider.Name()
+		event.Model = target.provider.Model()
+	}
+	if result != nil {
+		event.CompletedRequests = len(result.Records)
+		event.SuccessfulRequests = result.Summary.SuccessfulRequests
+		event.ErrorRequests = result.Summary.ErrorRequests
+		event.Summary = &result.Summary
+	}
+
+	return event
 }
 
 type normalizedBenchmarkTarget struct {

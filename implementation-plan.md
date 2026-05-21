@@ -2385,7 +2385,7 @@ Definition of done:
 
 ---
 
-### [ ] 28. Add runner and benchmark observer options, then emit core events
+### [x] 28. Add runner and benchmark observer options, then emit core events
 
 Wire the event model into existing single-target and multi-target execution while preserving current public constructors and return values.
 
@@ -2473,6 +2473,17 @@ Implementation details:
   - fixed-concurrency emits one `request_finished` per attempted request and final result order remains deterministic;
   - benchmark runner emits benchmark/target events and propagates target identity into per-request events;
   - nil observer does not change runner behavior.
+
+Implemented details:
+
+- Added `RunnerOptions` and `NewRunnerWithOptions` while preserving `NewRunner` as a zero-options wrapper.
+- Added `BenchmarkOptions`, `NewBenchmarkRunnerWithOptions`, and `RunBenchmarkWithOptions` while preserving existing benchmark constructors/functions as zero-options wrappers.
+- Added an internal event emitter that assigns process-local sequence numbers, fills wall-clock event timestamps, handles nil observers, and emits defensive event snapshots.
+- Emitted single-target run events for run start/finish/cancel/failure, phase start/finish, request scheduled/dispatched/finished, and live summary updates.
+- Emitted fixed-concurrency request events from workers as requests are scheduled, dispatched, and completed while preserving deterministic sorted final result records.
+- Emitted multi-target benchmark events for benchmark start/finish/cancel/failure plus target start/finish/failure while reusing the same event sequence across nested target runners.
+- Preserved existing request-level provider-error behavior: provider errors remain request records and `request_finished` events, not run-level failures.
+- Added tests for sequential event order, warmup/measured labeling, request errors, cancellation, concurrent request-finished events, benchmark/target events, target identity propagation, and benchmark cancellation.
 
 Definition of done:
 
