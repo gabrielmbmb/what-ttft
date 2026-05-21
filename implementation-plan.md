@@ -1,14 +1,14 @@
-# Implementation Plan: `what-ttft` v0.1
+# Implementation Plan: `what-ttft`
 
-This file is the source-of-truth TODO list for the first usable version of `what-ttft`.
+This file is the source-of-truth TODO list for current and completed `what-ttft` milestones. The active milestone is v0.3: event-driven benchmark execution and Bubble Tea terminal dashboards. Completed v0.1/v0.2 plans are retained below for context and regression guardrails.
 
 ## Agent execution instructions
 
 Implement exactly one TODO task at a time. After completing that task, update this file to mark the task as done, commit the changes, and then print a detailed summary of what you implemented, including files changed, validation commands run, and any follow-up work.
 
-Goal for v0.1: a Go library plus a small CLI that benchmarks OpenAI-compatible **Chat Completions streaming** endpoints and reports client-observed latency allocation: HTTP/network timing, first response byte, first SSE event, first non-empty output delta, end-to-end latency, chunk cadence, token usage, cache metadata, and aggregate percentiles.
+Historical v0.1 goal, kept for context: a Go library plus a small CLI that benchmarks OpenAI-compatible streaming endpoints and reports client-observed latency allocation: HTTP/network timing, first response byte, first SSE event, first non-empty output delta, end-to-end latency, chunk cadence, token usage, cache metadata, and aggregate percentiles.
 
-Non-goals for v0.1:
+Historical v0.1 non-goals:
 
 - OpenAI Responses API support. Keep architecture ready for it, but do not implement it yet.
 - STT/TTS benchmarking.
@@ -16,14 +16,17 @@ Non-goals for v0.1:
 - Perfect provider-side attribution. Client-side timing cannot separate remote queueing vs prefill vs provider buffering unless provider exposes those metrics.
 - True token-by-token timestamps when providers emit multi-token chunks. v0.1 reports chunk cadence and provider token usage; token timestamp estimation can be added later.
 
-## Proposed architecture
+## Baseline architecture
 
-Use a public package for the reusable benchmark API and provider packages for integrations. Keep low-level helpers internal.
+Use a public package for the reusable benchmark API and provider packages for integrations. Keep low-level helpers, CLI event fanout, and Bubble Tea rendering internal.
 
 ```text
-cmd/what-ttft/                  CLI entrypoint
-pkg/whatttft/                   Public runner, config, scenario, records, metrics
-pkg/provider/openai/            Public OpenAI-compatible Chat Completions provider
+cmd/what-ttft/                  CLI entrypoint for run and bench
+pkg/whatttft/                   Public runner, config, scenario, records, metrics, events
+pkg/provider/openai/            Public OpenAI-compatible Responses and Chat Completions provider
+internal/configfile/            Strict YAML benchmark config loader
+internal/eventbus/              v0.3 planned bounded CLI event fanout and JSONL event sink
+internal/tui/                   v0.3 planned Bubble Tea live dashboard
 internal/httptracecap/          HTTP client trace capture
 internal/sse/                   Server-Sent Events parser
 internal/stats/                 Percentiles and summary statistics
@@ -2194,13 +2197,907 @@ Definition of done:
 
 ---
 
-## Future tasks beyond this v0.2 plan
+## v0.3 feature plan: event-driven execution and Bubble Tea live dashboards
 
-These are intentionally outside the current v0.2 feature set but should influence design decisions.
+The next milestone should add a live terminal experience without creating a separate `tui` command group. The user-facing shape is:
+
+```sh
+what-ttft run --tui [existing run flags]
+what-ttft bench --config benchmark.yaml --tui [existing bench flags]
+```
+
+The architectural change underneath is more important than the initial UI: `run` and `bench` should emit structured benchmark events that can be consumed by the Bubble Tea dashboard, a JSONL event log, or future integrations. The event stream is a live side channel. It must not replace the canonical raw result files (`requests.jsonl`, optional `chunks.jsonl`, `run.json`, `summary.json`, and `summary.md`) until a later milestone deliberately adopts event sourcing.
+
+### Research notes and adopted design decisions
+
+Sources reviewed while planning v0.3:
+
+- Bubble Tea repository and tutorial: <https://github.com/charmbracelet/bubbletea>
+- Bubble Tea v2 upgrade guide: <https://github.com/charmbracelet/bubbletea/blob/main/UPGRADE_GUIDE_V2.md>
+- Bubbles component library: <https://github.com/charmbracelet/bubbles>
+- Lip Gloss layout/styling library: <https://github.com/charmbracelet/lipgloss>
+- ntcharts terminal charting library: <https://github.com/NimbleMarkets/ntcharts>
+
+Design decisions for this milestone:
+
+- Do **not** add `what-ttft tui`, `what-ttft tui run`, or `what-ttft tui open` in v0.3. The TUI is a presentation mode of the existing commands, not a separate execution command group.
+- Add `--tui` to both `run` and `bench`. The same benchmark plan, validation, provider construction, runner, report writer, and output directory behavior should be used whether or not `--tui` is enabled.
+- Add a core event model that imports no Bubble Tea packages. Bubble Tea-specific code should adapt `whatttft.RunEvent` values into `tea.Msg` values at the CLI/TUI boundary.
+- Keep the current `RunResult`/`BenchmarkResult` return values and report writers. Events are live progress/diagnostic messages and must not be the only source of truth.
+- Events must be documented as **not suitable for latency math**. Request timelines and derived metrics are still calculated from per-request monotonic `Recorder` data. Event wall times are for UI ordering and external monitoring only.
+- Do not emit per-chunk or per-token events by default. Chunk streams can be high volume and may contain sensitive generated content. v0.3 should focus on run, target, phase, request-completion, summary, and report-writing events. Stream/chunk debug events can be added later behind explicit opt-in flags.
+- A slow TUI must not block hot benchmark paths. CLI code should use a bounded asynchronous event bus between runner observers and sinks. If a live-display sink cannot keep up, it may coalesce snapshots or drop non-critical progress events, but the benchmark must still write canonical result files.
+- Request-completion events should carry the completed `RequestRecord` because it is already the standardized, redacted machine-readable unit. The TUI can compute live summaries by applying existing `Summarize` logic to completed records.
+- For fixed-concurrency runs, live events may arrive in completion order. Final result records must remain deterministically sorted by attempt within a phase/target as they are today.
+- Use Bubble Tea v2 import paths: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2/...`, and `charm.land/lipgloss/v2`. `View()` methods must return `tea.View`, and alt-screen/mouse/window-title behavior should be declared on the returned view.
+- The first v0.3 TUI should be a live dashboard, not a full interactive benchmark-config wizard. Configuration remains flags/YAML. Interactive forms can be a later milestone once execution events are solid.
+- The dashboard should favor compact, trustworthy terminal visuals: progress bars, percentile bars, sparklines, histograms/ECDF approximations, target comparison tables, error/status tables, and slowest-request waterfalls. Use custom deterministic renderers first; add `ntcharts` only when it clearly improves a chart without making tests brittle.
+- TUI cancellation should be explicit. Pressing `q`/`ctrl+c` during a running benchmark should ask for confirmation, cancel the benchmark context if confirmed, and write partial results when any records exist. Partial reports must be labeled as interrupted/canceled in the UI and command exit status.
+
+### [x] 27. Define the public benchmark event model and observer interface
+
+Add a small, documented public event surface that both single-target and multi-target runners can emit without depending on the CLI or TUI.
+
+Files:
+
+- `pkg/whatttft/events.go`
+- `pkg/whatttft/events_test.go`
+
+Implementation details:
+
+- Add event enums and a JSON-serializable event schema. Exact field names may change during implementation, but the model should cover these concepts:
+
+  ```go
+  type RunEventKind string
+
+  const (
+      EventBenchmarkStarted  RunEventKind = "benchmark_started"
+      EventBenchmarkFinished RunEventKind = "benchmark_finished"
+      EventBenchmarkCanceled RunEventKind = "benchmark_canceled"
+      EventBenchmarkFailed   RunEventKind = "benchmark_failed"
+
+      EventRunStarted  RunEventKind = "run_started"
+      EventRunFinished RunEventKind = "run_finished"
+      EventRunCanceled RunEventKind = "run_canceled"
+      EventRunFailed   RunEventKind = "run_failed"
+
+      EventTargetStarted  RunEventKind = "target_started"
+      EventTargetFinished RunEventKind = "target_finished"
+      EventTargetFailed   RunEventKind = "target_failed"
+
+      EventPhaseStarted  RunEventKind = "phase_started"
+      EventPhaseFinished RunEventKind = "phase_finished"
+
+      EventRequestScheduled  RunEventKind = "request_scheduled"
+      EventRequestDispatched RunEventKind = "request_dispatched"
+      EventRequestFinished   RunEventKind = "request_finished"
+
+      EventSummaryUpdated RunEventKind = "summary_updated"
+
+      EventReportWriteStarted  RunEventKind = "report_write_started"
+      EventReportWriteFinished RunEventKind = "report_write_finished"
+      EventReportWriteFailed   RunEventKind = "report_write_failed"
+  )
+
+  type RunPhase string
+
+  const (
+      PhaseWarmup   RunPhase = "warmup"
+      PhaseMeasured RunPhase = "measured"
+  )
+  ```
+
+- Prefer `request_dispatched` over `request_started` for runner-level events unless the implementation can emit from the exact provider `request_start` mark. This avoids confusing live UI events with the metric timeline event named `request_start`.
+- Add an error payload type with bounded, redacted fields:
+
+  ```go
+  type RunEventError struct {
+      Category string `json:"category"`
+      Message  string `json:"message"`
+      Retryable bool  `json:"retryable"`
+  }
+  ```
+
+- Add a `RunEvent` struct with enough context for external consumers and the TUI:
+
+  ```go
+  type RunEvent struct {
+      Sequence int64 `json:"sequence"`
+      Kind RunEventKind `json:"kind"`
+      WallUnixNano int64 `json:"wall_unix_nano"`
+
+      BenchmarkName string `json:"benchmark_name,omitempty"`
+      TargetID string `json:"target_id,omitempty"`
+      TargetName string `json:"target_name,omitempty"`
+      Provider string `json:"provider,omitempty"`
+      Model string `json:"model,omitempty"`
+      ScenarioName string `json:"scenario_name,omitempty"`
+      CacheMode CacheMode `json:"cache_mode,omitempty"`
+      ConnectionMode ConnectionMode `json:"connection_mode,omitempty"`
+      RequestedServiceTier string `json:"requested_service_tier,omitempty"`
+
+      Phase RunPhase `json:"phase,omitempty"`
+      Attempt int `json:"attempt,omitempty"`
+      Warmup bool `json:"warmup,omitempty"`
+      RequestID string `json:"request_id,omitempty"`
+
+      TotalRequests int `json:"total_requests,omitempty"`
+      WarmupRequests int `json:"warmup_requests,omitempty"`
+      MeasuredRequests int `json:"measured_requests,omitempty"`
+      CompletedRequests int `json:"completed_requests,omitempty"`
+      SuccessfulRequests int `json:"successful_requests,omitempty"`
+      ErrorRequests int `json:"error_requests,omitempty"`
+      ActiveRequests int `json:"active_requests,omitempty"`
+
+      Record *RequestRecord `json:"record,omitempty"`
+      Summary *RunSummary `json:"summary,omitempty"`
+      Error *RunEventError `json:"error,omitempty"`
+      OutputDir string `json:"output_dir,omitempty"`
+      Message string `json:"message,omitempty"`
+  }
+  ```
+
+  Field documentation must be exact:
+
+  - `Sequence` is process-local event order, not a timestamp and not stable across reruns.
+  - `WallUnixNano` is wall-clock Unix nanoseconds for event display/order; it must not be used for benchmark latency math.
+  - `Record` is a completed request record and may contain generated chunk counts/metadata but not saved chunk content; chunk content remains controlled by `SaveChunks` and report writing.
+  - `Summary` is a snapshot over records known at emission time; final `summary.json` remains authoritative.
+  - `OutputDir` is a filesystem path and may reveal local directory names but must not contain secrets by construction.
+
+- Add observer interfaces and helpers:
+
+  ```go
+  type RunObserver interface {
+      OnRunEvent(context.Context, RunEvent)
+  }
+
+  type RunObserverFunc func(context.Context, RunEvent)
+  ```
+
+  `RunObserverFunc` should implement `OnRunEvent`.
+
+- Add a no-op observer helper if it improves runner code clarity. Avoid a large public sink framework in this task.
+- Add `RunEvent.Clone` or equivalent defensive-copy helper only if needed to keep async sinks from mutating shared pointers. If events include pointers to `RequestRecord` or `RunSummary`, tests must prove async consumers cannot observe later unintended mutations.
+- Add JSON round-trip tests for representative events:
+  - benchmark started;
+  - target started;
+  - request finished with a record;
+  - summary updated;
+  - report write failed with a redacted error;
+  - event with service tier and target ID.
+- Add tests that `RunObserverFunc` is invoked and that nil observers are safe through helper code.
+
+Implemented details:
+
+- Added `pkg/whatttft/events.go` with documented `RunEventKind`, `RunPhase`, `RunEventError`, `RunEvent`, `RunObserver`, and `RunObserverFunc` types.
+- Added lifecycle/progress/reporting event kinds for benchmark, run, target, phase, request, summary, and report-writing events without importing Bubble Tea or any CLI/TUI package.
+- Used pointer fields for request attempt and warmup flags so attempt zero and measured `false` values survive JSON round trips without ambiguity.
+- Added `RunEvent.Clone` plus defensive-copy helpers for attached request records, summaries, timelines, maps, pointer metrics, cache metadata, and event errors so asynchronous consumers can isolate event snapshots.
+- Added nil-safe observer notification helper behavior and `RunObserverFunc` support for future runner/event-bus wiring.
+- Added JSON shape tests for representative benchmark, target, request-finished, summary, and report-write-failed events, plus clone isolation and nil observer tests.
+
+Definition of done:
+
+- The event schema compiles, is documented, and has JSON shape tests.
+- No Bubble Tea, Bubbles, or Lip Gloss import appears under `pkg/whatttft`.
+- Event docs explicitly warn that event wall times are not benchmark metric timings.
+
+---
+
+### [ ] 28. Add runner and benchmark observer options, then emit core events
+
+Wire the event model into existing single-target and multi-target execution while preserving current public constructors and return values.
+
+Files:
+
+- `pkg/whatttft/runner.go`
+- `pkg/whatttft/runner_concurrent.go`
+- `pkg/whatttft/benchmark.go`
+- `pkg/whatttft/events.go`
+- matching tests:
+  - `pkg/whatttft/runner_test.go`
+  - `pkg/whatttft/runner_concurrent_test.go`
+  - `pkg/whatttft/benchmark_test.go`
+
+Implementation details:
+
+- Add options without breaking existing callers:
+
+  ```go
+  type RunnerOptions struct {
+      Observer RunObserver
+  }
+
+  func NewRunnerWithOptions(provider Provider, cfg RunConfig, options RunnerOptions) *Runner
+  ```
+
+  `NewRunner(provider, cfg)` should continue to work and should call the options constructor with zero options.
+
+- Add benchmark-level options without breaking existing callers:
+
+  ```go
+  type BenchmarkOptions struct {
+      Observer RunObserver
+  }
+
+  func NewBenchmarkRunnerWithOptions(cfg BenchmarkConfig, options BenchmarkOptions) *BenchmarkRunner
+  func RunBenchmarkWithOptions(ctx context.Context, cfg BenchmarkConfig, options BenchmarkOptions) (*BenchmarkResult, error)
+  ```
+
+  Existing `NewBenchmarkRunner` and `RunBenchmark` should delegate to the options path.
+
+- Add a small internal event emitter on `Runner`/`BenchmarkRunner` that:
+  - assigns monotonically increasing `Sequence` values;
+  - populates shared run context fields consistently;
+  - handles nil observers;
+  - never panics when observers are nil;
+  - snapshots records/summaries before handing them to observers if mutation is possible.
+
+- Single-target runner event semantics:
+  - `run_started`: after config/provider validation, before the first warmup or measured request is scheduled. Include provider, model, scenario, cache mode, connection mode, requested service tier if known, warmup count, measured count, total count, and concurrency.
+  - `phase_started`: once for warmup when `WarmupRequests > 0`, and once for measured when `MeasuredRequests > 0`.
+  - `request_scheduled`: immediately after `scheduled_at` is marked and before the job is sent to a worker or run sequentially.
+  - `request_dispatched`: immediately before `provider.StreamChat` is invoked. Document that this is not the HTTP `request_start` metric event.
+  - `request_finished`: after `RequestRecord` and optional chunk records are complete. Include the completed `RequestRecord`, target/run labels, attempt, warmup, phase, and updated completion/success/error counters where practical.
+  - `summary_updated`: after measured request completions or phase completion. For v0.3 it is acceptable to emit this after each `request_finished` and at final run completion.
+  - `phase_finished`: after all requests in a phase are complete or the phase is interrupted.
+  - `run_finished`: after the runner summary is final when no run-level error occurred.
+  - `run_canceled`: when the context is canceled; include partial counts and a redacted event error.
+  - `run_failed`: for validation or non-cancellation run-level errors; request-level provider errors should still primarily be represented as `request_finished` records with `record.error`.
+
+- Fixed-concurrency live behavior:
+  - emit request events as workers schedule/dispatch/finish jobs, not only after sorting the phase output;
+  - keep the final `RunResult.Records` and chunks deterministically sorted by attempt exactly as before;
+  - if maintaining live partial summaries during concurrent execution would introduce contention, compute them only from completed records on a single collector goroutine, not from workers directly;
+  - tests must tolerate completion-order events while asserting final record order.
+
+- Multi-target benchmark event semantics:
+  - `benchmark_started`: after all target preflight validation passes and before the first target starts;
+  - `target_started`: before invoking the single-target runner for that target;
+  - per-target single-run events should include `TargetID`/`TargetName` and request ID prefixes as they do in records;
+  - `target_finished`: after a target result is appended to the combined benchmark result;
+  - `benchmark_finished`: after combined summary is final;
+  - `benchmark_canceled`/`benchmark_failed`: for context cancellation or run-level benchmark errors, with partial counts when available.
+
+- Error/cancellation behavior:
+  - preserve existing partial-result returns on context cancellation;
+  - do not transform per-request provider errors into run-level failures;
+  - if observer code itself panics, the runner should not recover silently unless a wrapper explicitly handles it. The recommended CLI path will isolate sinks in an async event bus.
+
+- Add tests:
+  - sequential runner emits run/phase/request/summary/run-finished events in expected order;
+  - warmup and measured phases are labeled correctly;
+  - request-level provider errors produce `request_finished` events with `record.error` and do not produce `run_failed`;
+  - context cancellation emits `run_canceled` and returns partial results;
+  - fixed-concurrency emits one `request_finished` per attempted request and final result order remains deterministic;
+  - benchmark runner emits benchmark/target events and propagates target identity into per-request events;
+  - nil observer does not change runner behavior.
+
+Definition of done:
+
+- Existing runner and benchmark APIs continue to compile for old callers.
+- Event tests cover sequential, concurrent, and multi-target paths.
+- Final result summaries are unchanged except for event side effects.
+- `go test -race ./pkg/whatttft` passes.
+
+---
+
+### [ ] 29. Add a bounded asynchronous event bus and optional JSONL event sink for CLI consumers
+
+The CLI should fan out runner events to the TUI and optional machine-readable logs without letting slow rendering or disk I/O perturb benchmark timing.
+
+Files:
+
+- `internal/eventbus/eventbus.go`
+- `internal/eventbus/jsonl.go`
+- `internal/eventbus/eventbus_test.go`
+- `internal/eventbus/jsonl_test.go`
+
+Implementation details:
+
+- Add an internal event bus with a small interface for sinks:
+
+  ```go
+  type Sink interface {
+      Publish(context.Context, whatttft.RunEvent) error
+      Close(context.Context) error
+  }
+  ```
+
+  The exact names may differ, but the bus should be internal to the CLI/reporting layer for v0.3.
+
+- The event bus should itself implement `whatttft.RunObserver` so it can be passed directly to runner options.
+- Use a bounded channel between runner observer calls and sink processing. The default capacity should be large enough for typical `run`/`bench` executions, e.g. 1024 or configurable through code.
+- Define event delivery policy explicitly:
+  - critical lifecycle and request-completion events should be strongly preferred;
+  - summary/progress events may be coalesced or dropped if the UI sink is behind;
+  - no event delivery policy changes the canonical request/chunk/report files;
+  - if events are dropped, emit or expose a diagnostic dropped-count event/message to sinks that remain connected.
+
+- Keep the v0.3 implementation simple but safe:
+  - it is acceptable to make the bus non-blocking and count drops for all events if the buffer is full, as long as docs/tests state that event streams are best-effort live telemetry;
+  - if a JSONL event sink is enabled, consider a larger buffer and return a final sink error when writes fail;
+  - do not block request streaming or provider parsing on TUI rendering.
+
+- Add optional event JSONL export flags to both `run` and `bench` in this task or the CLI plumbing task:
+
+  ```text
+  --events-jsonl PATH   write best-effort live RunEvent JSONL for external consumers
+  ```
+
+  If implemented here, the flag parser changes can be completed in task 30.
+
+- JSONL event sink rules:
+  - one `RunEvent` JSON object per line;
+  - omit event log by default;
+  - create parent directories if needed only when this matches existing report-writer behavior, otherwise fail clearly;
+  - fail on invalid path or write error and surface the error after the run;
+  - never write API keys, Authorization headers, cookies, or signed URLs;
+  - respect the same redaction assumptions as request records and report metadata.
+
+- Tests:
+  - bus delivers events to one and multiple sinks;
+  - slow sink cannot deadlock publisher;
+  - dropped-count behavior is visible and deterministic under tiny buffer capacity;
+  - sink close is called;
+  - JSONL sink writes parseable events;
+  - JSONL sink propagates write/open errors;
+  - fake API keys do not appear in event JSONL when request records and metadata are present.
+
+Definition of done:
+
+- CLI code can pass one observer to runners and fan out to multiple consumers.
+- Slow or failing sinks cannot leave benchmark goroutines permanently blocked.
+- Optional event JSONL output is parseable and documented as live telemetry, not canonical raw results.
+
+---
+
+### [ ] 30. Refactor `run` and `bench` command execution to accept observers, contexts, and report-write events
+
+Prepare the existing commands for `--tui` by separating benchmark execution, event fanout, report writing, and final console output.
+
+Files:
+
+- `cmd/what-ttft/run.go`
+- `cmd/what-ttft/bench.go`
+- `cmd/what-ttft/main.go`
+- `cmd/what-ttft/run_test.go`
+- `cmd/what-ttft/bench_test.go`
+
+Implementation details:
+
+- Add CLI config fields for event/TUI settings:
+
+  ```go
+  type runCLIConfig struct {
+      // existing fields...
+      tui bool
+      eventsJSONL string
+  }
+
+  type benchCLIConfig struct {
+      // existing fields...
+      tui bool
+      eventsJSONL string
+  }
+  ```
+
+- Add `--tui` and `--events-jsonl PATH` to both `run` and `bench` help text, even if `--tui` is wired to a placeholder until task 33/34.
+- Refactor execution helpers so tests and TUI launchers can call the same code:
+
+  ```go
+  type commandExecution struct {
+      Result *whatttft.RunResult // or BenchmarkResult for bench path
+      Metadata report.RunMetadata
+      OutputDir string
+      Err error
+      Canceled bool
+      Partial bool
+  }
+  ```
+
+  Exact shapes can differ, but the commands need a clear way to write partial reports after cancellation.
+
+- Add observer/context parameters to execution helpers:
+
+  ```go
+  func executeRun(ctx context.Context, cfg runCLIConfig, args []string, observer whatttft.RunObserver) (*whatttft.RunResult, report.RunMetadata, error)
+  func executeBench(ctx context.Context, plan *configfile.Config, cliCfg benchCLIConfig, args []string, observer whatttft.RunObserver) (*whatttft.BenchmarkResult, report.RunMetadata, error)
+  ```
+
+  Preserve existing tests by updating call sites.
+
+- Emit CLI/report events around report writing through the same bus:
+  - `report_write_started` before `report.WriteRun`;
+  - `report_write_finished` after success, including resolved output directory;
+  - `report_write_failed` on error with redacted message.
+
+- Partial/canceled report behavior:
+  - if a context cancellation returns a non-nil result with at least one record, write partial report files unless output directory validation fails;
+  - label the final console/TUI status as canceled/interrupted;
+  - return an interrupted exit code. Prefer `130` for user cancellation if practical; otherwise document the chosen code;
+  - do not write empty report directories when no records were produced unless this is explicitly documented.
+
+- Non-TUI behavior should remain familiar:
+  - without `--tui`, commands still print concise final summaries and output directory path;
+  - `--events-jsonl` works without `--tui`;
+  - output directory preflight still happens before sending provider requests;
+  - `--dry-run` on `bench` must not start event bus sinks that write files unless explicitly requested.
+
+- Add test seams for TUI launch:
+  - avoid running a real Bubble Tea alt-screen program in normal CLI unit tests;
+  - use an injectable `liveRunner`/`tuiLauncher` function variable or interface in `cmd/what-ttft` tests to assert `--tui` would be invoked with the right config and event channel.
+
+- Tests:
+  - `run --help` and `bench --help` include `--tui` and `--events-jsonl`;
+  - `run --events-jsonl` writes parseable events against fake OpenAI;
+  - `bench --events-jsonl` writes benchmark/target/request events against fake OpenAI;
+  - event JSONL does not contain fake API keys;
+  - canceled run with partial records writes partial reports and returns the documented interrupted code;
+  - non-TUI run/bench behavior remains compatible.
+
+Definition of done:
+
+- Existing CLI behavior remains unchanged unless `--tui` or `--events-jsonl` is provided.
+- Report write lifecycle events are available to live consumers.
+- Partial cancellation behavior is explicit and tested.
+
+---
+
+### [ ] 31. Add Bubble Tea dependencies and a minimal internal TUI application skeleton
+
+Introduce Bubble Tea v2 in an internal package without wiring it into the commands yet.
+
+Files:
+
+- `internal/tui/doc.go`
+- `internal/tui/app.go`
+- `internal/tui/events.go`
+- `internal/tui/keys.go`
+- `internal/tui/styles.go`
+- `internal/tui/store.go`
+- `internal/tui/app_test.go`
+- `internal/tui/store_test.go`
+
+Dependencies:
+
+```sh
+go get charm.land/bubbletea/v2 charm.land/bubbles/v2 charm.land/lipgloss/v2
+```
+
+Implementation details:
+
+- Add a package comment explaining that `internal/tui` renders live benchmark events and must not perform provider requests or benchmark timing itself.
+- Add a TUI event adapter:
+
+  ```go
+  type runEventMsg struct {
+      Event whatttft.RunEvent
+  }
+  ```
+
+  This type stays internal; core events remain `whatttft.RunEvent`.
+
+- Add a root model that stores:
+  - terminal width/height from `tea.WindowSizeMsg`;
+  - current screen/pane focus;
+  - live run store;
+  - running/completed/canceled/error state;
+  - whether a cancel confirmation is open;
+  - help/keymap state.
+
+- `Init` should start waiting for events from a channel and optionally start a low-frequency UI tick. Avoid high-frequency ticks by default.
+- `Update` should handle:
+  - `tea.WindowSizeMsg` for responsive layout;
+  - `runEventMsg` to update store;
+  - `tea.KeyPressMsg` for quit, cancel confirmation, tab/focus navigation, help toggle, and chart view selection;
+  - internal event-channel closed messages.
+
+- `View` must return `tea.View` and set:
+  - `AltScreen = true`;
+  - `WindowTitle = "what-ttft"` or a target-specific title when available;
+  - `MouseMode = tea.MouseModeCellMotion` only if mouse interactions are implemented. Otherwise leave mouse off for v0.3 simplicity.
+
+- Add deterministic placeholder rendering first:
+  - header with benchmark/run name;
+  - progress counts;
+  - current target/model;
+  - status line;
+  - minimal help footer.
+
+- Do not read/write files from the TUI model. It receives events and returns user intents through messages/callbacks.
+- Do not import provider packages from `internal/tui`.
+- Tests:
+  - window size updates model dimensions;
+  - run/target/request/report events update store;
+  - `View()` returns a non-empty `tea.View` with `AltScreen` set;
+  - `q`/`ctrl+c` moves to confirmation state while running and quits immediately after completion;
+  - no test requires a real terminal.
+
+Definition of done:
+
+- `internal/tui` compiles with Bubble Tea v2.
+- The package has unit tests for model update/render behavior.
+- No benchmark execution, provider request, or report-writing code is embedded in the TUI model.
+
+---
+
+### [ ] 32. Implement live dashboard store, summaries, and terminal chart renderers
+
+Build the reusable state and chart pieces that make the TUI useful for `what-ttft` metrics.
+
+Files:
+
+- `internal/tui/store.go`
+- `internal/tui/charts/sparkline.go`
+- `internal/tui/charts/histogram.go`
+- `internal/tui/charts/percentile.go`
+- `internal/tui/charts/waterfall.go`
+- `internal/tui/charts/heatmap.go` or `target_table.go`
+- matching `*_test.go` files
+
+Implementation details:
+
+- Store behavior:
+  - maintain completed request records by request ID;
+  - maintain per-target/per-group request counts;
+  - track active request IDs when scheduled/dispatched events arrive;
+  - track slowest successful requests by `ttft_delta_ms`, `e2e_delta_ms`, and optionally `stream_total_ms`;
+  - track error categories/status codes;
+  - track latest `RunSummary` snapshot when `summary_updated` events arrive;
+  - recompute summaries from completed records using `whatttft.Summarize` when needed and when this is cheap enough.
+
+- The store must never mutate `RequestRecord` values after adding them. Copy records as needed so tests can catch aliasing bugs.
+- Add view-model helper methods for the UI:
+  - `Progress()` returning total/warmup/measured/completed/success/error counts;
+  - `Groups()` returning summary groups sorted in stable display order;
+  - `MetricRows()` for TTFT, E2E, HTTP TTFB, TPS, and server wait;
+  - `SlowestRequests(n int)`;
+  - `StatusCounts()`;
+  - `CurrentTarget()`.
+
+- Chart renderers should be pure functions returning strings. They should accept width/height and degrade gracefully when the terminal is small.
+- Implement at least these chart types for v0.3:
+  1. **Sparkline over request order** for `ttft_delta_ms` and `e2e_delta_ms`.
+  2. **Percentile bars/lollipop chart** for p50/p90/p95/p99 across target groups.
+  3. **Histogram** for TTFT or E2E distribution.
+  4. **Request waterfall** for a selected slow request, using available timeline events.
+  5. **Target comparison table/heatmap-like coloring** for `bench --tui`.
+
+- Waterfall chart phases:
+  - DNS;
+  - TCP;
+  - TLS;
+  - connection acquire;
+  - request write;
+  - server wait to first byte;
+  - first byte to first SSE event;
+  - first response byte or first event to first output delta;
+  - first output delta to last output delta.
+
+  Missing phases should be shown as `-`/omitted, not zero.
+
+- Chart labeling rules:
+  - label chunk/delta cadence as chunks/deltas, never token ITL unless token timestamps exist in a future milestone;
+  - show units (`ms`, `tokens/s`, `req/s`) in chart titles or axes;
+  - if usage is missing, TPS charts should show unavailable values clearly.
+
+- Styling:
+  - use Lip Gloss for color and borders;
+  - support low-color/no-color terminals by keeping charts understandable without color;
+  - avoid Unicode-only assumptions where possible, but Braille/sparkline runes are acceptable with simple fallback tests if needed.
+
+- Tests:
+  - chart functions handle empty input, one value, many values, NaN/Inf avoidance, and tiny widths;
+  - percentile bars produce deterministic strings for known values;
+  - histogram bins are deterministic;
+  - waterfall omits missing phases and labels observed phases correctly;
+  - store summaries match `whatttft.Summarize` for a known record set;
+  - target comparison order is stable.
+
+Definition of done:
+
+- The TUI can render meaningful benchmark metrics from a slice/stream of completed request records.
+- Charts have deterministic unit tests and do not require a terminal.
+- Labels preserve the project's metric terminology discipline.
+
+---
+
+### [ ] 33. Wire `what-ttft run --tui` to the live dashboard
+
+Connect the single-run CLI path to Bubble Tea using the event bus and shared execution code.
+
+Files:
+
+- `cmd/what-ttft/run.go`
+- `cmd/what-ttft/main.go` if needed for shared signal handling
+- `internal/tui/app.go`
+- `internal/tui/runner.go` or equivalent launcher file
+- CLI and TUI tests
+
+Implementation details:
+
+- `what-ttft run --tui ...` should:
+  1. parse and validate existing flags;
+  2. resolve and preflight the output directory before starting provider requests;
+  3. create a cancelable context;
+  4. create an event bus with at least one TUI sink/channel and optional JSONL event sink;
+  5. start the benchmark execution in a goroutine;
+  6. run the Bubble Tea program in the foreground;
+  7. wait for benchmark/report completion when the UI exits normally;
+  8. print a concise final line after leaving alt screen, especially the output directory or cancellation/error status.
+
+- TUI sink behavior:
+  - convert `whatttft.RunEvent` values to internal `runEventMsg` values;
+  - use `Program.Send` only from a controlled goroutine/sink, not directly from provider or runner hot paths;
+  - if the Bubble Tea program exits before the benchmark finishes, either cancel the benchmark or detach only if a future explicit mode is implemented. For v0.3, prefer cancel-with-confirmation.
+
+- Keyboard behavior for single-run TUI:
+  - `?`: toggle help;
+  - `tab`/`shift+tab`: move focus between summary, charts, slowest requests, and log/status panes;
+  - `1`: summary dashboard;
+  - `2`: TTFT distribution;
+  - `3`: E2E/TPS distribution;
+  - `4`: slowest-request waterfall;
+  - `q`/`ctrl+c`: if running, open cancel confirmation; if completed, quit;
+  - `esc`: close confirmation/help/detail pane;
+  - `y`/`n`: confirm or reject cancellation when confirmation is open.
+
+- Single-run dashboard content:
+  - header: provider, API, model, scenario, cache mode, connection mode, service tier, output directory if known;
+  - progress: warmup/measured counts, active requests, errors;
+  - metric cards/table: HTTP TTFB, provider processing when available, server wait, TTFT delta, E2E delta, e2e TPS, generation-delta TPS, system TPS, RPS;
+  - chart area: TTFT sparkline/histogram or percentile chart depending on pane;
+  - status/error table: HTTP statuses, error categories;
+  - slowest requests list and request waterfall.
+
+- Completion behavior:
+  - after runner finishes, reports should be written while the TUI shows `writing reports...`;
+  - after `report_write_finished`, show the output directory and a `press q to exit` prompt;
+  - if report writing fails, show a clear error and return non-zero after exit.
+
+- Cancellation behavior:
+  - confirmed cancel calls the benchmark context cancel function;
+  - partial records are written when available;
+  - TUI clearly labels the output as partial/canceled;
+  - final process exit code follows task 30's documented interrupted code.
+
+- Terminal behavior:
+  - if `--tui` is requested in a non-interactive environment and Bubble Tea cannot initialize, return a clear error instead of silently falling back;
+  - logs/debug output should use Bubble Tea file logging only when explicitly configured through an environment variable such as `DEBUG` or `WHAT_TTFT_TUI_DEBUG`.
+
+- Tests:
+  - CLI parser accepts `--tui` with existing run flags;
+  - an injected fake TUI launcher receives events and returns success;
+  - fake TUI cancellation cancels context and writes partial reports when records exist;
+  - fake OpenAI run with `--tui` path executes the same provider/runner/report code as non-TUI;
+  - final stdout after TUI exit includes output directory and no API key.
+
+Definition of done:
+
+- `what-ttft run --tui` works against the fake OpenAI server without using provider SDKs.
+- The TUI displays live request progress and final metrics.
+- Non-TUI `run` output remains unchanged except for documented new flags.
+
+---
+
+### [ ] 34. Wire `what-ttft bench --tui` to target-aware live dashboards
+
+Connect the YAML multi-target benchmark path to the same TUI infrastructure with target comparison views.
+
+Files:
+
+- `cmd/what-ttft/bench.go`
+- `internal/tui/app.go`
+- `internal/tui/store.go`
+- `internal/tui/bench_views.go` or equivalent
+- CLI and TUI tests
+
+Implementation details:
+
+- `what-ttft bench --config benchmark.yaml --tui ...` should use the same event bus/TUI launcher path as `run --tui` but show benchmark-level and target-level information.
+- Bench dashboard content:
+  - header: benchmark name, scenario, cache mode, connection mode, target order, output directory;
+  - target list/table: target ID/name, provider, API, service tier, model, status, completed/total, ok/error counts;
+  - comparison table: p50/p95 TTFT, p50/p95 E2E, e2e TPS mean, generation TPS mean, system TPS, RPS;
+  - chart pane: target percentile bars or heatmap-like comparison;
+  - current target detail pane with the same single-run charts when a target is selected;
+  - report-writing and final output status.
+
+- Target navigation:
+  - up/down or `j`/`k`: select target/group row;
+  - enter: drill into selected target details;
+  - esc: return to benchmark overview;
+  - number keys should continue to switch chart panes.
+
+- Event handling:
+  - `benchmark_started` initializes total target/run counts;
+  - `target_started` marks current target;
+  - per-target request events update the correct group using `TargetID` and `RequestID`;
+  - `target_finished` updates target status;
+  - `benchmark_finished` freezes final combined summary;
+  - report events show write status.
+
+- Serial target caveat:
+  - because v0.3 still uses v0.2 serial target execution, the TUI should display `target_order=serial` somewhere in the bench view;
+  - documentation/help should warn that time-of-day/provider-load drift can affect target comparisons.
+
+- Tests:
+  - fake two-target benchmark events produce two target rows;
+  - selected target detail shows only that target's records;
+  - comparison table values match the combined `RunSummary` groups;
+  - target statuses transition pending -> running -> finished;
+  - cancellation during the second target writes partial combined reports and marks incomplete target state;
+  - no API keys appear in final TUI-rendered strings.
+
+Definition of done:
+
+- `what-ttft bench --config ... --tui` displays live target progress and final comparison metrics.
+- Target grouping in the TUI matches `summary.json` grouping.
+- Serial execution limitations are visible to the user.
+
+---
+
+### [ ] 35. Add optional event JSONL CLI output for external consumers
+
+If task 29 only created the sink infrastructure, expose and document event JSONL as a supported CLI feature in this task. If the flag was already fully implemented, use this task to harden tests and docs.
+
+Files:
+
+- `cmd/what-ttft/run.go`
+- `cmd/what-ttft/bench.go`
+- `internal/eventbus/jsonl.go`
+- CLI tests
+
+Command shape:
+
+```sh
+what-ttft run --events-jsonl runs/latest/events.jsonl ...
+what-ttft bench --config benchmark.yaml --events-jsonl runs/latest/events.jsonl
+```
+
+Implementation details:
+
+- Event JSONL should work with and without `--tui`.
+- If both `--tui` and `--events-jsonl` are set, the same event bus should fan out to both consumers.
+- Event JSONL should include report-writing events so external consumers can discover the final output directory.
+- The file should be closed before the process exits.
+- The event JSONL file should not be placed inside the benchmark output directory by default unless the user explicitly chooses that path. This avoids recursively treating events as part of the canonical report schema before the project commits to an `events.jsonl` output file.
+- Add a README warning:
+  - event JSONL is live telemetry and may be best-effort;
+  - `requests.jsonl` and `summary.json` remain canonical for analysis;
+  - per-chunk/generated text is not included in events by default.
+
+- Tests:
+  - run event JSONL has run/request/report events;
+  - bench event JSONL has benchmark/target/request/report events;
+  - events parse into `whatttft.RunEvent`;
+  - event sequence numbers are monotonic within one process;
+  - file is closed/flushed before command returns;
+  - write failures return non-zero;
+  - fake API keys and Authorization headers are absent.
+
+Definition of done:
+
+- External consumers can tail a structured event stream from `run` and `bench` without using Bubble Tea.
+- Event JSONL behavior is tested and documented as non-canonical telemetry.
+
+---
+
+### [ ] 36. Update README and examples for v0.3 live dashboards and events
+
+Document the new user-facing behavior only after `run --tui`, `bench --tui`, and event JSONL behavior exist.
+
+Files:
+
+- `README.md`
+- optionally `examples/README.md` or new docs/examples if helpful
+
+Documentation details:
+
+- Add a section titled `Live terminal dashboard` with:
+  - `what-ttft run --tui ...` example;
+  - `what-ttft bench --config examples/openai-model-compare.yaml --tui` example;
+  - a short explanation that `--tui` is a presentation mode for existing commands, not a separate command group;
+  - terminal requirements and non-interactive behavior;
+  - keyboard shortcuts;
+  - cancellation behavior and partial report behavior.
+
+- Add a section titled `Live event stream` or similar with:
+  - `--events-jsonl PATH` examples for `run` and `bench`;
+  - event kind overview;
+  - warning that event wall times are not metric timings;
+  - warning that event JSONL is live telemetry and `requests.jsonl`/`summary.json` remain canonical;
+  - note that generated chunk content is not emitted by default.
+
+- Update output file docs if partial/canceled reports are now possible:
+  - explain whether partial reports have the same file names;
+  - explain how failures/cancellations appear in request records and summaries;
+  - explain exit codes for cancellation and report-writing failures.
+
+- Add screenshots/asciicasts only if easy and generated from fake data; do not block v0.3 on polished media.
+- Add methodology caveats:
+  - the TUI does not change benchmark timing methodology;
+  - rendering is decoupled from the benchmark runner;
+  - if event drops are possible under extreme load, final reports remain authoritative.
+
+Definition of done:
+
+- README includes copy-paste `--tui` examples for both `run` and `bench`.
+- README documents event JSONL and its limitations.
+- README documents cancellation/partial result behavior.
+
+---
+
+### [ ] 37. Add v0.3 quality gates, TUI model tests, and smoke coverage
+
+Finish the milestone with tests and smoke checks that exercise events and TUI paths without requiring real providers.
+
+Files:
+
+- existing smoke scripts, or new scripts such as:
+  - `scripts/smoke-fake-openai-events.sh`
+  - `scripts/smoke-fake-openai-tui-headless.sh` only if a stable headless TUI mode is implemented
+- README testing instructions
+
+Implementation details:
+
+- Extend fake-server smoke coverage:
+  - run command with `--events-jsonl` against fake OpenAI Responses server;
+  - bench command with `--events-jsonl` against fake OpenAI Responses server;
+  - verify events include run/benchmark, target, request, summary, and report events;
+  - verify event JSONL contains no fake API keys;
+  - verify normal report files are still produced and parseable.
+
+- TUI automated tests should be unit/model tests, not terminal screenshots:
+  - Bubble Tea model update/view tests;
+  - store/chart deterministic tests;
+  - CLI `--tui` path using an injected fake TUI launcher;
+  - cancellation/partial report behavior using fake provider/server.
+
+- If a headless TUI smoke mode is added, keep it clearly internal/test-only and do not expose a confusing public flag unless documented.
+- Run the full local gate before marking v0.3 tasks complete:
+
+  ```sh
+  go test ./...
+  go test -race ./...
+  golangci-lint run
+  go build ./...
+  go run ./cmd/what-ttft run --help
+  go run ./cmd/what-ttft bench --help
+  scripts/smoke-fake-openai.sh
+  scripts/smoke-fake-openai-bench.sh
+  scripts/smoke-fake-openai-events.sh
+  ```
+
+  Add any stable TUI-specific smoke command only after it works reliably in non-interactive CI/local environments.
+
+Definition of done:
+
+- Full local gate passes.
+- Event stream and TUI code have race-detector coverage.
+- Fake-provider smoke tests use no external network.
+- Report files and event files from smoke tests contain no API keys.
+- `implementation-plan.md` v0.3 tasks are marked `[x]` only as they are completed.
+
+---
+
+## Future tasks beyond this v0.3 plan
+
+These are intentionally outside the current v0.3 feature set but should influence design decisions.
 
 ### [ ] Future: additional provider protocols and APIs
 
 After Responses becomes the OpenAI default, keep the provider abstraction ready for other APIs and protocols, including non-OpenAI providers, WebSocket-style realtime APIs, and future multimodal Responses features beyond text-only v0.2 coverage.
+
+### [ ] Future: offline result explorer
+
+Add a non-`tui`-group command shape for exploring completed runs, such as `what-ttft view --tui runs/...` or `what-ttft report --tui runs/...`, after the live `run --tui` and `bench --tui` path is stable. It should read canonical report files rather than requiring live events.
+
+### [ ] Future: interactive benchmark setup wizard
+
+Consider an interactive form mode such as `what-ttft run --tui --interactive` or `what-ttft bench --tui --edit-config` only after the live dashboard is reliable. The wizard should print or save the equivalent reproducible CLI/YAML config before running.
 
 ### [ ] Future: scheduled-rate/open-loop load mode
 
@@ -2217,6 +3114,14 @@ If a provider emits token-level events, store `first_output_token`, `last_output
 ### [ ] Future: richer matrix scheduling and multi-scenario configs
 
 Extend the v0.2 YAML benchmark format beyond one shared scenario to full matrices across scenarios, prompts/datasets, cache modes, connection modes, concurrency levels, and provider-specific options. Add round-robin or randomized target/scenario interleaving so model comparisons are less sensitive to time-of-day and provider-load drift.
+
+### [ ] Future: event-sourced report writing
+
+After the v0.3 event schema has proven stable, evaluate whether report writing should consume the same event stream. Do not make this change until event ordering, backpressure, persistence, and schema-versioning rules are mature enough that canonical `requests.jsonl` output cannot be degraded by live telemetry concerns.
+
+### [ ] Future: opt-in stream/chunk debug events
+
+Add high-volume stream, output-delta, and token events only behind explicit debug flags. Generated text and provider metadata may be sensitive, so these events must have clear redaction/content controls and must never be enabled implicitly by `--tui`.
 
 ### [ ] Future: STT and TTS components
 
