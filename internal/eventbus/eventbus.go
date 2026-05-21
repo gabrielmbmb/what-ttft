@@ -65,13 +65,13 @@ func (b *Bus) OnRunEvent(_ context.Context, event whatttft.RunEvent) {
 		return
 	}
 
-	cloned := event.Clone()
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	if b.closed {
 		return
 	}
 
+	cloned := event.Clone()
 	select {
 	case b.queue <- cloned:
 	default:
