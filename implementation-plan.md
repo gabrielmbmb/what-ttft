@@ -2494,7 +2494,7 @@ Definition of done:
 
 ---
 
-### [ ] 29. Add a bounded asynchronous event bus and optional JSONL event sink for CLI consumers
+### [x] 29. Add a bounded asynchronous event bus and optional JSONL event sink for CLI consumers
 
 The CLI should fan out runner events to the TUI and optional machine-readable logs without letting slow rendering or disk I/O perturb benchmark timing.
 
@@ -2555,6 +2555,14 @@ Implementation details:
   - JSONL sink writes parseable events;
   - JSONL sink propagates write/open errors;
   - fake API keys do not appear in event JSONL when request records and metadata are present.
+
+Implemented details:
+
+- Added `internal/eventbus` with a documented `Sink` interface, `Options`, and `Bus` that implements `whatttft.RunObserver`.
+- Implemented bounded asynchronous fanout with non-blocking `OnRunEvent`, default queue capacity, nil-sink filtering, dropped-event counting, safe close, queue draining, and sink error aggregation.
+- Added `JSONLSink` and `NewJSONLSink` for writing one `whatttft.RunEvent` JSON object per line with 0600 file permissions, parent-directory creation, per-event flushes for live tailing, and parseable event output.
+- Kept CLI flag wiring out of this task; `--events-jsonl` will be added when `run` and `bench` command execution are refactored in the next task.
+- Added tests for multiple sinks, slow-sink non-deadlock behavior, deterministic drops with tiny capacity, close behavior, publish/close errors, JSONL parseability, open/write/closed errors, parent directory creation, and secret non-leakage for already-redacted events.
 
 Definition of done:
 
