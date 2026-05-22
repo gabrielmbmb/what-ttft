@@ -2914,9 +2914,157 @@ Definition of done:
 
 ---
 
+### [ ] 33.5. Redesign the live TUI as a full-screen realtime chart dashboard
+
+The first wired TUI is functional but not the desired UX. Before wiring `bench --tui`, redesign the dashboard so `run --tui` and future `bench --tui` share a full-screen chart-first layout.
+
+User-facing target shape:
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ what-ttft  provider=openai api=responses model=gpt-x scenario=short running  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ LIVE CHART AREA                                                              │
+│                                                                              │
+│ run --tui:                                                                    │
+│   TTFT over request order        E2E over request order                       │
+│   TTFT histogram                 slowest-request waterfall                    │
+│                                                                              │
+│ bench --tui later:                                                            │
+│   target comparison table        target percentile bars                       │
+│   selected/current target charts                                             │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ METRICS PANEL (always visible, pinned to bottom)                             │
+│ metric                          count      p50      p95      p99      mean   │
+│ http_ttfb_ms                    12         ...      ...      ...      ...    │
+│ ttft_delta_ms                   12         ...      ...      ...      ...    │
+│ e2e_delta_ms                    12         ...      ...      ...      ...    │
+│ e2e_output_tps                  12         ...      ...      ...      ...    │
+│ generation_delta_output_tps     8          ...      ...      ...      ...    │
+│ system_tps=... rps=... active=... ok=... err=... reports=... output=...      │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Architecture requirements:
+
+- Keep the existing event flow:
+  - runners emit `whatttft.RunEvent` values;
+  - CLI code fans events through `internal/eventbus`;
+  - `internal/tui.EventSink` forwards cloned events into the TUI channel;
+  - the TUI model consumes events and renders state.
+- Do **not** move benchmark execution, provider requests, or report writing into `internal/tui`.
+- Do **not** use event wall-clock times for metric math. Charts and metric panels must use completed `RequestRecord` timelines, derived metrics, and `whatttft.Summarize` results.
+- Realtime updates are request-completion realtime in v0.3:
+  - update charts on `request_finished` and `summary_updated` events;
+  - do not emit or display per-chunk/per-token charts unless a future explicit debug event stream is added;
+  - label visible-output/delta cadence correctly and never call chunk timing token ITL/TPOT.
+- The TUI must use the maximum width and height reported by `tea.WindowSizeMsg`:
+  - render into a deterministic root canvas sized to `width x height` when both are positive;
+  - preserve meaningful output for tiny terminals by truncating/omitting lower-priority content;
+  - never let rendered lines exceed the available width in normal layouts;
+  - use all available vertical space by allocating extra rows to the chart area.
+- Layout should be centralized and testable. Add layout primitives/types such as:
+
+  ```go
+  type layoutBox struct {
+      Width  int
+      Height int
+  }
+
+  type dashboardLayout struct {
+      Root    layoutBox
+      Header  layoutBox
+      Charts  layoutBox
+      Metrics layoutBox
+      Footer  layoutBox
+  }
+  ```
+
+  Exact names may differ, but layout math should be separated from chart rendering so it can be unit tested.
+- Prefer a single full-screen dashboard over pane-first navigation:
+  - charts are visible by default while the run is active;
+  - number keys may switch chart emphasis/detail, but the default screen must already contain charts and metrics;
+  - the bottom metrics panel remains visible across chart/detail modes.
+- Add pure render helpers under `internal/tui`, for example:
+
+  ```go
+  func renderHeader(store liveStore, width int) string
+  func renderChartArea(store liveStore, width int, height int, mode dashboardMode) string
+  func renderRunCharts(store liveStore, width int, height int) string
+  func renderMetricsPanel(store liveStore, width int, height int) string
+  func fitToBox(content string, width int, height int) string
+  func joinVerticalToHeight(sections []string, width int, height int) string
+  ```
+
+  Exact signatures may differ, but each helper should be deterministic and unit-testable without a terminal.
+- The metrics panel should be a stable table pinned to the bottom, not a pane:
+  - include `http_ttfb_ms`, `provider_processing_ms` when available, `server_wait_to_first_byte_ms`, `ttft_delta_ms`, `e2e_delta_ms`, `e2e_output_tps`, and `generation_delta_output_tps`;
+  - include group-level `system_tps` and `rps` when available;
+  - include active, completed, successful, error, HTTP status, and error-category counts;
+  - show unavailable values as `-`, never `0` unless the metric is truly observed as zero;
+  - include units in headers or row labels (`ms`, `tokens/s`, `req/s`).
+- Run dashboard chart area should include, at minimum:
+  - TTFT sparkline over successful measured request order;
+  - E2E sparkline over successful measured request order;
+  - TTFT histogram or percentile bars when enough values exist;
+  - slowest-request waterfall when a successful request has timeline phases;
+  - a clear empty-state message before the first measured request completes.
+- Bench dashboard support can be completed in task 34, but this task should shape the reusable layout so bench charts can occupy the same chart area and metrics panel.
+- Styling:
+  - use Lip Gloss for borders, titles, and low-priority text;
+  - keep content understandable without color;
+  - avoid excessive animation/ticks; request-completion events are enough for v0.3.
+- Keyboard behavior after redesign:
+  - `?`: toggle help overlay/footer;
+  - `1`: default dashboard;
+  - `2`: focus TTFT charts while keeping metrics panel visible;
+  - `3`: focus E2E/TPS charts while keeping metrics panel visible;
+  - `4`: focus slowest-request waterfall while keeping metrics panel visible;
+  - `q`/`ctrl+c`: open cancellation confirmation while running; quit immediately after completion;
+  - `esc`: close help/detail/confirmation overlay.
+
+Implementation notes:
+
+- Existing chart renderers in `internal/tui/charts` can be reused, but may need width/height-aware variants or wrappers.
+- Existing `liveStore.MetricRows`, `SlowestRequests`, `Groups`, and `StatusCounts` should be extended rather than replaced.
+- Consider adding `store.RunSeries(metricName)` helpers that return successful measured request values in completion/order-safe order.
+- The root `View()` should be a thin composition function: calculate layout, render header/charts/metrics/footer, fit to terminal size, return `tea.View{AltScreen: true}`.
+- Keep `MouseMode` disabled unless mouse interaction is actually implemented.
+
+Tests:
+
+- Layout tests:
+  - `WindowSizeMsg{Width: 100, Height: 30}` produces a rendered view with no line wider than 100 and enough lines to use the available height;
+  - tiny sizes such as `40x10` render without panic and include at least status/progress/metrics;
+  - extra height is allocated to the chart area, not lost.
+- Run dashboard tests:
+  - default `run --tui` view contains chart labels without pressing number keys;
+  - after feeding request-finished events, TTFT/E2E chart text changes;
+  - before any request completes, the chart area shows a clear empty state;
+  - metrics panel is present at the bottom in default, TTFT, E2E/TPS, and waterfall modes.
+- Store/view-model tests:
+  - metric rows distinguish missing values from observed zero;
+  - status/error counts are reflected in the metrics panel;
+  - no prompt text, API key, Authorization header, or chunk content appears in rendered strings.
+- CLI tests:
+  - existing fake TUI launcher tests remain valid;
+  - non-TUI `run` output remains unchanged.
+
+Definition of done:
+
+- `run --tui` opens to a full-screen chart dashboard by default.
+- The dashboard uses the available terminal width/height and keeps a metrics panel pinned at the bottom.
+- Charts and metrics update as measured requests finish.
+- The layout/rendering code has deterministic unit tests and does not require a real terminal.
+- Metric labels preserve the project's terminology discipline.
+
+---
+
 ### [ ] 34. Wire `what-ttft bench --tui` to target-aware live dashboards
 
-Connect the YAML multi-target benchmark path to the same TUI infrastructure with target comparison views.
+Connect the YAML multi-target benchmark path to the same TUI infrastructure with target comparison views. This should build on the full-screen chart-first layout from task 33.5 rather than reintroducing pane-first rendering.
 
 Files:
 
