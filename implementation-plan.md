@@ -2914,7 +2914,7 @@ Definition of done:
 
 ---
 
-### [ ] 33.5. Redesign the live TUI as a full-screen realtime chart dashboard
+### [x] 33.5. Redesign the live TUI as a full-screen realtime chart dashboard
 
 The first wired TUI is functional but not the desired UX. Before wiring `bench --tui`, redesign the dashboard so `run --tui` and future `bench --tui` share a full-screen chart-first layout.
 
@@ -3051,6 +3051,17 @@ Tests:
 - CLI tests:
   - existing fake TUI launcher tests remain valid;
   - non-TUI `run` output remains unchanged.
+
+Implemented details:
+
+- Added a centralized dashboard layout model with root/header/chart/metrics boxes and deterministic width/height allocation from `tea.WindowSizeMsg`.
+- Reworked the root TUI view to render a full-screen dashboard that fits exactly within the reported terminal size when dimensions are available.
+- Made the default `run --tui` screen chart-first: TTFT and E2E sparklines are visible by default, alongside TTFT histograms and slowest-request waterfall previews when data exists.
+- Kept focused chart modes for `1` dashboard, `2` TTFT, `3` E2E/TPS, and `4` waterfall while keeping the metrics panel pinned at the bottom in all modes.
+- Rebuilt the metrics panel as a bottom-pinned table with p50/p95/p99/mean, units, `http_ttfb_ms`, `provider_processing_ms`, `server_wait_to_first_byte_ms`, `ttft_delta_ms`, `e2e_delta_ms`, `e2e_output_tps`, `generation_delta_output_tps`, system TPS, RPS, progress, status codes, error categories, report status, and output directory.
+- Added width/height fitting helpers that truncate/pad rendered content by visible width, preserve useful tiny-terminal output, and allocate extra vertical space to the chart area.
+- Added `liveStore.RunSeries` and p99 metric-row support so chart renderers and the metrics table consume successful measured request values in request-completion order.
+- Added layout/dashboard tests for exact terminal dimensions, tiny terminals, chart-area growth, default chart visibility, realtime request-finished updates, bottom metrics persistence across modes, missing-vs-zero metrics, and rendered-secret avoidance.
 
 Definition of done:
 

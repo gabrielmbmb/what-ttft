@@ -5,13 +5,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gabrielmbmb/what-ttft/internal/tui/charts"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 type pane int
@@ -164,106 +162,22 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) render() string {
-	progress := m.store.progress()
-	status := m.renderStatus()
-	if m.confirmingCancel {
-		status = m.styles.error.Render("Cancel the running benchmark? Press y to confirm or n/esc to continue.")
-	}
-
-	sections := []string{
-		m.renderHeader(),
-		m.styles.section.Render(fmt.Sprintf(
-			"progress: %d/%d completed  active=%d  ok=%d  err=%d  warmup=%d measured=%d",
-			progress.Completed,
-			progress.Total,
-			progress.Active,
-			progress.Successful,
-			progress.Errors,
-			progress.Warmup,
-			progress.Measured,
-		)),
-		m.styles.section.Render(m.renderPane()),
-		status,
-	}
-	if m.store.reportStatus != "" {
-		sections = append(sections, m.styles.muted.Render("reports: "+m.store.reportStatus))
-	}
-	if m.store.outputDir != "" {
-		sections = append(sections, m.styles.muted.Render("output: "+m.store.outputDir))
-	}
-	sections = append(sections, m.help.View(m.keys))
-
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
-}
-
-func (m model) renderHeader() string {
-	name := firstNonEmpty(m.store.benchmarkName, m.store.scenarioName, "what-ttft")
-	parts := []string{m.styles.title.Render("what-ttft"), m.styles.muted.Render(name)}
-	if m.store.currentTarget() != "-" {
-		parts = append(parts, "target="+m.store.currentTarget())
-	}
-	if m.store.provider != "" || m.store.model != "" {
-		parts = append(parts, strings.TrimSpace(m.store.provider+" "+m.store.model))
-	}
-	if m.width > 0 && m.height > 0 {
-		parts = append(parts, fmt.Sprintf("%dx%d", m.width, m.height))
-	}
-
-	return strings.Join(parts, "  ")
-}
-
-func (m model) renderPane() string {
-	width := m.contentWidth()
-	switch m.pane {
-	case paneTTFT:
-		values := m.store.metricValues(metricTTFTDeltaMS)
-		return lipgloss.JoinVertical(lipgloss.Left,
-			"ttft_delta_ms over request order",
-			charts.Sparkline(values, width),
-			charts.Histogram(values, 8, width),
-		)
-	case paneE2E:
-		values := m.store.metricValues(metricE2EDeltaMS)
-		return lipgloss.JoinVertical(lipgloss.Left,
-			"e2e_delta_ms over request order",
-			charts.Sparkline(values, width),
-			renderMetricRows(m.store.MetricRows()),
-		)
-	case paneWaterfall:
-		slowest := m.store.SlowestRequests(1)
-		if len(slowest) == 0 {
-			return "slowest-request waterfall\n(no successful requests with waterfall metrics)"
-		}
-		return "slowest request " + slowest[0].RequestID + " " + slowest[0].MetricName + "\n" + charts.Waterfall(slowest[0].Record, width)
-	default:
-		return lipgloss.JoinVertical(lipgloss.Left,
-			fmt.Sprintf("summary pane  focus=%d  records=%d  target=%s", m.focus, len(m.store.records), m.store.currentTarget()),
-			renderMetricRows(m.store.MetricRows()),
-			renderStatusCounts(m.store.StatusCounts()),
-			charts.TargetTable(m.store.Groups(), width),
-		)
-	}
-}
-
-func (m model) contentWidth() int {
-	if m.width <= 4 {
-		return 80
-	}
-	return m.width - 4
+	return renderDashboard(m)
 }
 
 func renderMetricRows(rows []metricRow) string {
 	var builder strings.Builder
-	builder.WriteString("metric                         count  p50       p95       mean")
+	builder.WriteString("metric                         count  p50       p95       p99       mean")
 	for _, row := range rows {
 		builder.WriteByte('\n')
 		fmt.Fprintf(
 			&builder,
-			"%-30s %5d  %-8s %-8s %-8s %s",
+			"%-30s %5d  %-8s %-8s %-8s %-8s %s",
 			row.Name,
 			row.Count,
 			formatMetricValue(row.P50),
 			formatMetricValue(row.P95),
+			formatMetricValue(row.P99),
 			formatMetricValue(row.Mean),
 			row.Unit,
 		)
@@ -276,13 +190,6 @@ func formatMetricValue(value *float64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.1f", *value)
-}
-
-func renderStatusCounts(counts statusCounts) string {
-	if len(counts.ErrorCategories) == 0 && len(counts.StatusCodes) == 0 {
-		return "statuses: -  errors: -"
-	}
-	return "statuses: " + formatStringIntMap(counts.StatusCodes) + "  errors: " + formatStringIntMap(counts.ErrorCategories)
 }
 
 func formatStringIntMap(values map[string]int) string {
@@ -301,28 +208,6 @@ func formatStringIntMap(values map[string]int) string {
 	return strings.Join(parts, ",")
 }
 
-func (m model) renderStatus() string {
-	if m.failed {
-		return m.styles.error.Render("status: error " + m.store.lastError)
-	}
-	if m.canceled {
-		return m.styles.error.Render("status: canceled")
-	}
-	if m.completed {
-		return m.styles.status.Render("status: completed; press q to exit")
-	}
-	if m.running {
-		return m.styles.status.Render("status: running")
-	}
-	if m.channelClosed {
-		return m.styles.muted.Render("status: event stream closed")
-	}
-	if m.store.status != "" {
-		return m.styles.status.Render("status: " + m.store.status)
-	}
-	return m.styles.muted.Render("status: waiting for benchmark events")
-}
-
 func (m model) windowTitle() string {
 	if m.store.benchmarkName != "" {
 		return "what-ttft - " + m.store.benchmarkName
@@ -331,13 +216,4 @@ func (m model) windowTitle() string {
 		return "what-ttft - " + m.store.model
 	}
 	return "what-ttft"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

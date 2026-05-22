@@ -10,6 +10,7 @@ import (
 
 const (
 	metricHTTPTTFBMS                    = "http_ttfb_ms"
+	metricProviderProcessingMS          = "provider_processing_ms"
 	metricTTFTDeltaMS                   = "ttft_delta_ms"
 	metricE2EDeltaMS                    = "e2e_delta_ms"
 	metricStreamTotalMS                 = "stream_total_ms"
@@ -221,9 +222,10 @@ func (s liveStore) Groups() []whatttft.SummaryGroup {
 func (s liveStore) MetricRows() []metricRow {
 	return []metricRow{
 		metricRowFromValues(metricHTTPTTFBMS, "ms", s.metricValues(metricHTTPTTFBMS)),
+		metricRowFromValues(metricProviderProcessingMS, "ms", s.metricValues(metricProviderProcessingMS)),
+		metricRowFromValues(metricServerWaitToFirstByteMS, "ms", s.metricValues(metricServerWaitToFirstByteMS)),
 		metricRowFromValues(metricTTFTDeltaMS, "ms", s.metricValues(metricTTFTDeltaMS)),
 		metricRowFromValues(metricE2EDeltaMS, "ms", s.metricValues(metricE2EDeltaMS)),
-		metricRowFromValues(metricServerWaitToFirstByteMS, "ms", s.metricValues(metricServerWaitToFirstByteMS)),
 		metricRowFromValues(metricE2EOutputTPS, "tokens/s", s.metricValues(metricE2EOutputTPS)),
 		metricRowFromValues(metricGenerationDeltaOutputTPS, "tokens/s", s.metricValues(metricGenerationDeltaOutputTPS)),
 	}
@@ -328,6 +330,11 @@ func measuredOutcomeCounts(records []whatttft.RequestRecord) (int, int) {
 	return successful, errors
 }
 
+// RunSeries returns successful measured request metric values in completion order.
+func (s liveStore) RunSeries(name string) []float64 {
+	return s.metricValues(name)
+}
+
 func (s liveStore) metricValues(name string) []float64 {
 	var values []float64
 	for _, record := range s.completedRecords() {
@@ -356,6 +363,7 @@ type metricRow struct {
 	Count int
 	P50   *float64
 	P95   *float64
+	P99   *float64
 	Mean  *float64
 }
 
@@ -380,6 +388,7 @@ func metricRowFromValues(name string, unit string, values []float64) metricRow {
 		Count: distribution.Count,
 		P50:   copyFloat64Pointer(distribution.P50),
 		P95:   copyFloat64Pointer(distribution.P95),
+		P99:   copyFloat64Pointer(distribution.P99),
 		Mean:  copyFloat64Pointer(distribution.Mean),
 	}
 }
@@ -401,6 +410,8 @@ func metricValue(record whatttft.RequestRecord, name string) *float64 {
 	switch name {
 	case metricHTTPTTFBMS:
 		return record.Derived.HTTPTTFBMS
+	case metricProviderProcessingMS:
+		return record.HTTP.ProviderProcessingMS
 	case metricTTFTDeltaMS:
 		return record.Derived.TTFTDeltaMS
 	case metricE2EDeltaMS:

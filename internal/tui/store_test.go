@@ -123,7 +123,7 @@ func TestLiveStoreMetricRows(t *testing.T) {
 	}
 
 	rows := store.MetricRows()
-	if len(rows) == 0 || rows[1].Name != metricTTFTDeltaMS || rows[1].Count != 2 || rows[1].P50 == nil || *rows[1].P50 != 10 {
+	if len(rows) == 0 || rows[3].Name != metricTTFTDeltaMS || rows[3].Count != 2 || rows[3].P50 == nil || *rows[3].P50 != 10 {
 		t.Fatalf("metric rows = %#v, want ttft count 2 p50 10", rows)
 	}
 }
