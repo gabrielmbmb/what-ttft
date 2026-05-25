@@ -55,7 +55,7 @@ func TestDashboardWideOverviewContainsFourPanels(t *testing.T) {
 	app = updateModel(t, app, tea.WindowSizeMsg{Width: 140, Height: 36})
 	content := app.View().Content
 
-	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Slowest request waterfall"} {
+	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("wide dashboard missing %q:\n%s", want, content)
 		}
@@ -90,13 +90,16 @@ func TestDashboardDefaultShowsCharts(t *testing.T) {
 	app := dashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "waterfall ms", "METRICS", "metric (successful measured reqs)", "p50", "p95", "p99", "mean"} {
+	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "tokens/s", "METRICS", "metric (successful measured reqs)", "p50", "p95", "p99", "mean"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, content)
 		}
 	}
 	if strings.Contains(content, "METRICS (p50/p95/p99/mean)") {
 		t.Fatalf("metrics panel title should not describe table columns:\n%s", content)
+	}
+	if strings.Contains(content, "Slowest request waterfall") || strings.Contains(content, "waterfall ms") {
+		t.Fatalf("overview should show TPS chart instead of waterfall panel:\n%s", content)
 	}
 }
 

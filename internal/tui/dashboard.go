@@ -110,7 +110,7 @@ func renderDashboardHeader(m model, width int, height int, theme tuiTheme) strin
 		progressBar(progress.Completed, progress.Total, progressWidth, theme) + fmt.Sprintf("  active=%d  ok=%d  err=%d  warmup=%d  measured=%d", progress.Active, progress.Successful, progress.Errors, progress.Warmup, progress.Measured),
 	}
 	if height >= 4 {
-		bodyLines = append(bodyLines, legend([]legendItem{{Label: "ttft_delta_ms", Role: roleChartTTFT}, {Label: "e2e_delta_ms", Role: roleChartE2E}, {Label: "tokens/s", Role: roleChartTPS}, {Label: "waterfall", Role: roleChartWaterfall}}, theme))
+		bodyLines = append(bodyLines, legend([]legendItem{{Label: "ttft_delta_ms", Role: roleChartTTFT}, {Label: "e2e_delta_ms", Role: roleChartE2E}, {Label: "TTFT histogram", Role: roleChartTTFT}, {Label: "e2e_output_tps", Role: roleChartTPS}}, theme))
 	}
 	return panel("what-ttft run", strings.Join(bodyLines, "\n"), width, height, theme, roleAccent)
 }
@@ -186,7 +186,7 @@ func renderWideOverview(store liveStore, width int, height int, theme tuiTheme) 
 	)
 	bottom := joinColumnsWithGap(
 		renderDistributionPanel(store, leftWidth, bottomHeight, theme),
-		renderWaterfallPanel(store, rightWidth, bottomHeight, theme),
+		renderTPSChartPanel(store, rightWidth, bottomHeight, theme),
 		width,
 		bottomHeight,
 		gap,
@@ -207,7 +207,7 @@ func renderMediumOverview(store liveStore, width int, height int, theme tuiTheme
 		)
 		bottom := joinColumnsWithGap(
 			renderDistributionPanel(store, (width-1)/2, bottomHeight, theme),
-			renderWaterfallPanel(store, width-1-(width-1)/2, bottomHeight, theme),
+			renderTPSChartPanel(store, width-1-(width-1)/2, bottomHeight, theme),
 			width,
 			bottomHeight,
 			1,
@@ -229,8 +229,8 @@ func renderMediumOverview(store liveStore, width int, height int, theme tuiTheme
 	}
 	if remaining > 0 {
 		if remaining >= 5 {
-			waterfallHeight := min(remaining-1, max(4, remaining/2))
-			sections = append(sections, renderDistributionPanel(store, width, remaining-waterfallHeight, theme), renderWaterfallPanel(store, width, waterfallHeight, theme))
+			tpsHeight := min(remaining-1, max(4, remaining/2))
+			sections = append(sections, renderDistributionPanel(store, width, remaining-tpsHeight, theme), renderTPSChartPanel(store, width, tpsHeight, theme))
 		} else {
 			sections = append(sections, renderDistributionPanel(store, width, remaining, theme))
 		}
@@ -300,6 +300,17 @@ func renderDistributionPanel(store liveStore, width int, height int, theme tuiTh
 		EmptyLabel: "waiting for first successful measured request",
 	}, theme.chartTheme(roleChartTTFT))
 	return panel("TTFT distribution · histogram", body, width, height, theme, roleChartTTFT)
+}
+
+func renderTPSChartPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderSeriesChart(store.RunSeries(metricE2EOutputTPS), charts.SeriesChartOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Title:      metricE2EOutputTPS,
+		Unit:       "tokens/s",
+		EmptyLabel: "TPS unavailable: provider usage not reported",
+	}, theme.chartTheme(roleChartTPS))
+	return panel("Output TPS trend · e2e_output_tps", body, width, height, theme, roleChartTPS)
 }
 
 func renderTPSPanel(store liveStore, width int, height int, theme tuiTheme) string {
