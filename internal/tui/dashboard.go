@@ -50,10 +50,10 @@ func calculateDashboardLayout(width int, height int, helpVisible bool) dashboard
 	}
 
 	headerHeight := 4
-	metricsHeight := 12
+	metricsHeight := 13
 	if width < wideDashboardWidth || height < wideDashboardHeight {
 		headerHeight = 3
-		metricsHeight = 12
+		metricsHeight = 13
 	}
 	if width < mediumDashboardWidth || height < mediumDashboardHeight {
 		headerHeight = 2
@@ -344,7 +344,7 @@ func renderMetricsPanel(store liveStore, width int, height int, helpVisible bool
 		return ""
 	}
 	body := renderMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), helpVisible, status, confirmingCancel)
-	return panel("METRICS (p50/p95/p99/mean)", body, width, height, theme, roleAccent)
+	return panel("METRICS", body, width, height, theme, roleAccent)
 }
 
 func renderMetricsBody(store liveStore, width int, height int, helpVisible bool, status string, confirmingCancel bool) string {
@@ -359,9 +359,9 @@ func renderMetricsBody(store liveStore, width int, height int, helpVisible bool,
 		return renderCompactMetricsBody(store, width, height, helpVisible, status)
 	}
 
-	metricLines := []string{"metric                         count  p50       p95       p99       mean      unit"}
+	metricLines := []string{fmt.Sprintf("%-36s %5s  %-8s %-8s %-8s %-8s %s", "metric (successful measured reqs)", "count", "p50", "p95", "p99", "mean", "unit")}
 	for _, row := range orderedMetricRowsForPanel(store.MetricRows()) {
-		metricLines = append(metricLines, fmt.Sprintf("%-30s %5d  %-8s %-8s %-8s %-8s %s", row.Name, row.Count, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean), row.Unit))
+		metricLines = append(metricLines, fmt.Sprintf("%-36s %5d  %-8s %-8s %-8s %-8s %s", row.Name, row.Count, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean), row.Unit))
 	}
 	footerLines := metricsFooterLines(store, helpVisible, status)
 	lines := fitMetricsLines(metricLines, footerLines, height)
@@ -411,11 +411,6 @@ func fitMetricsLines(metricLines []string, footerLines []string, height int) []s
 	metricBudget := height - len(footerLines)
 	if metricBudget > len(metricLines) {
 		metricBudget = len(metricLines)
-	}
-	if metricBudget == len(metricLines)-1 {
-		lines := append([]string(nil), metricLines[1:]...)
-		lines = append(lines, footerLines...)
-		return lines
 	}
 	lines := append([]string(nil), metricLines[:metricBudget]...)
 	lines = append(lines, footerLines...)

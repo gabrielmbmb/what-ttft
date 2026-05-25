@@ -90,10 +90,13 @@ func TestDashboardDefaultShowsCharts(t *testing.T) {
 	app := dashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "waterfall ms", "METRICS (p50/p95/p99/mean)"} {
+	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "waterfall ms", "METRICS", "metric (successful measured reqs)", "p50", "p95", "p99", "mean"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "METRICS (p50/p95/p99/mean)") {
+		t.Fatalf("metrics panel title should not describe table columns:\n%s", content)
 	}
 }
 
@@ -120,8 +123,8 @@ func TestMetricsPanelPinnedAcrossModes(t *testing.T) {
 		app := dashboardAppWithRecords(t)
 		app.pane = mode
 		content := app.View().Content
-		bottom := bottomLines(content, 12)
-		if !strings.Contains(bottom, "METRICS (p50/p95/p99/mean)") || !strings.Contains(bottom, "keys:") {
+		bottom := bottomLines(content, 13)
+		if !strings.Contains(bottom, "METRICS") || !strings.Contains(bottom, "metric (successful measured reqs)") || !strings.Contains(bottom, "keys:") {
 			t.Fatalf("mode %d bottom metrics panel missing:\n%s", mode, bottom)
 		}
 	}
