@@ -3073,9 +3073,195 @@ Definition of done:
 
 ---
 
-### [ ] 34. Wire `what-ttft bench --tui` to target-aware live dashboards
+### [ ] 33.6. Create a polished TUI design system and ntcharts-backed chart architecture
 
-Connect the YAML multi-target benchmark path to the same TUI infrastructure with target comparison views. This should build on the full-screen chart-first layout from task 33.5 rather than reintroducing pane-first rendering.
+The full-screen dashboard from task 33.5 fixes the rough layout, but it is still visually utilitarian. Before expanding `bench --tui`, do a deliberate UI/UX design pass so every visible element has a job, charts feel like real terminal charts, and the dashboard can scale from small laptops to large terminals.
+
+Decision: use `github.com/NimbleMarkets/ntcharts/v2` for the main chart primitives when implementation starts. It supports Bubble Tea v2 import paths, has canvas/line/bar/heatmap/time-series primitives, and produces substantially richer terminal charts than our hand-rolled ASCII charts. Because ntcharts notes that its v2 API can still change, isolate it behind `internal/tui/charts` adapters so the rest of the TUI never imports ntcharts directly. Do not add ntcharts to `go.mod` until the implementation imports it, so `go mod tidy` remains clean.
+
+Design principles:
+
+- **Glanceable hierarchy:** the user should understand run health in under two seconds: status, progress, TTFT trend, E2E trend, errors, and output path.
+- **Evidence over decoration:** charts should be beautiful but still map directly to recorded request metrics. Avoid meaningless animation or smoothing that hides outliers.
+- **Charts first, table second:** the main body is visual; dense metric tables are pinned at the bottom as supporting evidence.
+- **No hidden methodology:** chart titles and legends must use exact metric names and units (`ttft_delta_ms`, `e2e_delta_ms`, `tokens/s`, `req/s`). Never label chunks/deltas as token ITL/TPOT.
+- **Stable under resize:** layout changes should feel intentional at large, medium, and small sizes; no accidental wrapping, ragged boxes, or clipped labels unless terminal size forces truncation.
+- **Accessible without color:** color should reinforce meaning, not carry the only signal. Use symbols, labels, and ordering that remain understandable in no-color terminals.
+- **No secrets:** rendered strings must never include API keys, Authorization headers, prompt text, generated chunk content, or provider metadata maps that may contain sensitive values.
+
+Visual architecture:
+
+```text
+┌ what-ttft ─ provider=openai ─ model=gpt-x ─ scenario=short ─ cache=cache-bust ┐
+│ RUNNING  elapsed=00:01:18  samples=17/50  active=1  ok=17  err=0  tier=default │
+├───────────────────────────────┬──────────────────────────────────────────────┤
+│ TTFT delta ms                  │ E2E delta ms                                 │
+│  p50 312  p95 451  max 610    │  p50 980  p95 1300  max 1601                │
+│  ntcharts line/stream chart    │  ntcharts line/stream chart                 │
+│  y-axis ms, x=request order    │  y-axis ms, x=request order                 │
+├───────────────────────────────┼──────────────────────────────────────────────┤
+│ TTFT distribution              │ Slowest request waterfall                    │
+│  ntcharts bar/histogram        │  DNS/TCP/TLS/write/server-wait/stream/decode │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ METRICS (p50/p95/p99/mean)                                                │
+│ http_ttfb_ms ...  ttft_delta_ms ...  e2e_delta_ms ...  e2e_output_tps ... │
+│ generation_delta_output_tps ...  system_tps ...  rps ...  statuses/errors │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Responsive layout breakpoints:
+
+1. **Wide terminals (`width >= 120`, `height >= 32`)**
+   - Header: two compact lines.
+   - Body: 2x2 grid.
+     - top-left: TTFT line/stream chart;
+     - top-right: E2E line/stream chart;
+     - bottom-left: TTFT distribution/percentile bars;
+     - bottom-right: slowest-request waterfall/status detail.
+   - Bottom metrics panel: 7-10 rows depending on height.
+2. **Medium terminals (`80 <= width < 120` or `20 <= height < 32`)**
+   - Header: one or two lines depending on available height.
+   - Body: stacked chart sections with TTFT and E2E first; distribution/waterfall can rotate by focus mode.
+   - Bottom metrics panel remains visible, compressed to key rows plus status line.
+3. **Small terminals (`width < 80` or `height < 20`)**
+   - Header: status/progress only.
+   - Body: one primary chart selected by mode, with clear empty state when no data exists.
+   - Bottom metrics panel: compact rows for TTFT, E2E, TPS, ok/err, and output/report status.
+
+Chart architecture:
+
+- Add an ntcharts-backed adapter layer under `internal/tui/charts`, for example:
+
+  ```go
+  type Theme struct { ... }
+  type SeriesPoint struct { Index int; Value float64 }
+  type SeriesChartOptions struct { Width, Height int; Title, Unit string; ColorRole string }
+
+  func RenderSeriesChart(values []float64, opts SeriesChartOptions, theme Theme) string
+  func RenderHistogramChart(values []float64, opts HistogramOptions, theme Theme) string
+  func RenderPercentileChart(groups []PercentileGroup, opts PercentileOptions, theme Theme) string
+  func RenderWaterfallChart(record whatttft.RequestRecord, opts WaterfallOptions, theme Theme) string
+  ```
+
+  Exact names may differ, but the rest of `internal/tui` should depend on our wrappers, not ntcharts model types.
+- Use ntcharts `linechart`/`streamlinechart` for TTFT and E2E request-order series:
+  - X axis is successful measured request order, not wall time;
+  - Y axis is milliseconds;
+  - outliers remain visible; do not clip unless the chart explicitly labels clipping;
+  - use Braille/line drawing when terminal size supports it, fallback to sparkline for tiny boxes.
+- Use ntcharts `barchart` or `canvas` for distributions:
+  - TTFT histogram with bins labelled in ms;
+  - or p50/p90/p95/p99 lollipop/bars when sample size is too small for meaningful histogram bins.
+- Keep the waterfall renderer custom unless ntcharts provides a better fit:
+  - phases are categorical durations rather than continuous series;
+  - labels must use project terminology (`server wait to first byte`, `stream protocol to first output`, `visible-generation deltas`).
+- Keep existing pure string chart functions as fallbacks and for tests where ntcharts output may be too brittle.
+
+Theme/design system:
+
+- Add `internal/tui/theme.go` with semantic roles instead of ad-hoc colors:
+  - `Accent`, `Good`, `Warn`, `Bad`, `Muted`, `Border`, `ChartTTFT`, `ChartE2E`, `ChartTPS`, `ChartWaterfall`, `Background`.
+- Add `internal/tui/components.go` or equivalent for reusable components:
+  - `panel(title, body, width, height, styleRole)`;
+  - `metricCard(label, value, unit, severity)`;
+  - `statusPill(status)`;
+  - `progressBar(completed, total, width)`;
+  - `legend(items...)`.
+- Severity rules:
+  - errors > 0 uses warning/bad styling;
+  - request failures and report-write errors use bad styling;
+  - no data uses muted empty-state styling;
+  - successful completion uses good styling.
+- Make color disable-friendly:
+  - when `NO_COLOR` or an explicit future `--no-color` is set, styles should remove color while preserving borders/text.
+
+Dashboard content rules:
+
+- Header must show:
+  - command mode (`run` now, `bench` later);
+  - provider/API/model/scenario;
+  - cache mode, connection mode, service tier if known;
+  - status pill (`running`, `writing reports`, `completed`, `canceled`, `error`);
+  - progress (`completed/total`, active, ok, err).
+- Main chart area for `run --tui` must show by default:
+  - TTFT trend chart;
+  - E2E trend chart;
+  - TTFT distribution/percentile chart;
+  - slowest-request waterfall or an actionable empty state.
+- Bottom metrics panel must show:
+  - `http_ttfb_ms`, `provider_processing_ms` when available, `server_wait_to_first_byte_ms`, `ttft_delta_ms`, `e2e_delta_ms`, `e2e_output_tps`, `generation_delta_output_tps`;
+  - p50/p95/p99/mean with unavailable values as `-`;
+  - `system_tps` and `rps`;
+  - HTTP status counts and error categories;
+  - report status and output directory when known.
+- Empty states must be specific:
+  - before first measured success: `waiting for first successful measured request`;
+  - no usage tokens: `TPS unavailable: provider usage not reported`;
+  - no waterfall phases: `waterfall unavailable: timeline events missing`.
+
+Interaction model:
+
+- Default screen is non-interactive and useful immediately.
+- Keybindings remain simple:
+  - `?` toggles help;
+  - `1` overview;
+  - `2` TTFT focus;
+  - `3` E2E/TPS focus;
+  - `4` waterfall/slowest request focus;
+  - `q`/`ctrl+c` asks for cancel confirmation while running and quits after completion;
+  - `esc` closes help/detail/confirmation.
+- Do not enable mouse support in v0.3 unless there is a concrete interaction. ntcharts can work without mouse support for static charts.
+
+Implementation steps:
+
+1. Add ntcharts dependency when first used:
+
+   ```sh
+   go get github.com/NimbleMarkets/ntcharts/v2
+   ```
+
+2. Add `internal/tui/theme.go` and tests for color/no-color semantic styles.
+3. Add `internal/tui/layout.go` or expand `dashboard.go` to use named panels/cards instead of raw text joins.
+4. Replace current chart wrappers with ntcharts-backed renderers behind our `internal/tui/charts` API:
+   - line/stream chart wrapper for TTFT/E2E;
+   - bar/histogram/percentile wrapper;
+   - preserve pure string fallback functions for tiny terminals and deterministic tests.
+5. Rework `renderRunCharts` into explicit `overview`, `ttftFocus`, `e2eFocus`, and `waterfallFocus` renderers that compose panels.
+6. Rework `renderMetricsPanel` into a designed component with aligned rows/cards, status line, and compact mode.
+7. Update tests to assert structure/labels/line widths rather than exact ntcharts glyph output, with separate deterministic wrapper tests for our fallback renderers.
+
+Tests:
+
+- Visual structure tests:
+  - wide layout contains four named panels in overview;
+  - medium layout prioritizes TTFT/E2E charts before distribution/waterfall;
+  - small layout renders a compact useful dashboard;
+  - all rendered lines fit within the terminal width.
+- Chart adapter tests:
+  - ntcharts-backed series renderer includes title/unit/axis labels and changes when values change;
+  - empty/non-finite inputs render explicit empty states;
+  - tiny dimensions fall back to compact sparklines or no-data labels;
+  - histogram/percentile renderer labels units and does not show NaN/Inf.
+- UX semantics tests:
+  - status pill text changes for running/writing reports/completed/canceled/error;
+  - errors/status codes are visibly represented without relying only on color;
+  - missing TPS explains provider usage is unavailable;
+  - no secrets/prompt/chunk content render.
+- Regression tests:
+  - existing `run --tui` fake-launcher tests still pass;
+  - race detector still passes for `internal/tui` and `internal/eventbus`.
+
+Definition of done:
+
+- The `run --tui` overview looks intentional and polished in wide, medium, and small terminals.
+- The main TTFT/E2E charts use ntcharts-backed renderers or a justified fallback when dimensions are too small.
+- The bottom metrics panel is visually aligned, stable, and includes all critical metrics/status data.
+- The chart and component architecture is isolated behind internal adapters so ntcharts API changes do not leak into the rest of the app.
+- Tests cover layout, semantics, chart state changes, no-color/fallback behavior, and secret non-leakage.
+
+---
+
+### [ ] 34. Wire `what-ttft bench --tui` to target-aware live dashboards
 
 Files:
 
