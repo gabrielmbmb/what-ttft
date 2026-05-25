@@ -21,16 +21,20 @@ const (
 )
 
 type liveStore struct {
-	benchmarkName string
-	targetID      string
-	targetName    string
-	provider      string
-	model         string
-	scenarioName  string
-	outputDir     string
-	status        string
-	reportStatus  string
-	lastError     string
+	benchmarkName        string
+	targetID             string
+	targetName           string
+	provider             string
+	model                string
+	scenarioName         string
+	cacheMode            whatttft.CacheMode
+	connectionMode       whatttft.ConnectionMode
+	requestedServiceTier string
+	observedServiceTier  string
+	outputDir            string
+	status               string
+	reportStatus         string
+	lastError            string
 
 	totalRequests      int
 	warmupRequests     int
@@ -125,6 +129,15 @@ func (s *liveStore) applyEventContext(event whatttft.RunEvent) {
 	if event.ScenarioName != "" {
 		s.scenarioName = event.ScenarioName
 	}
+	if event.CacheMode != "" {
+		s.cacheMode = event.CacheMode
+	}
+	if event.ConnectionMode != "" {
+		s.connectionMode = event.ConnectionMode
+	}
+	if event.RequestedServiceTier != "" {
+		s.requestedServiceTier = event.RequestedServiceTier
+	}
 	if event.OutputDir != "" {
 		s.outputDir = event.OutputDir
 	}
@@ -157,8 +170,39 @@ func (s *liveStore) addRecord(record whatttft.RequestRecord) {
 		s.recordOrder = append(s.recordOrder, copied.RequestID)
 	}
 	s.records[copied.RequestID] = copied
+	s.applyRecordContext(copied)
 	if s.completedRequests == 0 || s.completedRequests < len(s.records) {
 		s.completedRequests = len(s.records)
+	}
+}
+
+func (s *liveStore) applyRecordContext(record whatttft.RequestRecord) {
+	if s.provider == "" && record.Provider != "" {
+		s.provider = record.Provider
+	}
+	if s.model == "" && record.Model != "" {
+		s.model = record.Model
+	}
+	if s.scenarioName == "" && record.ScenarioName != "" {
+		s.scenarioName = record.ScenarioName
+	}
+	if s.cacheMode == "" && record.CacheMode != "" {
+		s.cacheMode = record.CacheMode
+	}
+	if s.connectionMode == "" && record.ConnectionMode != "" {
+		s.connectionMode = record.ConnectionMode
+	}
+	if s.requestedServiceTier == "" && record.RequestedServiceTier != "" {
+		s.requestedServiceTier = record.RequestedServiceTier
+	}
+	if s.requestedServiceTier == "" && record.HTTP.RequestedServiceTier != "" {
+		s.requestedServiceTier = record.HTTP.RequestedServiceTier
+	}
+	if s.observedServiceTier == "" && record.ObservedServiceTier != "" {
+		s.observedServiceTier = record.ObservedServiceTier
+	}
+	if s.observedServiceTier == "" && record.HTTP.ObservedServiceTier != "" {
+		s.observedServiceTier = record.HTTP.ObservedServiceTier
 	}
 }
 

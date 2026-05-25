@@ -8,6 +8,40 @@ import (
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
+// WaterfallOptions configures RenderWaterfallChart output.
+type WaterfallOptions struct {
+	// Width is the target rendered width in terminal cells; values less than one render an empty string.
+	Width int
+
+	// Height is the target rendered height in terminal rows; values less than one render an empty string.
+	Height int
+
+	// Title is the non-secret chart title; empty defaults to "waterfall ms".
+	Title string
+
+	// EmptyLabel is the no-data explanation; empty defaults to "waterfall unavailable: timeline events missing".
+	EmptyLabel string
+}
+
+// RenderWaterfallChart renders observed request timeline phases with project-specific latency labels.
+func RenderWaterfallChart(record whatttft.RequestRecord, opts WaterfallOptions, _ Theme) string {
+	if opts.Width <= 0 || opts.Height <= 0 {
+		return ""
+	}
+	title := opts.Title
+	if strings.TrimSpace(title) == "" {
+		title = "waterfall ms"
+	}
+	if len(waterfallPhases(record.Timeline)) == 0 {
+		empty := opts.EmptyLabel
+		if strings.TrimSpace(empty) == "" {
+			empty = "waterfall unavailable: timeline events missing"
+		}
+		return fitChartText(strings.Join([]string{title, empty}, "\n"), opts.Width, opts.Height)
+	}
+	return fitChartText(strings.Join([]string{title, Waterfall(record, opts.Width)}, "\n"), opts.Width, opts.Height)
+}
+
 // Waterfall renders observed request timeline phases in milliseconds, omitting phases with missing endpoints.
 func Waterfall(record whatttft.RequestRecord, width int) string {
 	phases := waterfallPhases(record.Timeline)
@@ -59,7 +93,7 @@ func waterfallPhases(timeline whatttft.Timeline) []waterfallPhase {
 		{label: "server wait to first byte", start: whatttft.EventWroteRequest, end: whatttft.EventFirstResponseByte},
 		{label: "first byte to first SSE", start: whatttft.EventFirstResponseByte, end: whatttft.EventFirstSSEEvent},
 		{label: "stream protocol to first output", start: whatttft.EventFirstSSEEvent, end: whatttft.EventFirstOutputDelta},
-		{label: "generation visible deltas", start: whatttft.EventFirstOutputDelta, end: whatttft.EventLastOutputDelta},
+		{label: "visible-generation deltas", start: whatttft.EventFirstOutputDelta, end: whatttft.EventLastOutputDelta},
 	}
 
 	phases := make([]waterfallPhase, 0, len(definitions))

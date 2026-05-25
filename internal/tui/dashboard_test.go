@@ -49,12 +49,48 @@ func TestDashboardExtraHeightGoesToCharts(t *testing.T) {
 	}
 }
 
+// TestDashboardWideOverviewContainsFourPanels verifies large terminals get the complete 2x2 overview.
+func TestDashboardWideOverviewContainsFourPanels(t *testing.T) {
+	app := dashboardAppWithRecords(t)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 140, Height: 36})
+	content := app.View().Content
+
+	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Slowest request waterfall"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("wide dashboard missing %q:\n%s", want, content)
+		}
+	}
+	if got := dashboardLineCount(content); got != 36 {
+		t.Fatalf("wide dashboard line count = %d, want 36", got)
+	}
+	if got := dashboardMaxLineWidth(content); got > 140 {
+		t.Fatalf("wide dashboard max line width = %d, want <= 140", got)
+	}
+}
+
+// TestDashboardMediumPrioritizesTTFTAndE2E verifies medium terminals put trend charts first.
+func TestDashboardMediumPrioritizesTTFTAndE2E(t *testing.T) {
+	app := dashboardAppWithRecords(t)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 100, Height: 30})
+	content := app.View().Content
+
+	ttftIndex := strings.Index(content, "TTFT trend · ttft_delta_ms")
+	e2eIndex := strings.Index(content, "E2E trend · e2e_delta_ms")
+	distributionIndex := strings.Index(content, "TTFT distribution · histogram")
+	if ttftIndex < 0 || e2eIndex < 0 || distributionIndex < 0 {
+		t.Fatalf("medium dashboard missing trend/distribution panels:\n%s", content)
+	}
+	if ttftIndex >= e2eIndex || e2eIndex >= distributionIndex {
+		t.Fatalf("medium dashboard panel order ttft/e2e/distribution = %d/%d/%d", ttftIndex, e2eIndex, distributionIndex)
+	}
+}
+
 // TestDashboardDefaultShowsCharts verifies the default screen shows chart labels without pane navigation.
 func TestDashboardDefaultShowsCharts(t *testing.T) {
 	app := dashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"TTFT delta ms over request order", "E2E delta ms over request order", "histogram ms", "waterfall ms", "METRICS PANEL"} {
+	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "waterfall ms", "METRICS (p50/p95/p99/mean)"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, content)
 		}
@@ -85,9 +121,25 @@ func TestMetricsPanelPinnedAcrossModes(t *testing.T) {
 		app.pane = mode
 		content := app.View().Content
 		bottom := bottomLines(content, 12)
-		if !strings.Contains(bottom, "METRICS PANEL") || !strings.Contains(bottom, "keys:") {
+		if !strings.Contains(bottom, "METRICS (p50/p95/p99/mean)") || !strings.Contains(bottom, "keys:") {
 			t.Fatalf("mode %d bottom metrics panel missing:\n%s", mode, bottom)
 		}
+	}
+}
+
+// TestMetricsPanelExplainsMissingTPS verifies missing provider usage is not silently rendered as zero throughput.
+func TestMetricsPanelExplainsMissingTPS(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 100, Height: 30})
+	record := tuiTestRecord("req-no-usage", "target-a", 25, 120, nil)
+	record.CompletionTokens = nil
+	record.Derived.E2EOutputTPS = nil
+	record.Derived.GenerationDeltaOutputTPS = nil
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	content := app.View().Content
+
+	if !strings.Contains(content, "TPS unavailable: provider usage not reported") {
+		t.Fatalf("dashboard missing missing-TPS explanation:\n%s", content)
 	}
 }
 

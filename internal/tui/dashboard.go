@@ -6,12 +6,17 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/gabrielmbmb/what-ttft/internal/tui/charts"
+	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
 const (
 	defaultDashboardWidth  = 100
 	defaultDashboardHeight = 30
 	minimumChartHeight     = 1
+	wideDashboardWidth     = 120
+	wideDashboardHeight    = 32
+	mediumDashboardWidth   = 80
+	mediumDashboardHeight  = 20
 )
 
 type layoutBox struct {
@@ -29,9 +34,9 @@ type dashboardLayout struct {
 
 func renderDashboard(m model) string {
 	layout := calculateDashboardLayout(m.width, m.height, m.help.ShowAll)
-	header := fitToBox(renderDashboardHeader(m), layout.Header.Width, layout.Header.Height)
-	chartArea := fitToBox(renderChartArea(m.store, layout.Charts.Width, layout.Charts.Height, m.pane), layout.Charts.Width, layout.Charts.Height)
-	metrics := fitToBox(renderMetricsPanel(m.store, layout.Metrics.Width, layout.Metrics.Height, m.help.ShowAll, dashboardStatusText(m), m.confirmingCancel), layout.Metrics.Width, layout.Metrics.Height)
+	header := fitToBox(renderDashboardHeader(m, layout.Header.Width, layout.Header.Height, m.theme), layout.Header.Width, layout.Header.Height)
+	chartArea := fitToBox(renderChartArea(m.store, layout.Charts.Width, layout.Charts.Height, m.pane, m.theme), layout.Charts.Width, layout.Charts.Height)
+	metrics := fitToBox(renderMetricsPanel(m.store, layout.Metrics.Width, layout.Metrics.Height, m.help.ShowAll, dashboardStatusText(m), m.confirmingCancel, m.theme), layout.Metrics.Width, layout.Metrics.Height)
 
 	return joinVerticalToHeight([]string{header, chartArea, metrics}, layout.Root.Width, layout.Root.Height)
 }
@@ -44,18 +49,22 @@ func calculateDashboardLayout(width int, height int, helpVisible bool) dashboard
 		height = defaultDashboardHeight
 	}
 
-	headerHeight := 3
+	headerHeight := 4
 	metricsHeight := 12
-	if helpVisible {
-		metricsHeight = 13
+	if width < wideDashboardWidth || height < wideDashboardHeight {
+		headerHeight = 3
+		metricsHeight = 12
 	}
-	if height < 18 {
+	if width < mediumDashboardWidth || height < mediumDashboardHeight {
 		headerHeight = 2
-		metricsHeight = 6
+		metricsHeight = 5
 	}
 	if height < 12 {
 		headerHeight = 1
 		metricsHeight = 4
+	}
+	if helpVisible {
+		metricsHeight++
 	}
 	if metricsHeight > height-headerHeight-minimumChartHeight {
 		metricsHeight = height - headerHeight - minimumChartHeight
@@ -67,7 +76,6 @@ func calculateDashboardLayout(width int, height int, helpVisible bool) dashboard
 	if chartHeight < minimumChartHeight {
 		chartHeight = minimumChartHeight
 	}
-	// If tiny-height correction pushed the total over height, give charts the remaining row budget.
 	if headerHeight+metricsHeight+chartHeight > height {
 		chartHeight = height - headerHeight - metricsHeight
 		if chartHeight < 0 {
@@ -85,111 +93,261 @@ func calculateDashboardLayout(width int, height int, helpVisible bool) dashboard
 	}
 }
 
-func renderDashboardHeader(m model) string {
+func renderDashboardHeader(m model, width int, height int, theme tuiTheme) string {
 	progress := m.store.Progress()
-	parts := []string{"what-ttft"}
-	if m.store.provider != "" {
-		parts = append(parts, "provider="+m.store.provider)
+	context := dashboardContextLabels(m.store)
+	status := dashboardStatusText(m)
+	progressWidth := width / 3
+	if progressWidth < 12 {
+		progressWidth = 12
 	}
-	if m.store.model != "" {
-		parts = append(parts, "model="+m.store.model)
+	if progressWidth > 36 {
+		progressWidth = 36
 	}
-	if m.store.scenarioName != "" {
-		parts = append(parts, "scenario="+m.store.scenarioName)
-	}
-	if m.store.CurrentTarget() != "-" {
-		parts = append(parts, "target="+m.store.CurrentTarget())
-	}
-	parts = append(parts, "status="+statusWord(m))
 
-	progressLine := fmt.Sprintf("completed=%d/%d active=%d ok=%d err=%d warmup=%d measured=%d", progress.Completed, progress.Total, progress.Active, progress.Successful, progress.Errors, progress.Warmup, progress.Measured)
-	return strings.Join([]string{strings.Join(parts, "  "), progressLine, strings.Repeat("─", max(1, m.width))}, "\n")
+	bodyLines := []string{
+		statusPill(status, theme) + "  " + strings.Join(context, "  "),
+		progressBar(progress.Completed, progress.Total, progressWidth, theme) + fmt.Sprintf("  active=%d  ok=%d  err=%d  warmup=%d  measured=%d", progress.Active, progress.Successful, progress.Errors, progress.Warmup, progress.Measured),
+	}
+	if height >= 4 {
+		bodyLines = append(bodyLines, legend([]legendItem{{Label: "ttft_delta_ms", Role: roleChartTTFT}, {Label: "e2e_delta_ms", Role: roleChartE2E}, {Label: "tokens/s", Role: roleChartTPS}, {Label: "waterfall", Role: roleChartWaterfall}}, theme))
+	}
+	return panel("what-ttft run", strings.Join(bodyLines, "\n"), width, height, theme, roleAccent)
 }
 
-func renderChartArea(store liveStore, width int, height int, mode pane) string {
+func dashboardContextLabels(store liveStore) []string {
+	parts := make([]string, 0, 8)
+	if store.provider != "" {
+		parts = append(parts, "provider="+safeInline(store.provider))
+	}
+	if store.model != "" {
+		parts = append(parts, "model="+safeInline(store.model))
+	}
+	if store.scenarioName != "" {
+		parts = append(parts, "scenario="+safeInline(store.scenarioName))
+	}
+	if store.cacheMode != "" {
+		parts = append(parts, "cache="+safeInline(string(store.cacheMode)))
+	}
+	if store.connectionMode != "" {
+		parts = append(parts, "conn="+safeInline(string(store.connectionMode)))
+	}
+	if store.requestedServiceTier != "" {
+		parts = append(parts, "tier="+safeInline(store.requestedServiceTier))
+	}
+	if store.CurrentTarget() != "-" {
+		parts = append(parts, "target="+safeInline(store.CurrentTarget()))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "waiting for benchmark events")
+	}
+	return parts
+}
+
+func renderChartArea(store liveStore, width int, height int, mode pane, theme tuiTheme) string {
 	if height <= 0 || width <= 0 {
 		return ""
 	}
 
 	switch mode {
 	case paneTTFT:
-		return renderFocusedTTFT(store, width, height)
+		return renderFocusedTTFT(store, width, height, theme)
 	case paneE2E:
-		return renderFocusedE2E(store, width, height)
+		return renderFocusedE2E(store, width, height, theme)
 	case paneWaterfall:
-		return renderFocusedWaterfall(store, width, height)
+		return renderFocusedWaterfall(store, width, height, theme)
 	default:
-		return renderRunCharts(store, width, height)
+		return renderRunCharts(store, width, height, theme)
 	}
 }
 
-func renderRunCharts(store liveStore, width int, height int) string {
-	ttftValues := store.RunSeries(metricTTFTDeltaMS)
-	e2eValues := store.RunSeries(metricE2EDeltaMS)
-	if len(ttftValues) == 0 && len(e2eValues) == 0 {
-		return emptyChartState(store)
+func renderRunCharts(store liveStore, width int, height int, theme tuiTheme) string {
+	if width >= wideDashboardWidth && height >= 16 {
+		return renderWideOverview(store, width, height, theme)
 	}
-
-	left := strings.Join([]string{
-		"TTFT delta ms over request order",
-		charts.Sparkline(ttftValues, max(1, width/2-4)),
-		charts.Histogram(ttftValues, histogramBins(height), max(1, width/2-2)),
-	}, "\n")
-	right := strings.Join([]string{
-		"E2E delta ms over request order",
-		charts.Sparkline(e2eValues, max(1, width/2-4)),
-		renderWaterfallPreview(store, max(1, width/2-2)),
-	}, "\n")
-
-	if width >= 88 && height >= 8 {
-		return joinColumns(left, right, width, height)
+	if width >= mediumDashboardWidth && height >= 12 {
+		return renderMediumOverview(store, width, height, theme)
 	}
-
-	return joinVerticalToHeight([]string{left, right}, width, height)
+	return renderSmallOverview(store, width, height, theme)
 }
 
-func renderFocusedTTFT(store liveStore, width int, height int) string {
-	values := store.RunSeries(metricTTFTDeltaMS)
-	if len(values) == 0 {
-		return emptyChartState(store)
+func renderWideOverview(store liveStore, width int, height int, theme tuiTheme) string {
+	gap := 1
+	leftWidth := (width - gap) / 2
+	rightWidth := width - gap - leftWidth
+	topHeight := height / 2
+	bottomHeight := height - topHeight
+	top := joinColumnsWithGap(
+		renderTTFTTrendPanel(store, leftWidth, topHeight, theme),
+		renderE2ETrendPanel(store, rightWidth, topHeight, theme),
+		width,
+		topHeight,
+		gap,
+	)
+	bottom := joinColumnsWithGap(
+		renderDistributionPanel(store, leftWidth, bottomHeight, theme),
+		renderWaterfallPanel(store, rightWidth, bottomHeight, theme),
+		width,
+		bottomHeight,
+		gap,
+	)
+	return joinVerticalToHeight([]string{top, bottom}, width, height)
+}
+
+func renderMediumOverview(store liveStore, width int, height int, theme tuiTheme) string {
+	if width >= 96 && height >= 15 {
+		topHeight := min(height-5, max(8, height/2))
+		bottomHeight := height - topHeight
+		top := joinColumnsWithGap(
+			renderTTFTTrendPanel(store, (width-1)/2, topHeight, theme),
+			renderE2ETrendPanel(store, width-1-(width-1)/2, topHeight, theme),
+			width,
+			topHeight,
+			1,
+		)
+		bottom := joinColumnsWithGap(
+			renderDistributionPanel(store, (width-1)/2, bottomHeight, theme),
+			renderWaterfallPanel(store, width-1-(width-1)/2, bottomHeight, theme),
+			width,
+			bottomHeight,
+			1,
+		)
+		return joinVerticalToHeight([]string{top, bottom}, width, height)
 	}
-	return joinVerticalToHeight([]string{
-		"TTFT focus (ttft_delta_ms)",
-		charts.Sparkline(values, width),
-		charts.Histogram(values, histogramBins(height), width),
-	}, width, height)
-}
 
-func renderFocusedE2E(store liveStore, width int, height int) string {
-	values := store.RunSeries(metricE2EDeltaMS)
-	if len(values) == 0 {
-		return emptyChartState(store)
+	ttftHeight := max(4, height/3)
+	e2eHeight := max(4, height/3)
+	remaining := height - ttftHeight - e2eHeight
+	if remaining < 4 {
+		remaining = 4
+		ttftHeight = max(3, (height-remaining)/2)
+		e2eHeight = height - remaining - ttftHeight
 	}
-	return joinVerticalToHeight([]string{
-		"E2E/TPS focus (e2e_delta_ms, tokens/s)",
-		charts.Sparkline(values, width),
-		renderMetricRows(store.MetricRows()),
-	}, width, height)
+	sections := []string{
+		renderTTFTTrendPanel(store, width, ttftHeight, theme),
+		renderE2ETrendPanel(store, width, e2eHeight, theme),
+	}
+	if remaining > 0 {
+		if remaining >= 5 {
+			waterfallHeight := min(remaining-1, max(4, remaining/2))
+			sections = append(sections, renderDistributionPanel(store, width, remaining-waterfallHeight, theme), renderWaterfallPanel(store, width, waterfallHeight, theme))
+		} else {
+			sections = append(sections, renderDistributionPanel(store, width, remaining, theme))
+		}
+	}
+	return joinVerticalToHeight(sections, width, height)
 }
 
-func renderFocusedWaterfall(store liveStore, width int, height int) string {
-	return joinVerticalToHeight([]string{"Slowest-request waterfall", renderWaterfallPreview(store, width)}, width, height)
+func renderSmallOverview(store liveStore, width int, height int, theme tuiTheme) string {
+	return renderTTFTTrendPanel(store, width, height, theme)
 }
 
-func renderWaterfallPreview(store liveStore, width int) string {
+func renderFocusedTTFT(store liveStore, width int, height int, theme tuiTheme) string {
+	if height >= 12 {
+		topHeight := height * 2 / 3
+		return joinVerticalToHeight([]string{
+			renderTTFTTrendPanel(store, width, topHeight, theme),
+			renderDistributionPanel(store, width, height-topHeight, theme),
+		}, width, height)
+	}
+	return renderTTFTTrendPanel(store, width, height, theme)
+}
+
+func renderFocusedE2E(store liveStore, width int, height int, theme tuiTheme) string {
+	if height >= 10 {
+		topHeight := height * 2 / 3
+		return joinVerticalToHeight([]string{
+			renderE2ETrendPanel(store, width, topHeight, theme),
+			renderTPSPanel(store, width, height-topHeight, theme),
+		}, width, height)
+	}
+	return renderE2ETrendPanel(store, width, height, theme)
+}
+
+func renderFocusedWaterfall(store liveStore, width int, height int, theme tuiTheme) string {
+	return renderWaterfallPanel(store, width, height, theme)
+}
+
+func renderTTFTTrendPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderSeriesChart(store.RunSeries(metricTTFTDeltaMS), charts.SeriesChartOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Title:      metricTTFTDeltaMS,
+		Unit:       "ms",
+		EmptyLabel: "waiting for first successful measured request",
+	}, theme.chartTheme(roleChartTTFT))
+	return panel("TTFT trend · ttft_delta_ms", body, width, height, theme, roleChartTTFT)
+}
+
+func renderE2ETrendPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderSeriesChart(store.RunSeries(metricE2EDeltaMS), charts.SeriesChartOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Title:      metricE2EDeltaMS,
+		Unit:       "ms",
+		EmptyLabel: "waiting for first successful measured request",
+	}, theme.chartTheme(roleChartE2E))
+	return panel("E2E trend · e2e_delta_ms", body, width, height, theme, roleChartE2E)
+}
+
+func renderDistributionPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderHistogramChart(store.RunSeries(metricTTFTDeltaMS), charts.HistogramOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Bins:       histogramBins(height),
+		Title:      "TTFT distribution",
+		Unit:       "ms",
+		EmptyLabel: "waiting for first successful measured request",
+	}, theme.chartTheme(roleChartTTFT))
+	return panel("TTFT distribution · histogram", body, width, height, theme, roleChartTTFT)
+}
+
+func renderTPSPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	rows := store.MetricRows()
+	e2eTPS := metricRowByName(rows, metricE2EOutputTPS)
+	generationTPS := metricRowByName(rows, metricGenerationDeltaOutputTPS)
+	lines := []string{"tokens/s metrics use provider-reported or estimated usage only"}
+	lines = append(lines, compactMetricLine("e2e_output_tps", e2eTPS), compactMetricLine("generation_delta_output_tps", generationTPS), renderRatesLine(store))
+	if e2eTPS.Count == 0 && generationTPS.Count == 0 {
+		lines = append(lines, "TPS unavailable: provider usage not reported")
+	}
+	return panel("E2E/TPS focus", strings.Join(lines, "\n"), width, height, theme, roleChartTPS)
+}
+
+func renderWaterfallPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := renderWaterfallPreview(store, panelInnerWidth(width), panelInnerHeight(height), theme)
+	return panel("Slowest request waterfall", body, width, height, theme, roleChartWaterfall)
+}
+
+func renderWaterfallPreview(store liveStore, width int, height int, theme tuiTheme) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
 	slowest := store.SlowestRequests(1)
 	if len(slowest) == 0 {
-		return "waterfall ms\n(no successful request timeline yet)"
+		return charts.RenderWaterfallChart(emptyRequestRecord(), charts.WaterfallOptions{Width: width, Height: height, EmptyLabel: "waterfall unavailable: timeline events missing"}, theme.chartTheme(roleChartWaterfall))
 	}
-	return "request=" + slowest[0].RequestID + " metric=" + slowest[0].MetricName + "\n" + charts.Waterfall(slowest[0].Record, width)
+	header := fmt.Sprintf("request=%s  metric=%s  value=%.1f ms", safeInline(slowest[0].RequestID), slowest[0].MetricName, slowest[0].ValueMS)
+	if height <= 1 {
+		return truncateVisible(header, width)
+	}
+	chart := charts.RenderWaterfallChart(slowest[0].Record, charts.WaterfallOptions{Width: width, Height: height - 1, Title: "waterfall ms"}, theme.chartTheme(roleChartWaterfall))
+	return fitToBox(strings.Join([]string{header, chart}, "\n"), width, height)
 }
 
-func emptyChartState(store liveStore) string {
-	progress := store.Progress()
-	return fmt.Sprintf("LIVE CHART AREA\nwaiting for successful measured requests... completed=%d active=%d errors=%d", progress.Completed, progress.Active, progress.Errors)
+func emptyRequestRecord() whatttft.RequestRecord {
+	return whatttft.RequestRecord{}
 }
 
-func renderMetricsPanel(store liveStore, width int, height int, helpVisible bool, status string, confirmingCancel bool) string {
+func renderMetricsPanel(store liveStore, width int, height int, helpVisible bool, status string, confirmingCancel bool, theme tuiTheme) string {
+	if height <= 0 || width <= 0 {
+		return ""
+	}
+	body := renderMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), helpVisible, status, confirmingCancel)
+	return panel("METRICS (p50/p95/p99/mean)", body, width, height, theme, roleAccent)
+}
+
+func renderMetricsBody(store liveStore, width int, height int, helpVisible bool, status string, confirmingCancel bool) string {
 	if height <= 0 || width <= 0 {
 		return ""
 	}
@@ -197,19 +355,50 @@ func renderMetricsPanel(store liveStore, width int, height int, helpVisible bool
 		status = "Cancel the running benchmark? Press y to confirm or n/esc to continue."
 	}
 
-	metricLines := []string{"METRICS PANEL (ms, tokens/s, req/s)", "metric                         count  p50       p95       p99       mean      unit"}
-	for _, row := range store.MetricRows() {
-		metricLines = append(metricLines, fmt.Sprintf("%-30s %5d  %-8s %-8s %-8s %-8s %s", row.Name, row.Count, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean), row.Unit))
-	}
-	footerLines := []string{renderRatesLine(store), renderProgressStatusLine(store, status)}
-	if helpVisible {
-		footerLines = append(footerLines, "keys: 1 dashboard  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help")
-	} else {
-		footerLines = append(footerLines, "keys: ? help  1 dashboard  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit")
+	if width < 86 || height <= 5 {
+		return renderCompactMetricsBody(store, width, height, helpVisible, status)
 	}
 
+	metricLines := []string{"metric                         count  p50       p95       p99       mean      unit"}
+	for _, row := range orderedMetricRowsForPanel(store.MetricRows()) {
+		metricLines = append(metricLines, fmt.Sprintf("%-30s %5d  %-8s %-8s %-8s %-8s %s", row.Name, row.Count, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean), row.Unit))
+	}
+	footerLines := metricsFooterLines(store, helpVisible, status)
 	lines := fitMetricsLines(metricLines, footerLines, height)
-	return strings.Join(lines, "\n")
+	return fitToBox(strings.Join(lines, "\n"), width, height)
+}
+
+func renderCompactMetricsBody(store liveStore, width int, height int, helpVisible bool, status string) string {
+	rows := store.MetricRows()
+	lines := []string{
+		compactMetricLine(metricTTFTDeltaMS, metricRowByName(rows, metricTTFTDeltaMS)) + "  " + compactMetricLine(metricE2EDeltaMS, metricRowByName(rows, metricE2EDeltaMS)),
+		renderRatesLine(store),
+		renderProgressStatusLine(store, status),
+	}
+	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
+		lines = append(lines, "TPS unavailable: provider usage not reported")
+	}
+	if helpVisible {
+		lines = append(lines, "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help")
+	} else {
+		lines = append(lines, "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit")
+	}
+	return fitToBox(strings.Join(lines, "\n"), width, height)
+}
+
+func metricsFooterLines(store liveStore, helpVisible bool, status string) []string {
+	rows := store.MetricRows()
+	footerLines := []string{renderRatesLine(store)}
+	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
+		footerLines = append(footerLines, "TPS unavailable: provider usage not reported")
+	}
+	footerLines = append(footerLines, renderProgressStatusLine(store, status))
+	if helpVisible {
+		footerLines = append(footerLines, "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help")
+	} else {
+		footerLines = append(footerLines, "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit")
+	}
+	return footerLines
 }
 
 func fitMetricsLines(metricLines []string, footerLines []string, height int) []string {
@@ -223,9 +412,56 @@ func fitMetricsLines(metricLines []string, footerLines []string, height int) []s
 	if metricBudget > len(metricLines) {
 		metricBudget = len(metricLines)
 	}
+	if metricBudget == len(metricLines)-1 {
+		lines := append([]string(nil), metricLines[1:]...)
+		lines = append(lines, footerLines...)
+		return lines
+	}
 	lines := append([]string(nil), metricLines[:metricBudget]...)
 	lines = append(lines, footerLines...)
 	return lines
+}
+
+func compactMetricLine(label string, row metricRow) string {
+	return fmt.Sprintf("%s p50=%s p95=%s p99=%s mean=%s", label, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean))
+}
+
+func orderedMetricRowsForPanel(rows []metricRow) []metricRow {
+	order := []string{
+		metricTTFTDeltaMS,
+		metricE2EDeltaMS,
+		metricE2EOutputTPS,
+		metricGenerationDeltaOutputTPS,
+		metricHTTPTTFBMS,
+		metricProviderProcessingMS,
+		metricServerWaitToFirstByteMS,
+	}
+	ordered := make([]metricRow, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, name := range order {
+		row := metricRowByName(rows, name)
+		if row.Name == "" {
+			continue
+		}
+		ordered = append(ordered, row)
+		seen[row.Name] = struct{}{}
+	}
+	for _, row := range rows {
+		if _, ok := seen[row.Name]; ok {
+			continue
+		}
+		ordered = append(ordered, row)
+	}
+	return ordered
+}
+
+func metricRowByName(rows []metricRow, name string) metricRow {
+	for _, row := range rows {
+		if row.Name == name {
+			return row
+		}
+	}
+	return metricRow{Name: name}
 }
 
 func renderRatesLine(store liveStore) string {
@@ -245,13 +481,13 @@ func renderProgressStatusLine(store liveStore, status string) string {
 		"errors=" + formatStringIntMap(counts.ErrorCategories),
 	}
 	if store.reportStatus != "" {
-		fields = append(fields, "reports="+store.reportStatus)
+		fields = append(fields, "reports="+safeInline(store.reportStatus))
 	}
 	if store.outputDir != "" {
-		fields = append(fields, "output="+store.outputDir)
+		fields = append(fields, "output="+safeInline(store.outputDir))
 	}
 	if strings.TrimSpace(status) != "" {
-		fields = append(fields, "status="+stripStatusPrefix(status))
+		fields = append(fields, "status="+safeInline(stripStatusPrefix(status)))
 	}
 	return strings.Join(fields, "  ")
 }
@@ -291,28 +527,6 @@ func dashboardStatusText(m model) string {
 	return "waiting for benchmark events"
 }
 
-func statusWord(m model) string {
-	if m.failed {
-		return "error"
-	}
-	if m.canceled {
-		return "canceled"
-	}
-	if m.completed {
-		return "completed"
-	}
-	if m.running {
-		return "running"
-	}
-	if m.channelClosed {
-		return "event-stream-closed"
-	}
-	if m.store.status != "" {
-		return strings.ReplaceAll(m.store.status, " ", "-")
-	}
-	return "waiting"
-}
-
 func histogramBins(height int) int {
 	if height < 8 {
 		return 3
@@ -323,8 +537,24 @@ func histogramBins(height int) int {
 	return 8
 }
 
-func joinColumns(left string, right string, width int, height int) string {
-	gap := 2
+func panelInnerWidth(width int) int {
+	if width <= 4 {
+		return max(1, width)
+	}
+	return width - 4
+}
+
+func panelInnerHeight(height int) int {
+	if height <= 2 {
+		return max(1, height)
+	}
+	return height - 2
+}
+
+func joinColumnsWithGap(left string, right string, width int, height int, gap int) string {
+	if gap < 0 {
+		gap = 0
+	}
 	leftWidth := (width - gap) / 2
 	rightWidth := width - gap - leftWidth
 	left = fitToBox(left, leftWidth, height)

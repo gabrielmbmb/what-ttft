@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+// TestRenderHistogramChartUsesSemanticLabels verifies the ntcharts adapter labels units and bins.
+func TestRenderHistogramChartUsesSemanticLabels(t *testing.T) {
+	got := RenderHistogramChart([]float64{10, 20, 30, 40}, HistogramOptions{Width: 48, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("histogram chart missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestRenderHistogramChartSkipsNonFinite verifies the ntcharts adapter does not show NaN or Inf.
+func TestRenderHistogramChartSkipsNonFinite(t *testing.T) {
+	got := RenderHistogramChart([]float64{10, math.NaN(), math.Inf(1), 20}, HistogramOptions{Width: 48, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
+	if strings.Contains(got, "NaN") || strings.Contains(got, "Inf") {
+		t.Fatalf("histogram chart leaked non-finite values:\n%s", got)
+	}
+}
+
 // TestHistogramEmpty verifies empty input renders an unavailable state.
 func TestHistogramEmpty(t *testing.T) {
 	got := Histogram(nil, 5, 40)

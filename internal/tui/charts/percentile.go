@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/NimbleMarkets/ntcharts/v2/barchart"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
@@ -26,6 +27,24 @@ type PercentileGroup struct {
 	P99 *float64
 }
 
+// PercentileOptions configures RenderPercentileChart output.
+type PercentileOptions struct {
+	// Width is the target rendered width in terminal cells; values less than one render an empty string.
+	Width int
+
+	// Height is the target rendered height in terminal rows; values less than one render an empty string.
+	Height int
+
+	// Title is the non-secret chart title; empty defaults to "percentiles".
+	Title string
+
+	// Unit is the value unit label, such as "ms"; empty omits the unit annotation.
+	Unit string
+
+	// EmptyLabel is the no-data explanation; empty defaults to "no percentile groups available".
+	EmptyLabel string
+}
+
 // PercentileGroupsFromSummary builds TTFT percentile groups from summary groups in their existing order.
 func PercentileGroupsFromSummary(groups []whatttft.SummaryGroup) []PercentileGroup {
 	percentiles := make([]PercentileGroup, 0, len(groups))
@@ -39,6 +58,44 @@ func PercentileGroupsFromSummary(groups []whatttft.SummaryGroup) []PercentileGro
 		})
 	}
 	return percentiles
+}
+
+// RenderPercentileChart renders p99 percentile comparison bars with p50/p90/p95/p99 values retained in labels.
+func RenderPercentileChart(groups []PercentileGroup, opts PercentileOptions, theme Theme) string {
+	if opts.Width <= 0 || opts.Height <= 0 {
+		return ""
+	}
+	title := chartTitle(percentileTitle(opts.Title), opts.Unit)
+	if len(groups) == 0 {
+		empty := opts.EmptyLabel
+		if strings.TrimSpace(empty) == "" {
+			empty = "no percentile groups available"
+		}
+		return fitChartText(strings.Join([]string{title, empty}, "\n"), opts.Width, opts.Height)
+	}
+	if opts.Width < 48 || opts.Height < 6 {
+		return fitChartText(PercentileBars(groups, opts.Width), opts.Width, opts.Height)
+	}
+
+	barData, maxValue := percentileBarData(groups, theme)
+	if len(barData) == 0 || maxValue <= 0 {
+		return fitChartText(PercentileBars(groups, opts.Width), opts.Width, opts.Height)
+	}
+	chartHeight := opts.Height - 2
+	if chartHeight < 3 {
+		return fitChartText(PercentileBars(groups, opts.Width), opts.Width, opts.Height)
+	}
+	chart := barchart.New(
+		opts.Width,
+		chartHeight,
+		barchart.WithHorizontalBars(),
+		barchart.WithStyles(theme.Axis, theme.Label),
+		barchart.WithMaxValue(maxValue),
+		barchart.WithNoAutoMaxValue(),
+		barchart.WithDataSet(barData),
+	)
+	chart.Draw()
+	return fitChartText(strings.Join([]string{title + "  bar=p99", chart.View()}, "\n"), opts.Width, opts.Height)
 }
 
 // PercentileBars renders p50/p90/p95/p99 millisecond percentiles with scaled p99 bars.
@@ -76,6 +133,35 @@ func PercentileBars(groups []PercentileGroup, width int) string {
 	}
 
 	return builder.String()
+}
+
+func percentileTitle(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return "percentiles"
+	}
+	return title
+}
+
+func percentileBarData(groups []PercentileGroup, theme Theme) ([]barchart.BarData, float64) {
+	data := make([]barchart.BarData, 0, len(groups))
+	maxValue := 0.0
+	for _, group := range groups {
+		if group.P99 == nil || !finiteFloat(*group.P99) {
+			continue
+		}
+		if *group.P99 > maxValue {
+			maxValue = *group.P99
+		}
+		data = append(data, barchart.BarData{
+			Label: truncate(group.Label, 18),
+			Values: []barchart.BarValue{{
+				Name:  fmt.Sprintf("p50=%s p90=%s p95=%s p99=%s", formatOptional(group.P50), formatOptional(group.P90), formatOptional(group.P95), formatOptional(group.P99)),
+				Value: *group.P99,
+				Style: theme.Series,
+			}},
+		})
+	}
+	return data, maxValue
 }
 
 func scaledFloatWidth(value float64, maxValue float64, width int) int {

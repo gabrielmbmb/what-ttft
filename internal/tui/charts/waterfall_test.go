@@ -7,6 +7,14 @@ import (
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
+// TestRenderWaterfallChartEmptyExplainsMissingTimeline verifies the adapter renders an actionable empty state.
+func TestRenderWaterfallChartEmptyExplainsMissingTimeline(t *testing.T) {
+	got := RenderWaterfallChart(whatttft.RequestRecord{}, WaterfallOptions{Width: 60, Height: 4}, PlainTheme())
+	if !strings.Contains(got, "waterfall unavailable: timeline events missing") {
+		t.Fatalf("empty waterfall adapter missing explanation:\n%s", got)
+	}
+}
+
 // TestWaterfallEmpty verifies a record with no timeline phases renders an unavailable state.
 func TestWaterfallEmpty(t *testing.T) {
 	got := Waterfall(whatttft.RequestRecord{}, 80)
@@ -29,7 +37,7 @@ func TestWaterfallObservedPhases(t *testing.T) {
 	}}}
 
 	got := Waterfall(record, 60)
-	for _, want := range []string{"dns", "connection acquire", "request write", "server wait to first byte", "stream protocol to first output", "generation visible deltas"} {
+	for _, want := range []string{"dns", "connection acquire", "request write", "server wait to first byte", "stream protocol to first output", "visible-generation deltas"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("waterfall missing %q:\n%s", want, got)
 		}

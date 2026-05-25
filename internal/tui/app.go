@@ -41,9 +41,9 @@ type model struct {
 	confirmingCancel bool
 	channelClosed    bool
 
-	keys   keyMap
-	help   help.Model
-	styles styles
+	keys  keyMap
+	help  help.Model
+	theme tuiTheme
 }
 
 func newModel(events <-chan whatttft.RunEvent) model {
@@ -60,7 +60,7 @@ func newModelWithCancel(events <-chan whatttft.RunEvent, cancel func()) model {
 		store:  newLiveStore(),
 		keys:   defaultKeyMap(),
 		help:   helpModel,
-		styles: defaultStyles(),
+		theme:  defaultTheme(),
 	}
 }
 
@@ -163,26 +163,6 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m model) render() string {
 	return renderDashboard(m)
-}
-
-func renderMetricRows(rows []metricRow) string {
-	var builder strings.Builder
-	builder.WriteString("metric                         count  p50       p95       p99       mean")
-	for _, row := range rows {
-		builder.WriteByte('\n')
-		fmt.Fprintf(
-			&builder,
-			"%-30s %5d  %-8s %-8s %-8s %-8s %s",
-			row.Name,
-			row.Count,
-			formatMetricValue(row.P50),
-			formatMetricValue(row.P95),
-			formatMetricValue(row.P99),
-			formatMetricValue(row.Mean),
-			row.Unit,
-		)
-	}
-	return builder.String()
 }
 
 func formatMetricValue(value *float64) string {

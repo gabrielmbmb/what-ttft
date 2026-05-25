@@ -3073,7 +3073,7 @@ Definition of done:
 
 ---
 
-### [ ] 33.6. Create a polished TUI design system and ntcharts-backed chart architecture
+### [x] 33.6. Create a polished TUI design system and ntcharts-backed chart architecture
 
 The full-screen dashboard from task 33.5 fixes the rough layout, but it is still visually utilitarian. Before expanding `bench --tui`, do a deliberate UI/UX design pass so every visible element has a job, charts feel like real terminal charts, and the dashboard can scale from small laptops to large terminals.
 
