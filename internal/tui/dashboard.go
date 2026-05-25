@@ -306,12 +306,35 @@ func renderTPSPanel(store liveStore, width int, height int, theme tuiTheme) stri
 	rows := store.MetricRows()
 	e2eTPS := metricRowByName(rows, metricE2EOutputTPS)
 	generationTPS := metricRowByName(rows, metricGenerationDeltaOutputTPS)
-	lines := []string{"tokens/s metrics use provider-reported or estimated usage only"}
-	lines = append(lines, compactMetricLine("e2e_output_tps", e2eTPS), compactMetricLine("generation_delta_output_tps", generationTPS), renderRatesLine(store))
+	bodyWidth := panelInnerWidth(width)
+	bodyHeight := panelInnerHeight(height)
+	if bodyWidth < 78 || bodyHeight < 3 {
+		lines := []string{
+			compactMetricLine("e2e_output_tps", e2eTPS),
+			compactMetricLine("generation_delta_output_tps", generationTPS),
+			renderRatesLine(store),
+		}
+		if e2eTPS.Count == 0 && generationTPS.Count == 0 {
+			lines = append(lines, "TPS unavailable: provider usage not reported")
+		}
+		return panel("E2E/TPS focus", strings.Join(lines, "\n"), width, height, theme, roleChartTPS)
+	}
+
+	lines := []string{
+		fmt.Sprintf("%-36s %5s  %-8s %-8s %-8s %-8s %s", "metric (successful measured reqs)", "count", "p50", "p95", "p99", "mean", "unit"),
+		metricTableLine(e2eTPS),
+		metricTableLine(generationTPS),
+	}
+	if bodyHeight >= 4 {
+		lines = append(lines, "usage source: provider-reported or estimated")
+	}
+	if bodyHeight >= 5 {
+		lines = append(lines, "run-level rates: "+renderRatesLine(store))
+	}
 	if e2eTPS.Count == 0 && generationTPS.Count == 0 {
 		lines = append(lines, "TPS unavailable: provider usage not reported")
 	}
-	return panel("E2E/TPS focus", strings.Join(lines, "\n"), width, height, theme, roleChartTPS)
+	return panel("E2E/TPS focus", fitToBox(strings.Join(lines, "\n"), bodyWidth, bodyHeight), width, height, theme, roleChartTPS)
 }
 
 func renderWaterfallPanel(store liveStore, width int, height int, theme tuiTheme) string {
@@ -361,7 +384,7 @@ func renderMetricsBody(store liveStore, width int, height int, helpVisible bool,
 
 	metricLines := []string{fmt.Sprintf("%-36s %5s  %-8s %-8s %-8s %-8s %s", "metric (successful measured reqs)", "count", "p50", "p95", "p99", "mean", "unit")}
 	for _, row := range orderedMetricRowsForPanel(store.MetricRows()) {
-		metricLines = append(metricLines, fmt.Sprintf("%-36s %5d  %-8s %-8s %-8s %-8s %s", row.Name, row.Count, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean), row.Unit))
+		metricLines = append(metricLines, metricTableLine(row))
 	}
 	footerLines := metricsFooterLines(store, helpVisible, status)
 	lines := fitMetricsLines(metricLines, footerLines, height)
@@ -419,6 +442,10 @@ func fitMetricsLines(metricLines []string, footerLines []string, height int) []s
 
 func compactMetricLine(label string, row metricRow) string {
 	return fmt.Sprintf("%s p50=%s p95=%s p99=%s mean=%s", label, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean))
+}
+
+func metricTableLine(row metricRow) string {
+	return fmt.Sprintf("%-36s %5d  %-8s %-8s %-8s %-8s %s", row.Name, row.Count, formatMetricValue(row.P50), formatMetricValue(row.P95), formatMetricValue(row.P99), formatMetricValue(row.Mean), row.Unit)
 }
 
 func orderedMetricRowsForPanel(rows []metricRow) []metricRow {

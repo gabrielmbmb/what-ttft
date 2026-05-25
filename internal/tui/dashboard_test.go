@@ -146,6 +146,19 @@ func TestMetricsPanelExplainsMissingTPS(t *testing.T) {
 	}
 }
 
+// TestFocusedE2ETPSPanelUsesReadableTable verifies mode 3 throughput details use aligned columns instead of dense prose.
+func TestFocusedE2ETPSPanelUsesReadableTable(t *testing.T) {
+	app := dashboardAppWithRecords(t)
+	app.pane = paneE2E
+	content := app.View().Content
+
+	for _, want := range []string{"E2E/TPS focus", "metric (successful measured reqs)", "count", "p50", "p95", "p99", "mean", metricE2EOutputTPS, metricGenerationDeltaOutputTPS} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("focused E2E/TPS panel missing %q:\n%s", want, content)
+		}
+	}
+}
+
 // TestMetricsPanelDistinguishesMissingFromObservedZero verifies nil metrics render as unavailable while true zero renders as 0.0.
 func TestMetricsPanelDistinguishesMissingFromObservedZero(t *testing.T) {
 	app := newModel(nil)
