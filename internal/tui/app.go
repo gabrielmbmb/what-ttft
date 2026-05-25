@@ -138,6 +138,9 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Cancel):
 		m.help.ShowAll = false
 		m.confirmingCancel = false
+		if m.store.targetDetail {
+			m.store.setTargetDetail(false)
+		}
 	case key.Matches(msg, m.keys.Quit):
 		if m.running && !m.completed && !m.canceled && !m.failed {
 			m.confirmingCancel = true
@@ -148,7 +151,16 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.focus = (m.focus + 1) % 4
 	case key.Matches(msg, m.keys.FocusPrev):
 		m.focus = (m.focus + 3) % 4
+	case key.Matches(msg, m.keys.TargetUp):
+		m.store.selectTarget(-1)
+	case key.Matches(msg, m.keys.TargetDown):
+		m.store.selectTarget(1)
+	case key.Matches(msg, m.keys.Enter):
+		if m.store.IsBenchmark() && m.store.selectedTargetID() != "" {
+			m.store.setTargetDetail(true)
+		}
 	case key.Matches(msg, m.keys.Summary):
+		m.store.setTargetDetail(false)
 		m.pane = paneSummary
 	case key.Matches(msg, m.keys.TTFT):
 		m.pane = paneTTFT

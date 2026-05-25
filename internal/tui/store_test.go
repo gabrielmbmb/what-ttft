@@ -166,6 +166,53 @@ func TestLiveStoreStatusCounts(t *testing.T) {
 	}
 }
 
+// TestLiveStoreBenchmarkTargetsTrackStatus verifies benchmark target rows transition through pending, running, and finished states.
+func TestLiveStoreBenchmarkTargetsTrackStatus(t *testing.T) {
+	store := newLiveStore()
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, BenchmarkName: "bench", Targets: []whatttft.RunEventTarget{
+		{TargetID: "target-a", TargetName: "Target A", Provider: "openai", Model: "gpt-a", TotalRequests: 1, MeasuredRequests: 1},
+		{TargetID: "target-b", TargetName: "Target B", Provider: "openai", Model: "gpt-b", TotalRequests: 1, MeasuredRequests: 1},
+	}, TotalRequests: 2, MeasuredRequests: 2})
+
+	rows := store.TargetRows()
+	if len(rows) != 2 || rows[0].Status != targetStatusPending || rows[1].Status != targetStatusPending {
+		t.Fatalf("initial target rows = %#v, want two pending rows", rows)
+	}
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventTargetStarted, TargetID: "target-a", TargetName: "Target A", Provider: "openai", Model: "gpt-a", TotalRequests: 1, MeasuredRequests: 1})
+	if progress := store.Progress(); progress.Total != 2 || progress.Measured != 2 {
+		t.Fatalf("benchmark progress after target start = %#v, want global total/measured 2/2", progress)
+	}
+	rows = store.TargetRows()
+	if rows[0].Status != targetStatusRunning || rows[1].Status != targetStatusPending {
+		t.Fatalf("started target rows = %#v, want target-a running target-b pending", rows)
+	}
+	record := tuiTestRecord("target-a-req-000000", "target-a", 10, 100, nil)
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, TargetID: "target-a", RequestID: record.RequestID, CompletedRequests: 1, SuccessfulRequests: 1, Record: &record})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventTargetFinished, TargetID: "target-a", TargetName: "Target A"})
+	rows = store.TargetRows()
+	if rows[0].Status != targetStatusFinished || rows[0].Completed != 1 || rows[0].Successful != 1 {
+		t.Fatalf("finished target row = %#v, want target-a finished completed/successful 1", rows[0])
+	}
+}
+
+// TestLiveStoreSelectedTargetStoreFiltersRecords verifies selected target detail charts use only that target's records.
+func TestLiveStoreSelectedTargetStoreFiltersRecords(t *testing.T) {
+	store := newLiveStore()
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, BenchmarkName: "bench", Targets: []whatttft.RunEventTarget{{TargetID: "target-a"}, {TargetID: "target-b"}}})
+	for _, record := range []whatttft.RequestRecord{
+		tuiTestRecord("target-a-req-000000", "target-a", 10, 100, nil),
+		tuiTestRecord("target-b-req-000000", "target-b", 90, 200, nil),
+	} {
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, TargetID: record.TargetID, RequestID: record.RequestID, Record: &record})
+	}
+	store.selectTarget(1)
+	selected := store.selectedTargetStore()
+	values := selected.RunSeries(metricTTFTDeltaMS)
+	if len(values) != 1 || values[0] != 90 {
+		t.Fatalf("selected target TTFT values = %#v, want only target-b value 90", values)
+	}
+}
+
 // TestLiveStoreCurrentTargetFallbacks verifies target labels degrade gracefully when IDs or names are missing.
 func TestLiveStoreCurrentTargetFallbacks(t *testing.T) {
 	store := newLiveStore()

@@ -94,6 +94,48 @@ type RunEventError struct {
 	Retryable bool `json:"retryable"`
 }
 
+// RunEventTarget is non-secret benchmark target metadata carried by benchmark-level events.
+type RunEventTarget struct {
+	// TargetID is the stable sanitized target identifier; empty is invalid for benchmark target metadata and contains no secrets.
+	TargetID string `json:"target_id"`
+
+	// TargetName is the optional human-readable target label; empty means unnamed and contains no secrets.
+	TargetName string `json:"target_name,omitempty"`
+
+	// Provider is the normalized provider name, such as "openai"; empty means unavailable and contains no secrets.
+	Provider string `json:"provider,omitempty"`
+
+	// ProviderAPI is the non-secret provider API surface label, such as "responses"; empty means unavailable.
+	ProviderAPI string `json:"provider_api,omitempty"`
+
+	// RequestedServiceTier is the non-secret service tier requested for this target; empty means unset or unavailable.
+	RequestedServiceTier string `json:"requested_service_tier,omitempty"`
+
+	// Model is the provider model identifier; empty means unavailable and must not contain API keys or credentials.
+	Model string `json:"model,omitempty"`
+
+	// ScenarioName is the scenario grouping label; empty means unnamed or unavailable and contains no secrets.
+	ScenarioName string `json:"scenario_name,omitempty"`
+
+	// CacheMode is the requested prompt/KV cache behavior for this target; empty means unavailable.
+	CacheMode CacheMode `json:"cache_mode,omitempty"`
+
+	// ConnectionMode is the requested HTTP connection reuse behavior for this target; empty means unavailable.
+	ConnectionMode ConnectionMode `json:"connection_mode,omitempty"`
+
+	// TotalRequests is the total planned request count for this target; zero means unavailable or no requests.
+	TotalRequests int `json:"total_requests,omitempty"`
+
+	// WarmupRequests is the planned warmup request count for this target; zero means none or unavailable.
+	WarmupRequests int `json:"warmup_requests,omitempty"`
+
+	// MeasuredRequests is the planned measured request count for this target; zero means none or unavailable.
+	MeasuredRequests int `json:"measured_requests,omitempty"`
+
+	// Concurrency is the configured maximum in-flight request count for this target; zero means unavailable.
+	Concurrency int `json:"concurrency,omitempty"`
+}
+
 // RunEvent is live benchmark telemetry for TUIs, event logs, and external consumers.
 type RunEvent struct {
 	// Sequence is a process-local monotonically increasing event sequence number; zero means unassigned, and values are not stable across reruns.
@@ -114,8 +156,14 @@ type RunEvent struct {
 	// TargetName is the optional human-readable target label associated with the event; empty means no target label was supplied and it must not contain secrets.
 	TargetName string `json:"target_name,omitempty"`
 
+	// Targets contains non-secret benchmark target metadata on benchmark-level events; nil means no target list was attached.
+	Targets []RunEventTarget `json:"targets,omitempty"`
+
 	// Provider is the normalized provider name associated with the event, such as "openai"; empty means unavailable and it must not contain secrets.
 	Provider string `json:"provider,omitempty"`
+
+	// ProviderAPI is the non-secret provider API surface label associated with the event, such as "responses"; empty means unavailable.
+	ProviderAPI string `json:"provider_api,omitempty"`
 
 	// Model is the provider model identifier associated with the event; empty means unavailable and it must not contain API keys or credentials.
 	Model string `json:"model,omitempty"`
@@ -189,6 +237,9 @@ func (event RunEvent) Clone() RunEvent {
 	cloned := event
 	cloned.Attempt = cloneIntPointer(event.Attempt)
 	cloned.Warmup = cloneBoolPointer(event.Warmup)
+	if event.Targets != nil {
+		cloned.Targets = append([]RunEventTarget(nil), event.Targets...)
+	}
 	if event.Record != nil {
 		record := cloneRequestRecord(*event.Record)
 		cloned.Record = &record

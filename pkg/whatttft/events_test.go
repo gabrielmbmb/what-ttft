@@ -57,27 +57,43 @@ func TestRunEventRepresentativeJSONRoundTrips(t *testing.T) {
 
 	tests := []RunEvent{
 		{
-			Sequence:         1,
-			Kind:             EventBenchmarkStarted,
-			WallUnixNano:     1700000000000000000,
-			BenchmarkName:    "model-compare",
+			Sequence:      1,
+			Kind:          EventBenchmarkStarted,
+			WallUnixNano:  1700000000000000000,
+			BenchmarkName: "model-compare",
+			Targets: []RunEventTarget{{
+				TargetID:             "target-a",
+				TargetName:           "Target A",
+				Provider:             "openai",
+				ProviderAPI:          "responses",
+				RequestedServiceTier: "priority",
+				Model:                "gpt-test",
+				ScenarioName:         "short",
+				CacheMode:            CacheBust,
+				ConnectionMode:       WarmConnections,
+				TotalRequests:        1,
+				MeasuredRequests:     1,
+				Concurrency:          1,
+			}},
 			TotalRequests:    2,
 			MeasuredRequests: 2,
 		},
 		{
-			Sequence:         2,
-			Kind:             EventTargetStarted,
-			WallUnixNano:     1700000000000000001,
-			BenchmarkName:    "model-compare",
-			TargetID:         "target-a",
-			TargetName:       "Target A",
-			Provider:         "openai",
-			Model:            "gpt-test",
-			ScenarioName:     "short",
-			CacheMode:        CacheBust,
-			ConnectionMode:   WarmConnections,
-			TotalRequests:    1,
-			MeasuredRequests: 1,
+			Sequence:             2,
+			Kind:                 EventTargetStarted,
+			WallUnixNano:         1700000000000000001,
+			BenchmarkName:        "model-compare",
+			TargetID:             "target-a",
+			TargetName:           "Target A",
+			Provider:             "openai",
+			ProviderAPI:          "responses",
+			Model:                "gpt-test",
+			ScenarioName:         "short",
+			CacheMode:            CacheBust,
+			ConnectionMode:       WarmConnections,
+			RequestedServiceTier: "priority",
+			TotalRequests:        1,
+			MeasuredRequests:     1,
 		},
 		{
 			Sequence:             3,
@@ -140,6 +156,11 @@ func TestRunEventRepresentativeJSONRoundTrips(t *testing.T) {
 		}
 		if original.TargetID != "" && got.TargetID != original.TargetID {
 			t.Fatalf("target_id = %q, want %q", got.TargetID, original.TargetID)
+		}
+		if len(original.Targets) > 0 {
+			if len(got.Targets) != len(original.Targets) || got.Targets[0].TargetID != original.Targets[0].TargetID {
+				t.Fatalf("targets = %#v, want %#v", got.Targets, original.Targets)
+			}
 		}
 		if original.Record != nil {
 			if got.Record == nil {
@@ -209,6 +230,7 @@ func TestRunEventCloneDefensiveCopy(t *testing.T) {
 	event := RunEvent{
 		Sequence:          9,
 		Kind:              EventRequestFinished,
+		Targets:           []RunEventTarget{{TargetID: "target-a", Model: "gpt-test"}},
 		WallUnixNano:      1700000000000000000,
 		TargetID:          "target-a",
 		Attempt:           &attempt,
@@ -272,6 +294,7 @@ func TestRunEventCloneDefensiveCopy(t *testing.T) {
 
 	cloned := event.Clone()
 
+	event.Targets[0].Model = "mutated"
 	*event.Attempt = 5
 	*event.Warmup = true
 	*event.Record.PromptTokens = 99
@@ -299,6 +322,9 @@ func TestRunEventCloneDefensiveCopy(t *testing.T) {
 	event.Summary.Groups[0].Connection.ProtocolCounts["HTTP/2.0"] = 99
 	event.Error.Message = "mutated"
 
+	if len(cloned.Targets) != 1 || cloned.Targets[0].Model != "gpt-test" {
+		t.Fatalf("cloned targets = %#v, want independent gpt-test target", cloned.Targets)
+	}
 	if cloned.Attempt == nil || *cloned.Attempt != 0 {
 		t.Fatalf("cloned attempt = %v, want pointer to zero", cloned.Attempt)
 	}

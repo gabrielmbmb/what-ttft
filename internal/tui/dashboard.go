@@ -112,12 +112,22 @@ func renderDashboardHeader(m model, width int, height int, theme tuiTheme) strin
 	if height >= 4 {
 		bodyLines = append(bodyLines, legend([]legendItem{{Label: "ttft_delta_ms", Role: roleChartTTFT}, {Label: "e2e_delta_ms", Role: roleChartE2E}, {Label: "TTFT histogram", Role: roleChartTTFT}, {Label: "e2e_output_tps", Role: roleChartTPS}}, theme))
 	}
-	return panel("what-ttft run", strings.Join(bodyLines, "\n"), width, height, theme, roleAccent)
+	title := "what-ttft run"
+	if m.store.IsBenchmark() {
+		title = "what-ttft bench"
+	}
+	return panel(title, strings.Join(bodyLines, "\n"), width, height, theme, roleAccent)
 }
 
 func dashboardContextLabels(store liveStore) []string {
 	parts := make([]string, 0, 8)
-	if store.provider != "" {
+	if store.IsBenchmark() {
+		if store.benchmarkName != "" {
+			parts = append(parts, "benchmark="+safeInline(store.benchmarkName))
+		}
+		parts = append(parts, "target_order="+safeInline(firstNonEmpty(store.targetOrder, string(whatttft.SerialTargetOrder))))
+	}
+	if store.provider != "" && !store.IsBenchmark() {
 		parts = append(parts, "provider="+safeInline(store.provider))
 	}
 	if store.model != "" {
@@ -147,6 +157,9 @@ func dashboardContextLabels(store liveStore) []string {
 func renderChartArea(store liveStore, width int, height int, mode pane, theme tuiTheme) string {
 	if height <= 0 || width <= 0 {
 		return ""
+	}
+	if store.IsBenchmark() {
+		return renderBenchChartArea(store, width, height, mode, theme)
 	}
 
 	switch mode {
@@ -412,11 +425,7 @@ func renderCompactMetricsBody(store liveStore, width int, height int, helpVisibl
 	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
 		lines = append(lines, "TPS unavailable: provider usage not reported")
 	}
-	if helpVisible {
-		lines = append(lines, "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help")
-	} else {
-		lines = append(lines, "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit")
-	}
+	lines = append(lines, keysHelpLine(store, helpVisible))
 	return fitToBox(strings.Join(lines, "\n"), width, height)
 }
 
@@ -427,12 +436,21 @@ func metricsFooterLines(store liveStore, helpVisible bool, status string) []stri
 		footerLines = append(footerLines, "TPS unavailable: provider usage not reported")
 	}
 	footerLines = append(footerLines, renderProgressStatusLine(store, status))
-	if helpVisible {
-		footerLines = append(footerLines, "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help")
-	} else {
-		footerLines = append(footerLines, "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit")
-	}
+	footerLines = append(footerLines, keysHelpLine(store, helpVisible))
 	return footerLines
+}
+
+func keysHelpLine(store liveStore, helpVisible bool) string {
+	if store.IsBenchmark() {
+		if helpVisible {
+			return "keys: ↑/↓ or j/k target  enter detail  esc overview  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  ? help"
+		}
+		return "keys: ? help  ↑/↓ target  enter detail  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
+	}
+	if helpVisible {
+		return "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help"
+	}
+	return "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
 }
 
 func fitMetricsLines(metricLines []string, footerLines []string, height int) []string {
@@ -531,6 +549,15 @@ func storeRates(store liveStore) (*float64, *float64) {
 		return nil, nil
 	}
 	return groups[0].SystemTPS, groups[0].RPS
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func stripStatusPrefix(status string) string {

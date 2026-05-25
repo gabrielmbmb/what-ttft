@@ -3,6 +3,7 @@ package tui
 import (
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/gabrielmbmb/what-ttft/internal/stats"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -35,6 +36,12 @@ type liveStore struct {
 	status               string
 	reportStatus         string
 	lastError            string
+	benchmarkMode        bool
+	targetOrder          string
+	selectedTarget       int
+	targetDetail         bool
+	targets              map[string]*targetState
+	targetOrderIDs       []string
 
 	totalRequests      int
 	warmupRequests     int
@@ -53,6 +60,7 @@ func newLiveStore() liveStore {
 	return liveStore{
 		activeRequests: make(map[string]struct{}),
 		records:        make(map[string]whatttft.RequestRecord),
+		targets:        make(map[string]*targetState),
 	}
 }
 
@@ -63,9 +71,14 @@ func (s *liveStore) applyEvent(event whatttft.RunEvent) {
 	if s.records == nil {
 		s.records = make(map[string]whatttft.RequestRecord)
 	}
+	if s.targets == nil {
+		s.targets = make(map[string]*targetState)
+	}
 
 	s.applyEventContext(event)
 	s.applyEventCounts(event)
+
+	s.applyTargetEvent(event)
 
 	switch event.Kind {
 	case whatttft.EventBenchmarkStarted, whatttft.EventRunStarted:
@@ -105,9 +118,103 @@ func (s *liveStore) applyEvent(event whatttft.RunEvent) {
 		summary := copyRunSummary(*event.Summary)
 		s.summary = &summary
 	}
+	if event.Kind == whatttft.EventBenchmarkCanceled {
+		s.markUnfinishedTargets(targetStatusCanceled)
+	}
+	if event.Kind == whatttft.EventBenchmarkFailed {
+		s.markUnfinishedTargets(targetStatusFailed)
+	}
 	if event.Error != nil {
 		s.lastError = event.Error.Message
 	}
+}
+
+func (s *liveStore) markUnfinishedTargets(status string) {
+	for _, targetID := range s.targetOrderIDs {
+		state := s.targets[targetID]
+		if state == nil || state.Status == targetStatusFinished {
+			continue
+		}
+		state.Status = status
+		state.Active = 0
+	}
+}
+
+func (s *liveStore) applyTargetEvent(event whatttft.RunEvent) {
+	if event.Kind == whatttft.EventBenchmarkStarted || len(event.Targets) > 0 || (event.BenchmarkName != "" && event.TargetID != "") {
+		s.benchmarkMode = true
+	}
+	if event.Kind == whatttft.EventBenchmarkStarted {
+		s.targetOrder = string(whatttft.SerialTargetOrder)
+	}
+	for _, eventTarget := range event.Targets {
+		state := s.ensureTarget(eventTarget.TargetID)
+		state.Name = eventTarget.TargetName
+		state.Provider = eventTarget.Provider
+		state.ProviderAPI = eventTarget.ProviderAPI
+		state.Model = eventTarget.Model
+		state.RequestedServiceTier = eventTarget.RequestedServiceTier
+		state.ScenarioName = eventTarget.ScenarioName
+		state.CacheMode = eventTarget.CacheMode
+		state.ConnectionMode = eventTarget.ConnectionMode
+		state.Total = eventTarget.TotalRequests
+		state.Warmup = eventTarget.WarmupRequests
+		state.Measured = eventTarget.MeasuredRequests
+		state.Concurrency = eventTarget.Concurrency
+		if state.Status == "" {
+			state.Status = targetStatusPending
+		}
+	}
+
+	if event.TargetID == "" {
+		return
+	}
+	state := s.ensureTarget(event.TargetID)
+	state.applyEventContext(event)
+	if (event.Kind == whatttft.EventRequestScheduled || event.Kind == whatttft.EventRequestDispatched) && event.RequestID != "" {
+		if _, exists := s.activeRequests[event.RequestID]; !exists {
+			state.Active++
+		}
+	}
+	if event.Kind == whatttft.EventRequestFinished && event.RequestID != "" && state.Active > 0 {
+		state.Active--
+	}
+	state.applyEventPlanCounts(event)
+	if event.Kind != whatttft.EventTargetStarted && event.Kind != whatttft.EventTargetFinished {
+		state.applyEventOutcomeCounts(event)
+	}
+
+	switch event.Kind {
+	case whatttft.EventTargetStarted, whatttft.EventRunStarted, whatttft.EventRequestScheduled, whatttft.EventRequestDispatched:
+		state.Status = targetStatusRunning
+	case whatttft.EventTargetFinished, whatttft.EventRunFinished:
+		state.Status = targetStatusFinished
+		state.Active = 0
+	case whatttft.EventTargetFailed, whatttft.EventRunFailed:
+		state.Status = targetStatusFailed
+	case whatttft.EventRunCanceled:
+		state.Status = targetStatusCanceled
+		state.Active = 0
+	}
+	if event.Error != nil {
+		state.LastError = event.Error.Message
+	}
+}
+
+func (s *liveStore) ensureTarget(targetID string) *targetState {
+	if strings.TrimSpace(targetID) == "" {
+		targetID = "target"
+	}
+	if s.targets == nil {
+		s.targets = make(map[string]*targetState)
+	}
+	if state, ok := s.targets[targetID]; ok {
+		return state
+	}
+	state := &targetState{ID: targetID, Status: targetStatusPending}
+	s.targets[targetID] = state
+	s.targetOrderIDs = append(s.targetOrderIDs, targetID)
+	return state
 }
 
 func (s *liveStore) applyEventContext(event whatttft.RunEvent) {
@@ -144,6 +251,9 @@ func (s *liveStore) applyEventContext(event whatttft.RunEvent) {
 }
 
 func (s *liveStore) applyEventCounts(event whatttft.RunEvent) {
+	if s.benchmarkMode && event.TargetID != "" {
+		return
+	}
 	if event.TotalRequests != 0 {
 		s.totalRequests = event.TotalRequests
 	}
@@ -171,8 +281,49 @@ func (s *liveStore) addRecord(record whatttft.RequestRecord) {
 	}
 	s.records[copied.RequestID] = copied
 	s.applyRecordContext(copied)
+	s.applyRecordTargetContext(copied)
 	if s.completedRequests == 0 || s.completedRequests < len(s.records) {
 		s.completedRequests = len(s.records)
+	}
+}
+
+func (s *liveStore) applyRecordTargetContext(record whatttft.RequestRecord) {
+	if record.TargetID == "" {
+		return
+	}
+	state := s.ensureTarget(record.TargetID)
+	if state.Name == "" {
+		state.Name = record.TargetName
+	}
+	if state.Provider == "" {
+		state.Provider = record.Provider
+	}
+	if state.Model == "" {
+		state.Model = record.Model
+	}
+	if state.ScenarioName == "" {
+		state.ScenarioName = record.ScenarioName
+	}
+	if state.CacheMode == "" {
+		state.CacheMode = record.CacheMode
+	}
+	if state.ConnectionMode == "" {
+		state.ConnectionMode = record.ConnectionMode
+	}
+	if state.RequestedServiceTier == "" {
+		state.RequestedServiceTier = record.RequestedServiceTier
+	}
+	if state.RequestedServiceTier == "" {
+		state.RequestedServiceTier = record.HTTP.RequestedServiceTier
+	}
+	if state.ObservedServiceTier == "" {
+		state.ObservedServiceTier = record.ObservedServiceTier
+	}
+	if state.ObservedServiceTier == "" {
+		state.ObservedServiceTier = record.HTTP.ObservedServiceTier
+	}
+	if state.Total == 0 {
+		state.Total = state.Warmup + state.Measured
 	}
 }
 
@@ -208,6 +359,10 @@ func (s *liveStore) applyRecordContext(record whatttft.RequestRecord) {
 
 // Progress returns a copy of the current request progress counters tracked from events and completed records.
 func (s liveStore) Progress() progressSnapshot {
+	if s.IsBenchmark() && len(s.targetOrderIDs) > 0 {
+		return s.benchmarkProgress()
+	}
+
 	completed := s.completedRequests
 	successful := s.successfulRequests
 	errors := s.errorRequests
@@ -234,6 +389,22 @@ func (s liveStore) Progress() progressSnapshot {
 	}
 }
 
+func (s liveStore) benchmarkProgress() progressSnapshot {
+	progress := progressSnapshot{Total: s.totalRequests, Warmup: s.warmupRequests, Measured: s.measuredRequests, Active: len(s.activeRequests)}
+	for _, row := range s.TargetRows() {
+		progress.Completed += row.Completed
+		progress.Successful += row.Successful
+		progress.Errors += row.Errors
+	}
+	if progress.Completed == 0 {
+		progress.Completed = len(s.completedRecords())
+	}
+	if progress.Successful == 0 && progress.Errors == 0 {
+		progress.Successful, progress.Errors = measuredOutcomeCounts(s.completedRecords())
+	}
+	return progress
+}
+
 func (s liveStore) progress() progressSnapshot {
 	return s.Progress()
 }
@@ -254,6 +425,119 @@ func (s liveStore) CurrentTarget() string {
 
 func (s liveStore) currentTarget() string {
 	return s.CurrentTarget()
+}
+
+// IsBenchmark reports whether the live event stream represents a multi-target benchmark.
+func (s liveStore) IsBenchmark() bool {
+	return s.benchmarkMode || s.benchmarkName != "" && len(s.targetOrderIDs) > 0
+}
+
+// TargetRows returns target progress rows in configured benchmark order.
+func (s liveStore) TargetRows() []targetRow {
+	rows := make([]targetRow, 0, len(s.targetOrderIDs))
+	groups := groupsByTargetID(s.Groups())
+	for _, targetID := range s.targetOrderIDs {
+		state := s.targets[targetID]
+		if state == nil {
+			continue
+		}
+		row := state.row()
+		if group := groups[targetID]; group != nil {
+			row.Successful = max(row.Successful, group.SuccessfulRequests)
+			row.Errors = max(row.Errors, group.ErrorRequests)
+		}
+		records := s.recordsForTarget(targetID)
+		if len(records) > row.Completed {
+			row.Completed = len(records)
+		}
+		computedSuccessful, computedErrors := measuredOutcomeCounts(records)
+		if computedSuccessful > row.Successful {
+			row.Successful = computedSuccessful
+		}
+		if computedErrors > row.Errors {
+			row.Errors = computedErrors
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (s liveStore) selectedTargetID() string {
+	if len(s.targetOrderIDs) == 0 {
+		return ""
+	}
+	index := s.selectedTarget
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(s.targetOrderIDs) {
+		index = len(s.targetOrderIDs) - 1
+	}
+	return s.targetOrderIDs[index]
+}
+
+func (s *liveStore) selectTarget(delta int) {
+	if s == nil || len(s.targetOrderIDs) == 0 {
+		return
+	}
+	s.selectedTarget += delta
+	if s.selectedTarget < 0 {
+		s.selectedTarget = 0
+	}
+	if s.selectedTarget >= len(s.targetOrderIDs) {
+		s.selectedTarget = len(s.targetOrderIDs) - 1
+	}
+}
+
+func (s *liveStore) setTargetDetail(detail bool) {
+	if s == nil {
+		return
+	}
+	s.targetDetail = detail
+}
+
+func (s liveStore) selectedTargetStore() liveStore {
+	targetID := s.selectedTargetID()
+	if targetID == "" {
+		return s
+	}
+	selected := s
+	selected.records = make(map[string]whatttft.RequestRecord)
+	selected.recordOrder = nil
+	selected.activeRequests = make(map[string]struct{})
+	for _, requestID := range s.recordOrder {
+		record, ok := s.records[requestID]
+		if !ok || record.TargetID != targetID {
+			continue
+		}
+		selected.records[requestID] = copyRequestRecord(record)
+		selected.recordOrder = append(selected.recordOrder, requestID)
+	}
+	selected.summary = nil
+	selected.targetID = targetID
+	if state := s.targets[targetID]; state != nil {
+		selected.targetName = state.Name
+		selected.provider = state.Provider
+		selected.model = state.Model
+		selected.scenarioName = state.ScenarioName
+		selected.cacheMode = state.CacheMode
+		selected.connectionMode = state.ConnectionMode
+		selected.requestedServiceTier = state.RequestedServiceTier
+		selected.observedServiceTier = state.ObservedServiceTier
+	}
+	return selected
+}
+
+func (s liveStore) recordsForTarget(targetID string) []whatttft.RequestRecord {
+	records := make([]whatttft.RequestRecord, 0)
+	for _, requestID := range s.recordOrder {
+		record, ok := s.records[requestID]
+		if !ok || record.TargetID != targetID {
+			continue
+		}
+		records = append(records, copyRequestRecord(record))
+	}
+	return records
 }
 
 // Groups returns summary groups sorted in the same stable order as whatttft.Summarize.
@@ -391,6 +675,14 @@ func (s liveStore) metricValues(name string) []float64 {
 	return values
 }
 
+const (
+	targetStatusPending  = "pending"
+	targetStatusRunning  = "running"
+	targetStatusFinished = "finished"
+	targetStatusFailed   = "failed"
+	targetStatusCanceled = "canceled"
+)
+
 type progressSnapshot struct {
 	Total      int
 	Warmup     int
@@ -399,6 +691,136 @@ type progressSnapshot struct {
 	Successful int
 	Errors     int
 	Active     int
+}
+
+type targetState struct {
+	ID                   string
+	Name                 string
+	Provider             string
+	ProviderAPI          string
+	Model                string
+	ScenarioName         string
+	CacheMode            whatttft.CacheMode
+	ConnectionMode       whatttft.ConnectionMode
+	RequestedServiceTier string
+	ObservedServiceTier  string
+	Status               string
+	LastError            string
+	Total                int
+	Warmup               int
+	Measured             int
+	Completed            int
+	Successful           int
+	Errors               int
+	Active               int
+	Concurrency          int
+}
+
+type targetRow struct {
+	ID                   string
+	Name                 string
+	Provider             string
+	ProviderAPI          string
+	Model                string
+	ScenarioName         string
+	CacheMode            whatttft.CacheMode
+	ConnectionMode       whatttft.ConnectionMode
+	RequestedServiceTier string
+	ObservedServiceTier  string
+	Status               string
+	Total                int
+	Warmup               int
+	Measured             int
+	Completed            int
+	Successful           int
+	Errors               int
+	Active               int
+	Concurrency          int
+}
+
+func (s *targetState) applyEventContext(event whatttft.RunEvent) {
+	if event.TargetName != "" {
+		s.Name = event.TargetName
+	}
+	if event.Provider != "" {
+		s.Provider = event.Provider
+	}
+	if event.ProviderAPI != "" {
+		s.ProviderAPI = event.ProviderAPI
+	}
+	if event.Model != "" {
+		s.Model = event.Model
+	}
+	if event.ScenarioName != "" {
+		s.ScenarioName = event.ScenarioName
+	}
+	if event.CacheMode != "" {
+		s.CacheMode = event.CacheMode
+	}
+	if event.ConnectionMode != "" {
+		s.ConnectionMode = event.ConnectionMode
+	}
+	if event.RequestedServiceTier != "" {
+		s.RequestedServiceTier = event.RequestedServiceTier
+	}
+	if event.Concurrency != 0 {
+		s.Concurrency = event.Concurrency
+	}
+}
+
+func (s *targetState) applyEventPlanCounts(event whatttft.RunEvent) {
+	if event.TotalRequests != 0 {
+		s.Total = event.TotalRequests
+	}
+	if event.WarmupRequests != 0 {
+		s.Warmup = event.WarmupRequests
+	}
+	if event.MeasuredRequests != 0 {
+		s.Measured = event.MeasuredRequests
+	}
+}
+
+func (s *targetState) applyEventOutcomeCounts(event whatttft.RunEvent) {
+	if event.CompletedRequests != 0 {
+		s.Completed = event.CompletedRequests
+	}
+	if event.SuccessfulRequests != 0 {
+		s.Successful = event.SuccessfulRequests
+	}
+	if event.ErrorRequests != 0 {
+		s.Errors = event.ErrorRequests
+	}
+}
+
+func targetStatusOrPending(status string) string {
+	if strings.TrimSpace(status) == "" {
+		return targetStatusPending
+	}
+	return status
+}
+
+func (s targetState) row() targetRow {
+	return targetRow{
+		ID:                   s.ID,
+		Name:                 s.Name,
+		Provider:             s.Provider,
+		ProviderAPI:          s.ProviderAPI,
+		Model:                s.Model,
+		ScenarioName:         s.ScenarioName,
+		CacheMode:            s.CacheMode,
+		ConnectionMode:       s.ConnectionMode,
+		RequestedServiceTier: s.RequestedServiceTier,
+		ObservedServiceTier:  s.ObservedServiceTier,
+		Status:               targetStatusOrPending(s.Status),
+		Total:                s.Total,
+		Warmup:               s.Warmup,
+		Measured:             s.Measured,
+		Completed:            s.Completed,
+		Successful:           s.Successful,
+		Errors:               s.Errors,
+		Active:               s.Active,
+		Concurrency:          s.Concurrency,
+	}
 }
 
 type metricRow struct {
@@ -422,6 +844,19 @@ type slowRequest struct {
 type statusCounts struct {
 	ErrorCategories map[string]int
 	StatusCodes     map[string]int
+}
+
+func groupsByTargetID(groups []whatttft.SummaryGroup) map[string]*whatttft.SummaryGroup {
+	byTargetID := make(map[string]*whatttft.SummaryGroup, len(groups))
+	for index := range groups {
+		group := groups[index]
+		if group.TargetID == "" {
+			continue
+		}
+		copied := group
+		byTargetID[group.TargetID] = &copied
+	}
+	return byTargetID
 }
 
 func metricRowFromValues(name string, unit string, values []float64) metricRow {

@@ -3261,7 +3261,7 @@ Definition of done:
 
 ---
 
-### [ ] 34. Wire `what-ttft bench --tui` to target-aware live dashboards
+### [x] 34. Wire `what-ttft bench --tui` to target-aware live dashboards
 
 Files:
 

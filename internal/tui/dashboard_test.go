@@ -103,6 +103,38 @@ func TestDashboardDefaultShowsCharts(t *testing.T) {
 	}
 }
 
+// TestBenchmarkDashboardShowsTargetsAndComparison verifies bench events render target progress and comparison views.
+func TestBenchmarkDashboardShowsTargetsAndComparison(t *testing.T) {
+	app := benchmarkDashboardAppWithRecords(t)
+	content := app.View().Content
+
+	for _, want := range []string{"what-ttft bench", "target_order=serial", "Targets · target_order=serial", "target-a", "target-b", "responses", "default", "finished", "Target comparison", "TTFT target percentiles"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("benchmark dashboard missing %q:\n%s", want, content)
+		}
+	}
+	for _, forbidden := range []string{"SECRET_API_KEY", "Authorization", "prompt text"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("benchmark dashboard rendered forbidden string %q:\n%s", forbidden, content)
+		}
+	}
+}
+
+// TestBenchmarkDashboardSelectedTargetDetailUsesSelectedRecords verifies selected-target detail is scoped to one target.
+func TestBenchmarkDashboardSelectedTargetDetailUsesSelectedRecords(t *testing.T) {
+	app := benchmarkDashboardAppWithRecords(t)
+	app.store.selectTarget(1)
+	app.store.setTargetDetail(true)
+	content := renderBenchTargetDetail(app.store, 120, 20, app.theme)
+
+	if !strings.Contains(content, "selected=target-b") || !strings.Contains(content, "90.0") {
+		t.Fatalf("selected target detail missing target-b values:\n%s", content)
+	}
+	if strings.Contains(content, "10.0") {
+		t.Fatalf("selected target detail leaked target-a value:\n%s", content)
+	}
+}
+
 // TestDashboardChartsUpdateOnRequestFinished verifies request completion changes chart output in realtime.
 func TestDashboardChartsUpdateOnRequestFinished(t *testing.T) {
 	app := newModel(nil)
@@ -196,6 +228,26 @@ func TestDashboardDoesNotRenderSecrets(t *testing.T) {
 			t.Fatalf("dashboard rendered forbidden string %q:\n%s", forbidden, content)
 		}
 	}
+}
+
+func benchmarkDashboardAppWithRecords(t *testing.T) model {
+	t.Helper()
+
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 140, Height: 36})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, BenchmarkName: "bench-test", TotalRequests: 2, MeasuredRequests: 2, Targets: []whatttft.RunEventTarget{
+		{TargetID: "target-a", TargetName: "Target A", Provider: "openai", ProviderAPI: "responses", RequestedServiceTier: "default", Model: "gpt-a", ScenarioName: "bench-short", TotalRequests: 1, MeasuredRequests: 1},
+		{TargetID: "target-b", TargetName: "Target B", Provider: "openai", ProviderAPI: "responses", RequestedServiceTier: "default", Model: "gpt-b", ScenarioName: "bench-short", TotalRequests: 1, MeasuredRequests: 1},
+	}}})
+	for _, record := range []whatttft.RequestRecord{
+		tuiTestRecord("target-a-req-000000", "target-a", 10, 100, nil),
+		tuiTestRecord("target-b-req-000000", "target-b", 90, 200, nil),
+	} {
+		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventTargetStarted, TargetID: record.TargetID, TargetName: "Target " + strings.ToUpper(strings.TrimPrefix(record.TargetID, "target-")), Provider: "openai", Model: record.Model, TotalRequests: 1, MeasuredRequests: 1}})
+		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, TargetID: record.TargetID, RequestID: record.RequestID, Record: &record, CompletedRequests: 1, SuccessfulRequests: 1}})
+		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventTargetFinished, TargetID: record.TargetID}})
+	}
+	return app
 }
 
 func dashboardAppWithRecords(t *testing.T) model {

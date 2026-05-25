@@ -35,6 +35,12 @@ type BenchmarkTarget struct {
 	// Provider is the provider adapter used for this target; nil is invalid and no network requests are sent until all targets pass preflight validation.
 	Provider Provider
 
+	// ProviderAPI is the non-secret provider API surface label for display, such as "responses" or "chat-completions"; empty means unavailable.
+	ProviderAPI string
+
+	// RequestedServiceTier is the non-secret service tier requested for display, such as "default" or "priority"; empty means unset or unavailable.
+	RequestedServiceTier string
+
 	// Config is the single-target run configuration for this target; TargetID, TargetName, and RequestIDPrefix are overwritten from ID and Name during benchmark execution.
 	Config RunConfig
 }
@@ -184,6 +190,7 @@ func (r *BenchmarkRunner) baseBenchmarkEvent(kind RunEventKind, targets []normal
 	event := RunEvent{
 		Kind:             kind,
 		BenchmarkName:    r.cfg.Name,
+		Targets:          benchmarkEventTargets(targets),
 		TotalRequests:    totalWarmup + totalMeasured,
 		WarmupRequests:   totalWarmup,
 		MeasuredRequests: totalMeasured,
@@ -197,19 +204,46 @@ func (r *BenchmarkRunner) baseBenchmarkEvent(kind RunEventKind, targets []normal
 	return event
 }
 
+func benchmarkEventTargets(targets []normalizedBenchmarkTarget) []RunEventTarget {
+	eventTargets := make([]RunEventTarget, 0, len(targets))
+	for _, target := range targets {
+		eventTarget := RunEventTarget{
+			TargetID:             target.config.TargetID,
+			TargetName:           target.config.TargetName,
+			ProviderAPI:          target.providerAPI,
+			RequestedServiceTier: target.requestedServiceTier,
+			ScenarioName:         target.config.Scenario.Name,
+			CacheMode:            target.config.CacheMode,
+			ConnectionMode:       target.config.ConnectionMode,
+			TotalRequests:        target.config.WarmupRequests + target.config.MeasuredRequests,
+			WarmupRequests:       target.config.WarmupRequests,
+			MeasuredRequests:     target.config.MeasuredRequests,
+			Concurrency:          target.config.Concurrency,
+		}
+		if target.provider != nil {
+			eventTarget.Provider = target.provider.Name()
+			eventTarget.Model = target.provider.Model()
+		}
+		eventTargets = append(eventTargets, eventTarget)
+	}
+	return eventTargets
+}
+
 func benchmarkTargetEvent(kind RunEventKind, benchmarkName string, target normalizedBenchmarkTarget, result *BenchmarkResult) RunEvent {
 	event := RunEvent{
-		Kind:             kind,
-		BenchmarkName:    benchmarkName,
-		TargetID:         target.config.TargetID,
-		TargetName:       target.config.TargetName,
-		ScenarioName:     target.config.Scenario.Name,
-		CacheMode:        target.config.CacheMode,
-		ConnectionMode:   target.config.ConnectionMode,
-		TotalRequests:    target.config.WarmupRequests + target.config.MeasuredRequests,
-		WarmupRequests:   target.config.WarmupRequests,
-		MeasuredRequests: target.config.MeasuredRequests,
-		Concurrency:      target.config.Concurrency,
+		Kind:                 kind,
+		BenchmarkName:        benchmarkName,
+		TargetID:             target.config.TargetID,
+		TargetName:           target.config.TargetName,
+		ProviderAPI:          target.providerAPI,
+		ScenarioName:         target.config.Scenario.Name,
+		CacheMode:            target.config.CacheMode,
+		ConnectionMode:       target.config.ConnectionMode,
+		RequestedServiceTier: target.requestedServiceTier,
+		TotalRequests:        target.config.WarmupRequests + target.config.MeasuredRequests,
+		WarmupRequests:       target.config.WarmupRequests,
+		MeasuredRequests:     target.config.MeasuredRequests,
+		Concurrency:          target.config.Concurrency,
 	}
 	if target.provider != nil {
 		event.Provider = target.provider.Name()
@@ -226,8 +260,10 @@ func benchmarkTargetEvent(kind RunEventKind, benchmarkName string, target normal
 }
 
 type normalizedBenchmarkTarget struct {
-	provider Provider
-	config   RunConfig
+	provider             Provider
+	providerAPI          string
+	requestedServiceTier string
+	config               RunConfig
 }
 
 func normalizeBenchmarkConfig(cfg BenchmarkConfig) ([]normalizedBenchmarkTarget, error) {
@@ -262,8 +298,10 @@ func normalizeBenchmarkConfig(cfg BenchmarkConfig) ([]normalizedBenchmarkTarget,
 		runConfig.RequestIDPrefix = id + "-"
 
 		targets = append(targets, normalizedBenchmarkTarget{
-			provider: target.Provider,
-			config:   runConfig,
+			provider:             target.Provider,
+			providerAPI:          target.ProviderAPI,
+			requestedServiceTier: target.RequestedServiceTier,
+			config:               runConfig,
 		})
 	}
 

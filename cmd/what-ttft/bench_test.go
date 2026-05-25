@@ -86,6 +86,99 @@ func TestBenchCommandTUILauncherIsInjectable(t *testing.T) {
 	}
 }
 
+// TestBenchCommandTUIPathExecutesBenchmarkAndWritesReports verifies the --tui path uses the shared execution callback and report writer.
+func TestBenchCommandTUIPathExecutesBenchmarkAndWritesReports(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "bench-cli-tui-key"
+	oldLauncher := benchTUILauncher
+	defer func() { benchTUILauncher = oldLauncher }()
+
+	t.Setenv("WHAT_TTFT_BENCH_KEY", placeholderAPIKey)
+	server := testserver.NewOpenAIServer(testserver.OpenAIConfig{Steps: benchResponseSteps()})
+	defer server.Close()
+	configPath := writeBenchConfig(t, benchYAML(server.URL(), "WHAT_TTFT_BENCH_KEY", "default"))
+	outputDir := filepath.Join(t.TempDir(), "reports")
+
+	var observedEvents []whatttft.RunEvent
+	benchTUILauncher = func(ctx context.Context, request benchTUILaunchRequest) int {
+		execution := request.Execute(ctx, whatttft.RunObserverFunc(func(_ context.Context, event whatttft.RunEvent) {
+			observedEvents = append(observedEvents, event)
+		}))
+		return finishBenchCommand(request.Stdout, request.Stderr, request.Plan, execution)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", outputDir, "--tui"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !containsRunEventKind(observedEvents, whatttft.EventBenchmarkStarted) || !containsRunEventKind(observedEvents, whatttft.EventTargetStarted) || !containsRunEventKind(observedEvents, whatttft.EventReportWriteFinished) {
+		t.Fatalf("bench TUI events missing from %#v", runEventKinds(observedEvents))
+	}
+	started := firstRunEventKind(observedEvents, whatttft.EventBenchmarkStarted)
+	if started == nil || len(started.Targets) != 2 || started.Targets[0].TargetID != "target-a" || started.Targets[1].TargetID != "target-b" {
+		t.Fatalf("benchmark_started targets = %#v, want target-a,target-b", started)
+	}
+	if started.Targets[0].ProviderAPI != "responses" || started.Targets[0].RequestedServiceTier != "default" {
+		t.Fatalf("benchmark_started target metadata = %#v, want responses/default", started.Targets[0])
+	}
+	if !strings.Contains(stdout.String(), "wrote results to "+outputDir) {
+		t.Fatalf("stdout missing final output dir:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked in bench TUI output\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	for _, name := range []string{"run.json", "requests.jsonl", "summary.json", "summary.md"} {
+		if _, err := os.Stat(filepath.Join(outputDir, name)); err != nil {
+			t.Fatalf("stat bench TUI %s: %v", name, err)
+		}
+	}
+}
+
+// TestBenchCommandTUIPathCancellationWritesPartialReports verifies TUI-triggered cancellation writes partial combined reports.
+func TestBenchCommandTUIPathCancellationWritesPartialReports(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "bench-cli-tui-cancel-key"
+	oldLauncher := benchTUILauncher
+	defer func() { benchTUILauncher = oldLauncher }()
+
+	t.Setenv("WHAT_TTFT_BENCH_KEY", placeholderAPIKey)
+	server := testserver.NewOpenAIServer(testserver.OpenAIConfig{Steps: benchResponseSteps()})
+	defer server.Close()
+	configPath := writeBenchConfig(t, strings.Replace(benchYAML(server.URL(), "WHAT_TTFT_BENCH_KEY", "default"), "samples: 1", "samples: 2", 1))
+	outputDir := filepath.Join(t.TempDir(), "reports")
+
+	benchTUILauncher = func(ctx context.Context, request benchTUILaunchRequest) int {
+		benchCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		execution := request.Execute(benchCtx, whatttft.RunObserverFunc(func(_ context.Context, event whatttft.RunEvent) {
+			if event.Kind == whatttft.EventRequestFinished && event.TargetID == "target-b" {
+				cancel()
+			}
+		}))
+		return finishBenchCommand(request.Stdout, request.Stderr, request.Plan, execution)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", outputDir, "--tui"}, &stdout, &stderr)
+	if exitCode != interruptedExitCode {
+		t.Fatalf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", exitCode, interruptedExitCode, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "benchmark canceled; wrote partial results to "+outputDir) {
+		t.Fatalf("stdout missing partial report message:\n%s", stdout.String())
+	}
+	var summary whatttft.RunSummary
+	readCLIJSONFile(t, filepath.Join(outputDir, "summary.json"), &summary)
+	if summary.SuccessfulRequests == 0 || summary.SuccessfulRequests >= 4 {
+		t.Fatalf("partial summary successful requests = %d, want between 1 and 3", summary.SuccessfulRequests)
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked in canceled bench TUI output\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
 // TestBenchCommandRejectsInvalidYAML verifies config parse and validation errors use usage exit code 2.
 func TestBenchCommandRejectsInvalidYAML(t *testing.T) {
 	configPath := writeBenchConfig(t, `
@@ -309,6 +402,15 @@ func TestBenchCommandServiceTierOverride(t *testing.T) {
 			t.Fatalf("service tier = %q, want priority override", request.ServiceTier)
 		}
 	}
+}
+
+func firstRunEventKind(events []whatttft.RunEvent, kind whatttft.RunEventKind) *whatttft.RunEvent {
+	for index := range events {
+		if events[index].Kind == kind {
+			return &events[index]
+		}
+	}
+	return nil
 }
 
 func benchYAML(baseURL string, apiKeyEnv string, serviceTier string) string {

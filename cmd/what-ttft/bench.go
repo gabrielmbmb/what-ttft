@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/gabrielmbmb/what-ttft/internal/configfile"
+	"github.com/gabrielmbmb/what-ttft/internal/eventbus"
 	"github.com/gabrielmbmb/what-ttft/internal/httptracecap"
 	"github.com/gabrielmbmb/what-ttft/internal/report"
+	"github.com/gabrielmbmb/what-ttft/internal/tui"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
@@ -93,9 +95,50 @@ type benchTUILaunchFunc func(context.Context, benchTUILaunchRequest) int
 
 var benchTUILauncher benchTUILaunchFunc = defaultBenchTUILauncher
 
-func defaultBenchTUILauncher(_ context.Context, request benchTUILaunchRequest) int {
-	writeText(request.Stderr, "bench --tui is not wired yet; live dashboards will be enabled in a later v0.3 task\n")
-	return 1
+func defaultBenchTUILauncher(ctx context.Context, request benchTUILaunchRequest) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	benchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	events := make(chan whatttft.RunEvent, 1024)
+	tuiSink := tui.NewEventSink(events)
+	bus := eventbus.New([]eventbus.Sink{tuiSink}, eventbus.Options{})
+	executionCh := make(chan commandExecution, 1)
+	go func() {
+		execution := request.Execute(benchCtx, bus)
+		if closeErr := bus.Close(context.Background()); closeErr != nil && execution.ReportErr == nil {
+			execution.ReportErr = fmt.Errorf("close event bus: %w", closeErr)
+		}
+		executionCh <- execution
+	}()
+
+	tuiErr := tui.Run(benchCtx, tui.RunOptions{
+		Events: events,
+		Cancel: cancel,
+		Output: request.Stdout,
+	})
+	if tuiErr != nil {
+		cancel()
+		execution := <-executionCh
+		writeFormatted(request.Stderr, "bench TUI failed: %v\n", tuiErr)
+		if execution.ReportErr != nil {
+			writeFormatted(request.Stderr, "write reports: %v\n", execution.ReportErr)
+		}
+		return 1
+	}
+
+	var execution commandExecution
+	select {
+	case execution = <-executionCh:
+	default:
+		cancel()
+		execution = <-executionCh
+	}
+
+	return finishBenchCommand(request.Stdout, request.Stderr, request.Plan, execution)
 }
 
 func executeBenchCommand(ctx context.Context, plan *configfile.Config, cliCfg benchCLIConfig, args []string, observer whatttft.RunObserver) commandExecution {
@@ -292,10 +335,12 @@ func buildBenchmarkConfig(plan *configfile.Config) (whatttft.BenchmarkConfig, er
 			HTTPClient:         client,
 		})
 		targets = append(targets, whatttft.BenchmarkTarget{
-			ID:       target.ID,
-			Name:     target.Name,
-			Provider: provider,
-			Config:   plan.RunConfigForTarget(target),
+			ID:                   target.ID,
+			Name:                 target.Name,
+			Provider:             provider,
+			ProviderAPI:          string(target.OpenAI.API),
+			RequestedServiceTier: string(target.OpenAI.ServiceTier),
+			Config:               plan.RunConfigForTarget(target),
 		})
 	}
 
