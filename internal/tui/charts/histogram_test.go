@@ -16,6 +16,14 @@ func TestRenderHistogramChartUsesSemanticLabels(t *testing.T) {
 	}
 }
 
+// TestRenderHistogramChartHeightEqualBinsShowsBars verifies a focused TTFT panel with one row per bin is not blank.
+func TestRenderHistogramChartHeightEqualBinsShowsBars(t *testing.T) {
+	got := RenderHistogramChart([]float64{659.9, 931.3, 7673.8, 2988.9, 3820.6, 1200, 2500, 6000}, HistogramOptions{Width: 100, Height: 10, Bins: 8, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
+	if !strings.Contains(got, "660-1537") || !strings.Contains(got, "█") {
+		t.Fatalf("histogram chart should show bin labels and bars when height equals bins:\n%s", got)
+	}
+}
+
 // TestRenderHistogramChartSkipsNonFinite verifies the ntcharts adapter does not show NaN or Inf.
 func TestRenderHistogramChartSkipsNonFinite(t *testing.T) {
 	got := RenderHistogramChart([]float64{10, math.NaN(), math.Inf(1), 20}, HistogramOptions{Width: 48, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())

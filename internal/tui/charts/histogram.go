@@ -69,6 +69,7 @@ func RenderHistogramChart(values []float64, opts HistogramOptions, theme Theme) 
 		opts.Width,
 		chartHeight,
 		barchart.WithHorizontalBars(),
+		barchart.WithBarGap(0),
 		barchart.WithStyles(theme.Axis, theme.Label),
 		barchart.WithMaxValue(float64(maxCount)),
 		barchart.WithNoAutoMaxValue(),

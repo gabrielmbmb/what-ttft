@@ -89,6 +89,7 @@ func RenderPercentileChart(groups []PercentileGroup, opts PercentileOptions, the
 		opts.Width,
 		chartHeight,
 		barchart.WithHorizontalBars(),
+		barchart.WithBarGap(0),
 		barchart.WithStyles(theme.Axis, theme.Label),
 		barchart.WithMaxValue(maxValue),
 		barchart.WithNoAutoMaxValue(),
