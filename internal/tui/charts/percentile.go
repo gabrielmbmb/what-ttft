@@ -94,6 +94,8 @@ func RenderPercentileChart(groups []PercentileGroup, opts PercentileOptions, the
 		barchart.WithNoAutoMaxValue(),
 		barchart.WithDataSet(barData),
 	)
+	// Recompute the horizontal label origin after data is loaded; ntcharts initializes it before WithDataSet runs.
+	chart.SetHorizontal(true)
 	chart.Draw()
 	return fitChartText(strings.Join([]string{title + "  bar=p99", chart.View()}, "\n"), opts.Width, opts.Height)
 }

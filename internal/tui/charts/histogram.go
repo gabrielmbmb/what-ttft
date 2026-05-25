@@ -74,9 +74,12 @@ func RenderHistogramChart(values []float64, opts HistogramOptions, theme Theme) 
 		barchart.WithNoAutoMaxValue(),
 		barchart.WithDataSet(barData),
 	)
+	// Recompute the horizontal label origin after data is loaded; ntcharts initializes it before WithDataSet runs.
+	chart.SetHorizontal(true)
 	chart.Draw()
 
-	content := strings.Join([]string{title + fmt.Sprintf("  bins=%d", bins), chart.View()}, "\n")
+	minValue, maxValue := minMax(values)
+	content := strings.Join([]string{title + fmt.Sprintf("  bins=%d  n=%d  min=%.1f  max=%.1f", bins, len(values), minValue, maxValue), chart.View()}, "\n")
 	return fitChartText(content, opts.Width, opts.Height)
 }
 

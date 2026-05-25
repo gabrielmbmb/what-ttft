@@ -8,8 +8,8 @@ import (
 
 // TestRenderHistogramChartUsesSemanticLabels verifies the ntcharts adapter labels units and bins.
 func TestRenderHistogramChartUsesSemanticLabels(t *testing.T) {
-	got := RenderHistogramChart([]float64{10, 20, 30, 40}, HistogramOptions{Width: 48, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
-	for _, want := range []string{"TTFT distribution (ms)", "bins=2"} {
+	got := RenderHistogramChart([]float64{10, 20, 30, 40}, HistogramOptions{Width: 80, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "min=10.0", "max=40.0", "10-25", "25-40"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("histogram chart missing %q:\n%s", want, got)
 		}
