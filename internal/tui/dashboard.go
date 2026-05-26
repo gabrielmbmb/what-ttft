@@ -130,7 +130,7 @@ func dashboardContextLabels(store liveStore) []string {
 	if store.provider != "" && !store.IsBenchmark() {
 		parts = append(parts, "provider="+safeInline(store.provider))
 	}
-	if store.model != "" {
+	if store.model != "" && !store.IsBenchmark() {
 		parts = append(parts, "model="+safeInline(store.model))
 	}
 	if store.scenarioName != "" {

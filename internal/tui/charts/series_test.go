@@ -28,6 +28,19 @@ func TestRenderSeriesChartChangesWithValues(t *testing.T) {
 	}
 }
 
+// TestRenderMultiSeriesChartIncludesSeriesLabels verifies multi-model comparisons keep labels and shared-axis semantics.
+func TestRenderMultiSeriesChartIncludesSeriesLabels(t *testing.T) {
+	got := RenderMultiSeriesChart([]NamedSeries{
+		{Label: "gpt-a", Values: []float64{10, 20, 15}},
+		{Label: "gpt-b", Values: []float64{30, 25, 35}},
+	}, SeriesChartOptions{Width: 72, Height: 12, Title: "ttft_delta_ms", Unit: "ms"}, PlainTheme())
+	for _, want := range []string{"ttft_delta_ms (ms)", "series=2", "gpt-a", "gpt-b", "latest=15.0 ms", "latest=35.0 ms", "x=request order per target"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("multi-series chart missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestRenderSeriesChartEmptyAndNonFinite verifies unavailable/non-finite inputs render an explicit empty state.
 func TestRenderSeriesChartEmptyAndNonFinite(t *testing.T) {
 	got := RenderSeriesChart([]float64{math.NaN(), math.Inf(1)}, SeriesChartOptions{Width: 48, Height: 6, Title: "e2e_delta_ms", Unit: "ms", EmptyLabel: "waiting for first successful measured request"}, PlainTheme())

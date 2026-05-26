@@ -35,6 +35,15 @@ type SeriesChartOptions struct {
 	EmptyLabel string
 }
 
+// NamedSeries contains one non-secret labeled metric series for comparison charts.
+type NamedSeries struct {
+	// Label is the non-secret display label for the series; empty labels are rendered as "series-N".
+	Label string
+
+	// Values contains observed metric values in request order; non-finite values are ignored and values are not mutated.
+	Values []float64
+}
+
 // RenderSeriesChart renders a request-order metric series using ntcharts linechart primitives.
 func RenderSeriesChart(values []float64, opts SeriesChartOptions, theme Theme) string {
 	if opts.Width <= 0 || opts.Height <= 0 {
@@ -86,6 +95,67 @@ func RenderSeriesChart(values []float64, opts SeriesChartOptions, theme Theme) s
 	return fitChartText(content, opts.Width, opts.Height)
 }
 
+// RenderMultiSeriesChart renders multiple request-order metric series on shared axes.
+func RenderMultiSeriesChart(series []NamedSeries, opts SeriesChartOptions, theme Theme) string {
+	if opts.Width <= 0 || opts.Height <= 0 {
+		return ""
+	}
+
+	series = cleanNamedSeries(series)
+	title := chartTitle(opts.Title, opts.Unit)
+	if len(series) == 0 {
+		return fitChartText(strings.Join([]string{title, seriesEmptyLabel(opts.EmptyLabel)}, "\n"), opts.Width, opts.Height)
+	}
+	if opts.Width < minimumSeriesChartWidth || opts.Height < minimumSeriesChartHeight {
+		return renderCompactMultiSeriesChart(series, opts, title)
+	}
+
+	chartHeight := opts.Height - 4
+	if chartHeight < 3 {
+		return renderCompactMultiSeriesChart(series, opts, title)
+	}
+
+	values := flattenSeriesValues(series)
+	minValue, maxValue := paddedRange(values)
+	xMax := math.Max(float64(maxSeriesLength(series)), 2)
+	chart := linechart.New(
+		opts.Width,
+		chartHeight,
+		1,
+		xMax,
+		minValue,
+		maxValue,
+		linechart.WithStyles(theme.Axis, theme.Label, theme.Series),
+		linechart.WithXYSteps(chartXStep(opts.Width), chartYStep(chartHeight)),
+		linechart.WithXLabelFormatter(func(_ int, value float64) string { return fmt.Sprintf("%.0f", value) }),
+		linechart.WithYLabelFormatter(func(_ int, value float64) string { return fmt.Sprintf("%.0f", value) }),
+	)
+	chart.DrawXYAxisAndLabel()
+	for seriesIndex, item := range series {
+		style := theme.seriesStyle(seriesIndex)
+		marker := seriesMarker(seriesIndex)
+		if len(item.Values) == 1 {
+			chart.DrawRuneWithStyle(canvas.Float64Point{X: 1, Y: item.Values[0]}, marker, style)
+			continue
+		}
+		for index := 0; index < len(item.Values)-1; index++ {
+			from := canvas.Float64Point{X: float64(index + 1), Y: item.Values[index]}
+			to := canvas.Float64Point{X: float64(index + 2), Y: item.Values[index+1]}
+			if seriesIndex%2 == 0 {
+				chart.DrawBrailleLineWithStyle(from, to, style)
+			} else {
+				chart.DrawLineWithStyle(from, to, runes.ArcLineStyle, style)
+			}
+		}
+		chart.DrawRuneWithStyle(canvas.Float64Point{X: float64(len(item.Values)), Y: item.Values[len(item.Values)-1]}, marker, style)
+	}
+
+	legend := multiSeriesLegendLine(series, opts.Unit)
+	footer := fmt.Sprintf("x=request order per target  y=%s  series=%d", unitOrValue(opts.Unit), len(series))
+	content := strings.Join([]string{title, chart.View(), legend, footer}, "\n")
+	return fitChartText(content, opts.Width, opts.Height)
+}
+
 func renderCompactSeriesChart(values []float64, opts SeriesChartOptions, title string) string {
 	lineWidth := opts.Width
 	if lineWidth < 1 {
@@ -93,6 +163,111 @@ func renderCompactSeriesChart(values []float64, opts SeriesChartOptions, title s
 	}
 	content := strings.Join([]string{title, Sparkline(values, lineWidth), seriesStatsLine(values, opts.Unit)}, "\n")
 	return fitChartText(content, opts.Width, opts.Height)
+}
+
+func renderCompactMultiSeriesChart(series []NamedSeries, opts SeriesChartOptions, title string) string {
+	lines := []string{title}
+	lineWidth := opts.Width - 28
+	if lineWidth < 4 {
+		lineWidth = opts.Width
+	}
+	unitSuffix := unitSuffix(opts.Unit)
+	for _, item := range series {
+		latest := item.Values[len(item.Values)-1]
+		lines = append(lines, fmt.Sprintf("%-14s %s latest=%.1f%s", truncateChartLabel(item.Label, 14), Sparkline(item.Values, lineWidth), latest, unitSuffix))
+	}
+	lines = append(lines, fmt.Sprintf("x=request order per target  series=%d", len(series)))
+	return fitChartText(strings.Join(lines, "\n"), opts.Width, opts.Height)
+}
+
+func cleanNamedSeries(series []NamedSeries) []NamedSeries {
+	cleaned := make([]NamedSeries, 0, len(series))
+	for index, item := range series {
+		values := finiteValues(item.Values)
+		if len(values) == 0 {
+			continue
+		}
+		label := strings.TrimSpace(item.Label)
+		if label == "" {
+			label = fmt.Sprintf("series-%d", index+1)
+		}
+		cleaned = append(cleaned, NamedSeries{Label: label, Values: values})
+	}
+	return cleaned
+}
+
+func flattenSeriesValues(series []NamedSeries) []float64 {
+	count := 0
+	for _, item := range series {
+		count += len(item.Values)
+	}
+	values := make([]float64, 0, count)
+	for _, item := range series {
+		values = append(values, item.Values...)
+	}
+	return values
+}
+
+func maxSeriesLength(series []NamedSeries) int {
+	maxLength := 0
+	for _, item := range series {
+		if len(item.Values) > maxLength {
+			maxLength = len(item.Values)
+		}
+	}
+	return maxLength
+}
+
+func (theme Theme) seriesStyle(index int) lipgloss.Style {
+	if len(theme.Palette) > 0 {
+		return theme.Palette[index%len(theme.Palette)]
+	}
+	if index%3 == 1 {
+		return theme.SecondarySeries
+	}
+	if index%3 == 2 {
+		return theme.Muted
+	}
+	return theme.Series
+}
+
+func seriesMarker(index int) rune {
+	markers := []rune{'●', '◆', '▲', '■', '✦', '✚', '✕', '○'}
+	return markers[index%len(markers)]
+}
+
+func multiSeriesLegendLine(series []NamedSeries, unit string) string {
+	parts := make([]string, 0, len(series))
+	unitSuffix := unitSuffix(unit)
+	for _, item := range series {
+		latest := item.Values[len(item.Values)-1]
+		parts = append(parts, fmt.Sprintf("%s latest=%.1f%s", truncateChartLabel(item.Label, 18), latest, unitSuffix))
+	}
+	return "series: " + strings.Join(parts, "  |  ")
+}
+
+func unitSuffix(unit string) string {
+	if strings.TrimSpace(unit) == "" {
+		return ""
+	}
+	return " " + unit
+}
+
+func truncateChartLabel(value string, width int) string {
+	if strings.TrimSpace(value) == "" {
+		value = "series"
+	}
+	if width <= 0 {
+		return ""
+	}
+	for lipgloss.Width(value) > width {
+		runes := []rune(value)
+		if len(runes) <= 1 {
+			return string(runes[:min(len(runes), width)])
+		}
+		value = string(runes[:len(runes)-1])
+	}
+	return value
 }
 
 func chartTitle(title string, unit string) string {

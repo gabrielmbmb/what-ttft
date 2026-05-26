@@ -3316,6 +3316,36 @@ Definition of done:
 
 ---
 
+### [x] 34.1. Reuse run-style charts for benchmark model comparisons
+
+Files:
+
+- `internal/tui/bench_views.go`
+- `internal/tui/charts/series.go`
+- `internal/tui/charts/histogram.go`
+- TUI chart/dashboard tests
+
+Implementation details:
+
+- Benchmark overview should use the same four chart slots as `run --tui`: TTFT trend, E2E trend, TTFT distribution, and output TPS trend.
+- For benchmark runs, chart data should be grouped into one visible series per target/model instead of flattening all records into a single run-like series.
+- Focused TTFT and E2E/TPS panes should keep the same run-style chart semantics while comparing multiple target/model series.
+- Selected-target drill-down should remain available for single-target details.
+- The benchmark header must not imply a benchmark has only one model when multiple targets are present.
+
+Tests:
+
+- Multi-series line charts show model labels, per-target request-order semantics, and latest values.
+- Multi-series histograms show model labels and shared-bin counts.
+- Benchmark dashboard overview renders the four run-style chart panels with multiple model series and still avoids secrets.
+
+Definition of done:
+
+- `bench --tui` presents the same chart mental model as `run --tui`, with multiple target/model series where applicable.
+- Users can compare models from the overview without first drilling into one selected target.
+
+---
+
 ### [ ] 35. Update README and examples for v0.3 live dashboards and events
 
 Document the new user-facing behavior only after `run --tui` and `bench --tui` exist.

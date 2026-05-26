@@ -112,7 +112,17 @@ func (theme tuiTheme) chartTheme(role themeRole) charts.Theme {
 		Axis:            theme.Border,
 		Label:           theme.Muted,
 		Series:          theme.style(role),
-		SecondarySeries: theme.style(role),
-		Muted:           theme.Muted,
+		SecondarySeries: theme.Accent,
+		Palette: []lipgloss.Style{
+			theme.style(role),
+			theme.ChartE2E,
+			theme.ChartTPS,
+			theme.ChartWaterfall,
+			theme.Accent,
+			theme.Good,
+			theme.Warn,
+			theme.Bad,
+		},
+		Muted: theme.Muted,
 	}
 }

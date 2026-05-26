@@ -103,15 +103,18 @@ func TestDashboardDefaultShowsCharts(t *testing.T) {
 	}
 }
 
-// TestBenchmarkDashboardShowsTargetsAndComparison verifies bench events render target progress and comparison views.
-func TestBenchmarkDashboardShowsTargetsAndComparison(t *testing.T) {
+// TestBenchmarkDashboardShowsRunStyleMultiModelCharts verifies bench overview reuses run-style charts with multiple model series.
+func TestBenchmarkDashboardShowsRunStyleMultiModelCharts(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"what-ttft bench", "target_order=serial", "Targets · target_order=serial", "target-a", "target-b", "responses", "default", "finished", "Target comparison", "TTFT target percentiles"} {
+	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "gpt-a", "gpt-b", "series=2", "x=request order per target"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("benchmark dashboard missing %q:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "model=gpt") {
+		t.Fatalf("benchmark header should not collapse multiple models into one model label:\n%s", content)
 	}
 	for _, forbidden := range []string{"SECRET_API_KEY", "Authorization", "prompt text"} {
 		if strings.Contains(content, forbidden) {
@@ -239,10 +242,11 @@ func benchmarkDashboardAppWithRecords(t *testing.T) model {
 		{TargetID: "target-a", TargetName: "Target A", Provider: "openai", ProviderAPI: "responses", RequestedServiceTier: "default", Model: "gpt-a", ScenarioName: "bench-short", TotalRequests: 1, MeasuredRequests: 1},
 		{TargetID: "target-b", TargetName: "Target B", Provider: "openai", ProviderAPI: "responses", RequestedServiceTier: "default", Model: "gpt-b", ScenarioName: "bench-short", TotalRequests: 1, MeasuredRequests: 1},
 	}}})
-	for _, record := range []whatttft.RequestRecord{
-		tuiTestRecord("target-a-req-000000", "target-a", 10, 100, nil),
-		tuiTestRecord("target-b-req-000000", "target-b", 90, 200, nil),
-	} {
+	recordA := tuiTestRecord("target-a-req-000000", "target-a", 10, 100, nil)
+	recordA.Model = "gpt-a"
+	recordB := tuiTestRecord("target-b-req-000000", "target-b", 90, 200, nil)
+	recordB.Model = "gpt-b"
+	for _, record := range []whatttft.RequestRecord{recordA, recordB} {
 		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventTargetStarted, TargetID: record.TargetID, TargetName: "Target " + strings.ToUpper(strings.TrimPrefix(record.TargetID, "target-")), Provider: "openai", Model: record.Model, TotalRequests: 1, MeasuredRequests: 1}})
 		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, TargetID: record.TargetID, RequestID: record.RequestID, Record: &record, CompletedRequests: 1, SuccessfulRequests: 1}})
 		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventTargetFinished, TargetID: record.TargetID}})

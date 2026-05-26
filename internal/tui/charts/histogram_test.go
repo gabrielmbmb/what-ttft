@@ -24,6 +24,19 @@ func TestRenderHistogramChartHeightEqualBinsShowsBars(t *testing.T) {
 	}
 }
 
+// TestRenderMultiHistogramChartIncludesSeriesLabels verifies benchmark distributions retain model labels.
+func TestRenderMultiHistogramChartIncludesSeriesLabels(t *testing.T) {
+	got := RenderMultiHistogramChart([]NamedSeries{
+		{Label: "gpt-a", Values: []float64{10, 20}},
+		{Label: "gpt-b", Values: []float64{30, 40}},
+	}, HistogramOptions{Width: 80, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "series=2", "gpt-a", "gpt-b"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("multi-histogram chart missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestRenderHistogramChartSkipsNonFinite verifies the ntcharts adapter does not show NaN or Inf.
 func TestRenderHistogramChartSkipsNonFinite(t *testing.T) {
 	got := RenderHistogramChart([]float64{10, math.NaN(), math.Inf(1), 20}, HistogramOptions{Width: 48, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())

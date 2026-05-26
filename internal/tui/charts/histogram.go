@@ -84,6 +84,61 @@ func RenderHistogramChart(values []float64, opts HistogramOptions, theme Theme) 
 	return fitChartText(content, opts.Width, opts.Height)
 }
 
+// RenderMultiHistogramChart renders multiple labeled distributions as a stacked histogram with shared bins.
+func RenderMultiHistogramChart(series []NamedSeries, opts HistogramOptions, theme Theme) string {
+	if opts.Width <= 0 || opts.Height <= 0 {
+		return ""
+	}
+
+	series = cleanNamedSeries(series)
+	title := chartTitle(histogramTitle(opts.Title), opts.Unit)
+	if len(series) == 0 {
+		return fitChartText(strings.Join([]string{title, seriesEmptyLabel(opts.EmptyLabel)}, "\n"), opts.Width, opts.Height)
+	}
+
+	values := flattenSeriesValues(series)
+	bins := opts.Bins
+	if bins <= 0 {
+		bins = histogramDefaultBins(opts.Height)
+	}
+	if bins > len(values) {
+		bins = len(values)
+	}
+	if opts.Width < minimumHistogramChartWidth || opts.Height < minimumHistogramChartHeight {
+		return renderCompactMultiHistogram(series, opts, title)
+	}
+
+	chartHeight := opts.Height - 3
+	if chartHeight < 3 {
+		return renderCompactMultiHistogram(series, opts, title)
+	}
+	if bins > chartHeight {
+		bins = chartHeight
+	}
+
+	barData, maxCount := multiHistogramBarData(series, bins, theme)
+	chart := barchart.New(
+		opts.Width,
+		chartHeight,
+		barchart.WithHorizontalBars(),
+		barchart.WithBarGap(0),
+		barchart.WithStyles(theme.Axis, theme.Label),
+		barchart.WithMaxValue(float64(maxCount)),
+		barchart.WithNoAutoMaxValue(),
+		barchart.WithDataSet(barData),
+	)
+	// Recompute the horizontal label origin after data is loaded; ntcharts initializes it before WithDataSet runs.
+	chart.SetHorizontal(true)
+	chart.Draw()
+
+	content := strings.Join([]string{
+		title + fmt.Sprintf("  bins=%d  n=%d  series=%d", bins, len(values), len(series)),
+		chart.View(),
+		multiHistogramLegendLine(series),
+	}, "\n")
+	return fitChartText(content, opts.Width, opts.Height)
+}
+
 // Histogram renders a deterministic histogram for finite millisecond values.
 func Histogram(values []float64, bins int, width int) string {
 	values = finiteValues(values)
@@ -123,6 +178,61 @@ func Histogram(values []float64, bins int, width int) string {
 	}
 
 	return builder.String()
+}
+
+func renderCompactMultiHistogram(series []NamedSeries, opts HistogramOptions, title string) string {
+	lines := []string{title}
+	for _, item := range series {
+		minValue, maxValue := minMax(item.Values)
+		lines = append(lines, fmt.Sprintf("%-14s n=%d min=%.1f max=%.1f", truncateChartLabel(item.Label, 14), len(item.Values), minValue, maxValue))
+	}
+	lines = append(lines, fmt.Sprintf("series=%d", len(series)))
+	return fitChartText(strings.Join(lines, "\n"), opts.Width, opts.Height)
+}
+
+func multiHistogramBarData(series []NamedSeries, bins int, theme Theme) ([]barchart.BarData, int) {
+	values := flattenSeriesValues(series)
+	minValue, maxValue := minMax(values)
+	seriesCounts := make([][]int, 0, len(series))
+	for _, item := range series {
+		seriesCounts = append(seriesCounts, histogramCounts(item.Values, bins, minValue, maxValue))
+	}
+
+	maxCount := 0
+	data := make([]barchart.BarData, 0, bins)
+	for binIndex := range bins {
+		low, high := histogramRange(minValue, maxValue, bins, binIndex)
+		barValues := make([]barchart.BarValue, 0, len(series))
+		total := 0
+		for seriesIndex, counts := range seriesCounts {
+			count := counts[binIndex]
+			if count == 0 {
+				continue
+			}
+			total += count
+			barValues = append(barValues, barchart.BarValue{
+				Name:  truncateChartLabel(series[seriesIndex].Label, 18),
+				Value: float64(count),
+				Style: theme.seriesStyle(seriesIndex),
+			})
+		}
+		if total > maxCount {
+			maxCount = total
+		}
+		data = append(data, barchart.BarData{Label: fmt.Sprintf("%.0f-%.0f", low, high), Values: barValues})
+	}
+	if maxCount < 1 {
+		maxCount = 1
+	}
+	return data, maxCount
+}
+
+func multiHistogramLegendLine(series []NamedSeries) string {
+	parts := make([]string, 0, len(series))
+	for _, item := range series {
+		parts = append(parts, fmt.Sprintf("%s n=%d", truncateChartLabel(item.Label, 16), len(item.Values)))
+	}
+	return "series: " + strings.Join(parts, "  |  ")
 }
 
 func histogramTitle(title string) string {

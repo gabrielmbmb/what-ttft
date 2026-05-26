@@ -16,6 +16,9 @@ type Theme struct {
 	// SecondarySeries styles comparison or supporting data marks; zero value renders without color.
 	SecondarySeries lipgloss.Style
 
+	// Palette optionally provides per-series styles for multi-series comparison charts; nil means Series, SecondarySeries, and Muted are reused.
+	Palette []lipgloss.Style
+
 	// Muted styles empty-state and low-emphasis text; zero value renders without color.
 	Muted lipgloss.Style
 }

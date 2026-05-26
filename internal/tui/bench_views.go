@@ -14,9 +14,9 @@ func renderBenchChartArea(store liveStore, width int, height int, mode pane, the
 
 	switch mode {
 	case paneTTFT:
-		return renderFocusedTTFT(store.selectedTargetStore(), width, height, theme)
+		return renderBenchFocusedTTFT(store, width, height, theme)
 	case paneE2E:
-		return renderFocusedE2E(store.selectedTargetStore(), width, height, theme)
+		return renderBenchFocusedE2E(store, width, height, theme)
 	case paneWaterfall:
 		return renderFocusedWaterfall(store.selectedTargetStore(), width, height, theme)
 	default:
@@ -28,44 +28,109 @@ func renderBenchOverview(store liveStore, width int, height int, theme tuiTheme)
 	if len(store.TargetRows()) == 0 {
 		return panel("Benchmark targets", "waiting for benchmark target metadata\ntarget_order=serial", width, height, theme, roleAccent)
 	}
+	return renderBenchCharts(store, width, height, theme)
+}
+
+func renderBenchCharts(store liveStore, width int, height int, theme tuiTheme) string {
 	if width >= wideDashboardWidth && height >= 16 {
-		gap := 1
-		leftWidth := (width - gap) / 2
-		rightWidth := width - gap - leftWidth
-		topHeight := height / 2
+		return renderBenchWideOverview(store, width, height, theme)
+	}
+	if width >= mediumDashboardWidth && height >= 12 {
+		return renderBenchMediumOverview(store, width, height, theme)
+	}
+	if len(benchMetricSeries(store, metricTTFTDeltaMS)) == 0 {
+		return renderBenchTargetTablePanel(store, width, height, theme)
+	}
+	return renderBenchTTFTTrendPanel(store, width, height, theme)
+}
+
+func renderBenchWideOverview(store liveStore, width int, height int, theme tuiTheme) string {
+	gap := 1
+	leftWidth := (width - gap) / 2
+	rightWidth := width - gap - leftWidth
+	topHeight := height / 2
+	bottomHeight := height - topHeight
+	top := joinColumnsWithGap(
+		renderBenchTTFTTrendPanel(store, leftWidth, topHeight, theme),
+		renderBenchE2ETrendPanel(store, rightWidth, topHeight, theme),
+		width,
+		topHeight,
+		gap,
+	)
+	bottom := joinColumnsWithGap(
+		renderBenchDistributionPanel(store, leftWidth, bottomHeight, theme),
+		renderBenchTPSChartPanel(store, rightWidth, bottomHeight, theme),
+		width,
+		bottomHeight,
+		gap,
+	)
+	return joinVerticalToHeight([]string{top, bottom}, width, height)
+}
+
+func renderBenchMediumOverview(store liveStore, width int, height int, theme tuiTheme) string {
+	if width >= 96 && height >= 15 {
+		topHeight := min(height-5, max(8, height/2))
 		bottomHeight := height - topHeight
 		top := joinColumnsWithGap(
-			renderBenchTargetTablePanel(store, leftWidth, topHeight, theme),
-			renderBenchComparisonPanel(store, rightWidth, topHeight, theme),
+			renderBenchTTFTTrendPanel(store, (width-1)/2, topHeight, theme),
+			renderBenchE2ETrendPanel(store, width-1-(width-1)/2, topHeight, theme),
 			width,
 			topHeight,
-			gap,
+			1,
 		)
 		bottom := joinColumnsWithGap(
-			renderBenchPercentilePanel(store, leftWidth, bottomHeight, theme),
-			renderBenchSelectedTargetPanel(store, rightWidth, bottomHeight, theme),
+			renderBenchDistributionPanel(store, (width-1)/2, bottomHeight, theme),
+			renderBenchTPSChartPanel(store, width-1-(width-1)/2, bottomHeight, theme),
 			width,
 			bottomHeight,
-			gap,
+			1,
 		)
 		return joinVerticalToHeight([]string{top, bottom}, width, height)
 	}
 
-	if width >= mediumDashboardWidth && height >= 12 {
-		targetHeight := max(4, height/3)
-		comparisonHeight := max(4, height/3)
-		remaining := height - targetHeight - comparisonHeight
-		sections := []string{
-			renderBenchTargetTablePanel(store, width, targetHeight, theme),
-			renderBenchComparisonPanel(store, width, comparisonHeight, theme),
-		}
-		if remaining > 0 {
-			sections = append(sections, renderBenchPercentilePanel(store, width, remaining, theme))
-		}
-		return joinVerticalToHeight(sections, width, height)
+	ttftHeight := max(4, height/3)
+	e2eHeight := max(4, height/3)
+	remaining := height - ttftHeight - e2eHeight
+	if remaining < 4 {
+		remaining = 4
+		ttftHeight = max(3, (height-remaining)/2)
+		e2eHeight = height - remaining - ttftHeight
 	}
+	sections := []string{
+		renderBenchTTFTTrendPanel(store, width, ttftHeight, theme),
+		renderBenchE2ETrendPanel(store, width, e2eHeight, theme),
+	}
+	if remaining > 0 {
+		if remaining >= 5 {
+			tpsHeight := min(remaining-1, max(4, remaining/2))
+			sections = append(sections, renderBenchDistributionPanel(store, width, remaining-tpsHeight, theme), renderBenchTPSChartPanel(store, width, tpsHeight, theme))
+		} else {
+			sections = append(sections, renderBenchDistributionPanel(store, width, remaining, theme))
+		}
+	}
+	return joinVerticalToHeight(sections, width, height)
+}
 
-	return renderBenchTargetTablePanel(store, width, height, theme)
+func renderBenchFocusedTTFT(store liveStore, width int, height int, theme tuiTheme) string {
+	if height >= 12 {
+		topHeight := height * 2 / 3
+		return joinVerticalToHeight([]string{
+			renderBenchTTFTTrendPanel(store, width, topHeight, theme),
+			renderBenchDistributionPanel(store, width, height-topHeight, theme),
+		}, width, height)
+	}
+	return renderBenchTTFTTrendPanel(store, width, height, theme)
+}
+
+func renderBenchFocusedE2E(store liveStore, width int, height int, theme tuiTheme) string {
+	if height >= 10 {
+		topHeight := height * 2 / 3
+		return joinVerticalToHeight([]string{
+			renderBenchE2ETrendPanel(store, width, topHeight, theme),
+			renderBenchTPSChartPanel(store, width, height-topHeight, theme),
+		}, width, height)
+	}
+	return renderBenchE2ETrendPanel(store, width, height, theme)
 }
 
 func renderBenchTargetDetail(store liveStore, width int, height int, theme tuiTheme) string {
@@ -82,6 +147,51 @@ func renderBenchTargetDetail(store liveStore, width int, height int, theme tuiTh
 		}, width, height)
 	}
 	return renderBenchSelectedTargetPanel(store, width, height, theme)
+}
+
+func renderBenchTTFTTrendPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderMultiSeriesChart(benchMetricSeries(store, metricTTFTDeltaMS), charts.SeriesChartOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Title:      metricTTFTDeltaMS,
+		Unit:       "ms",
+		EmptyLabel: benchWaitingLabel(store, "waiting for first successful measured request"),
+	}, theme.chartTheme(roleChartTTFT))
+	return panel("TTFT trend · ttft_delta_ms", body, width, height, theme, roleChartTTFT)
+}
+
+func renderBenchE2ETrendPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderMultiSeriesChart(benchMetricSeries(store, metricE2EDeltaMS), charts.SeriesChartOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Title:      metricE2EDeltaMS,
+		Unit:       "ms",
+		EmptyLabel: benchWaitingLabel(store, "waiting for first successful measured request"),
+	}, theme.chartTheme(roleChartE2E))
+	return panel("E2E trend · e2e_delta_ms", body, width, height, theme, roleChartE2E)
+}
+
+func renderBenchDistributionPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderMultiHistogramChart(benchMetricSeries(store, metricTTFTDeltaMS), charts.HistogramOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Bins:       histogramBins(height),
+		Title:      "TTFT distribution",
+		Unit:       "ms",
+		EmptyLabel: benchWaitingLabel(store, "waiting for first successful measured request"),
+	}, theme.chartTheme(roleChartTTFT))
+	return panel("TTFT distribution · histogram", body, width, height, theme, roleChartTTFT)
+}
+
+func renderBenchTPSChartPanel(store liveStore, width int, height int, theme tuiTheme) string {
+	body := charts.RenderMultiSeriesChart(benchMetricSeries(store, metricE2EOutputTPS), charts.SeriesChartOptions{
+		Width:      panelInnerWidth(width),
+		Height:     panelInnerHeight(height),
+		Title:      metricE2EOutputTPS,
+		Unit:       "tokens/s",
+		EmptyLabel: benchWaitingLabel(store, "TPS unavailable: provider usage not reported"),
+	}, theme.chartTheme(roleChartTPS))
+	return panel("Output TPS trend · e2e_output_tps", body, width, height, theme, roleChartTPS)
 }
 
 func renderBenchTargetTablePanel(store liveStore, width int, height int, theme tuiTheme) string {
@@ -110,22 +220,6 @@ func renderBenchTargetTable(store liveStore, width int, height int) string {
 	return fitToBox(strings.Join(lines, "\n"), width, height)
 }
 
-func renderBenchComparisonPanel(store liveStore, width int, height int, theme tuiTheme) string {
-	body := charts.TargetTable(store.Groups(), panelInnerWidth(width))
-	return panel("Target comparison", body, width, height, theme, roleAccent)
-}
-
-func renderBenchPercentilePanel(store liveStore, width int, height int, theme tuiTheme) string {
-	body := charts.RenderPercentileChart(charts.PercentileGroupsFromSummary(store.Groups()), charts.PercentileOptions{
-		Width:      panelInnerWidth(width),
-		Height:     panelInnerHeight(height),
-		Title:      "TTFT percentiles by target",
-		Unit:       "ms",
-		EmptyLabel: "waiting for successful measured requests",
-	}, theme.chartTheme(roleChartTTFT))
-	return panel("TTFT target percentiles", body, width, height, theme, roleChartTTFT)
-}
-
 func renderBenchSelectedTargetPanel(store liveStore, width int, height int, theme tuiTheme) string {
 	targetID := store.selectedTargetID()
 	if targetID == "" {
@@ -141,4 +235,58 @@ func renderBenchSelectedTargetPanel(store liveStore, width int, height int, them
 		metricTableLine(metricRowByName(rows, metricE2EOutputTPS)),
 	}
 	return panel("Selected target detail", fitToBox(strings.Join(lines, "\n"), panelInnerWidth(width), panelInnerHeight(height)), width, height, theme, roleAccent)
+}
+
+func benchMetricSeries(store liveStore, name string) []charts.NamedSeries {
+	rows := store.TargetRows()
+	labels := benchSeriesLabels(rows)
+	series := make([]charts.NamedSeries, 0, len(rows))
+	for _, row := range rows {
+		values := make([]float64, 0)
+		for _, record := range store.recordsForTarget(row.ID) {
+			if record.Warmup || record.Error != nil {
+				continue
+			}
+			appendMetricValue(&values, metricValue(record, name))
+		}
+		series = append(series, charts.NamedSeries{Label: labels[row.ID], Values: values})
+	}
+	return series
+}
+
+func benchSeriesLabels(rows []targetRow) map[string]string {
+	baseLabels := make(map[string]string, len(rows))
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		label := firstNonEmpty(row.Model, row.Name, row.ID)
+		baseLabels[row.ID] = label
+		counts[label]++
+	}
+
+	labels := make(map[string]string, len(rows))
+	for _, row := range rows {
+		label := baseLabels[row.ID]
+		if counts[label] > 1 && row.ID != "" {
+			label = label + " (" + row.ID + ")"
+		}
+		labels[row.ID] = label
+	}
+	return labels
+}
+
+func benchWaitingLabel(store liveStore, message string) string {
+	labels := benchTargetLabels(store.TargetRows())
+	if len(labels) == 0 {
+		return message
+	}
+	return message + "; targets=" + strings.Join(labels, ",")
+}
+
+func benchTargetLabels(rows []targetRow) []string {
+	labelsByID := benchSeriesLabels(rows)
+	labels := make([]string, 0, len(rows))
+	for _, row := range rows {
+		labels = append(labels, labelsByID[row.ID])
+	}
+	return labels
 }
