@@ -152,6 +152,32 @@ func TestModelHelpAndPaneKeys(t *testing.T) {
 	}
 }
 
+// TestModelBenchmarkTargetNavigationKeys verifies benchmark target selection and detail-mode key handling without a terminal.
+func TestModelBenchmarkTargetNavigationKeys(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, Targets: []whatttft.RunEventTarget{{TargetID: "target-a"}, {TargetID: "target-b"}}}})
+	if got := app.store.selectedTargetID(); got != "target-a" {
+		t.Fatalf("initial selected target = %q, want target-a", got)
+	}
+
+	app = updateModel(t, app, keyPress("j"))
+	if got := app.store.selectedTargetID(); got != "target-b" {
+		t.Fatalf("selected target after j = %q, want target-b", got)
+	}
+	app = updateModel(t, app, keyPress("enter"))
+	if !app.store.targetDetail {
+		t.Fatal("target detail = false after enter, want true")
+	}
+	app = updateModel(t, app, keyPress("esc"))
+	if app.store.targetDetail {
+		t.Fatal("target detail = true after esc, want false")
+	}
+	app = updateModel(t, app, keyPress("k"))
+	if got := app.store.selectedTargetID(); got != "target-a" {
+		t.Fatalf("selected target after k = %q, want target-a", got)
+	}
+}
+
 // TestModelInitReadsEventsAndClosedChannel verifies Init consumes event-channel messages without a terminal.
 func TestModelInitReadsEventsAndClosedChannel(t *testing.T) {
 	events := make(chan whatttft.RunEvent, 1)
@@ -189,8 +215,13 @@ func assertModel(t *testing.T, value tea.Model) model {
 }
 
 func keyPress(value string) tea.KeyPressMsg {
-	if value == "tab" {
+	switch value {
+	case "tab":
 		return tea.KeyPressMsg(tea.Key{Code: tea.KeyTab})
+	case "enter":
+		return tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})
+	case "esc":
+		return tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc})
 	}
 	if strings.HasPrefix(value, "ctrl+") && len(value) == len("ctrl+")+1 {
 		return tea.KeyPressMsg(tea.Key{Code: rune(value[len(value)-1]), Mod: tea.ModCtrl})

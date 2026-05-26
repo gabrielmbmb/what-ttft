@@ -3496,7 +3496,7 @@ Definition of done:
 
 ---
 
-### [ ] 36. Add v0.3 quality gates, TUI model tests, and smoke coverage
+### [x] 36. Add v0.3 quality gates, TUI model tests, and smoke coverage
 
 Finish the milestone with tests and smoke checks that exercise events and TUI paths without requiring real providers.
 
@@ -3531,6 +3531,13 @@ Implementation details:
   ```
 
   Add any stable TUI-specific smoke command only after it works reliably in non-interactive CI/local environments.
+
+Implemented details:
+
+- Added `scripts/quality-gate.sh` to run the full local gate in the documented order: tests, race tests, lint, build, command help checks, and both fake-provider smoke scripts.
+- Strengthened the single-target fake OpenAI smoke script to parse `requests.jsonl`, `summary.json`, and `summary.md`, assert warmup/measured counts, usage/TPS distributions, successful request records, and no API-key leakage.
+- Added TUI model coverage for benchmark target keyboard navigation/detail mode and concurrent `EventSink` publish/close behavior, and made `EventSink` shutdown safe against concurrent publishers.
+- Updated README testing instructions to point contributors at the quality-gate script and document that `--tui` automation stays in model/injected-launcher tests rather than a public headless TUI flag.
 
 Definition of done:
 

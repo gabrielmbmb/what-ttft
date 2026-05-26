@@ -2,7 +2,11 @@ package tui
 
 import (
 	"context"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
@@ -52,6 +56,70 @@ func TestEventSinkCloseClosesChannel(t *testing.T) {
 	if err := sink.Close(context.Background()); err != nil {
 		t.Fatalf("second close sink: %v", err)
 	}
+}
+
+// TestEventSinkConcurrentPublishAndCloseDoesNotPanic exercises the TUI sink under race-detector-style concurrent publication and shutdown.
+func TestEventSinkConcurrentPublishAndCloseDoesNotPanic(t *testing.T) {
+	events := make(chan whatttft.RunEvent, 64)
+	sink := NewEventSink(events)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for event := range events {
+			_ = event
+		}
+	}()
+
+	start := make(chan struct{})
+	stop := make(chan struct{})
+	panicCh := make(chan any, 8)
+	var attempts atomic.Int64
+	var wg sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					panicCh <- recovered
+				}
+			}()
+			<-start
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					attempts.Add(1)
+					if err := sink.Publish(context.Background(), whatttft.RunEvent{Kind: whatttft.EventRequestFinished}); err != nil {
+						panicCh <- err
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	close(start)
+	deadline := time.After(time.Second)
+	for attempts.Load() < 1_000 {
+		select {
+		case <-deadline:
+			t.Fatalf("publish attempts before close = %d, want at least 1000", attempts.Load())
+		default:
+			runtime.Gosched()
+		}
+	}
+	if err := sink.Close(context.Background()); err != nil {
+		t.Fatalf("close sink: %v", err)
+	}
+	close(stop)
+	wg.Wait()
+	close(panicCh)
+	for recovered := range panicCh {
+		t.Fatalf("concurrent publish/close recovered panic or error: %v", recovered)
+	}
+	<-drained
 }
 
 // TestModelCancelCallback verifies a confirmed cancellation invokes the configured callback.

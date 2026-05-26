@@ -58,6 +58,7 @@ func Run(ctx context.Context, options RunOptions) error {
 type EventSink struct {
 	events chan<- whatttft.RunEvent
 	once   sync.Once
+	mu     sync.RWMutex
 	closed atomic.Bool
 	drops  atomic.Int64
 }
@@ -69,7 +70,13 @@ func NewEventSink(events chan<- whatttft.RunEvent) *EventSink {
 
 // Publish forwards event to the dashboard event channel when capacity is available.
 func (s *EventSink) Publish(_ context.Context, event whatttft.RunEvent) error {
-	if s == nil || s.events == nil || s.closed.Load() {
+	if s == nil || s.events == nil {
+		return nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed.Load() {
 		return nil
 	}
 
@@ -88,6 +95,8 @@ func (s *EventSink) Close(context.Context) error {
 	}
 
 	s.once.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		s.closed.Store(true)
 		if s.events != nil {
 			close(s.events)

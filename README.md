@@ -51,7 +51,13 @@ go run ./cmd/what-ttft --help
 
 ## Testing and smoke checks
 
-Unit tests do not call real providers. Before submitting changes, run:
+Unit tests do not call real providers. Before submitting changes, run the full local gate:
+
+```sh
+scripts/quality-gate.sh
+```
+
+The script runs the same checks CI expects:
 
 ```sh
 go test ./...
@@ -60,16 +66,13 @@ golangci-lint run
 go build ./...
 go run ./cmd/what-ttft run --help
 go run ./cmd/what-ttft bench --help
-```
-
-No-network fake-server smoke tests exercise the CLI and report writers end to end:
-
-```sh
 scripts/smoke-fake-openai.sh
 scripts/smoke-fake-openai-bench.sh
 ```
 
-The first script covers the single-target `run` path. The second script covers the YAML multi-target `bench` path, verifies `/responses` is used by default, checks service-tier and TPS metadata, and ensures fake API keys are not written to reports.
+No-network fake-server smoke tests exercise the CLI and report writers end to end. The first script covers the single-target `run` path and parses the generated reports. The second script covers the YAML multi-target `bench` path, verifies `/responses` is used by default, checks service-tier and TPS metadata, and ensures fake API keys are not written to reports.
+
+The `--tui` paths are covered by Bubble Tea model tests and CLI tests with injected launchers rather than screenshot or headless-terminal smoke tests, so automated checks remain deterministic in non-interactive environments.
 
 ## Quick start
 
