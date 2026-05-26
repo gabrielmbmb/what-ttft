@@ -3560,6 +3560,143 @@ Non-goals for v0.4:
 - Do not emit high-volume per-chunk/per-token live events by default. If request details need content, aggregate or load content through opt-in mechanisms that preserve benchmark hot-path timing.
 - Do not replace canonical report files. TUI request exploration is for live/operator inspection; `requests.jsonl`, `chunks.jsonl`, `summary.json`, and `run.json` remain authoritative.
 
+### v0.4 design constraints and invariants
+
+- Request exploration must consume data already present in `request_finished` events, `RequestRecord` snapshots, final `RunSummary` snapshots, and canonical report files. It must not add provider SDKs, retries, hidden buffering, or additional work in provider hot paths.
+- The request explorer must be shared by `run --tui` and `bench --tui`. Single-target mode is just a filtered/simplified version of the same store/query/rendering code.
+- The TUI may keep derived indexes and display rows in memory, but canonical request records must remain copied snapshots. Sorting and filtering must never mutate `liveStore.recordOrder`, `liveStore.records`, report writer inputs, or public `RunResult` values.
+- Missing metrics and observed zero metrics must be visually distinct everywhere. Use `-` for missing/unavailable and `0.0` for observed zero values.
+- Warmup requests must remain visible and identifiable in the explorer, but default summary metrics still exclude them. Filters should make it easy to hide or isolate warmups.
+- Failed request records must remain first-class. They may not have TTFT/E2E/output metrics, but they should still show request ID, target/model, phase, HTTP status, error category, bounded error message, transport timings available before failure, and report-write state.
+- The explorer must preserve v0.3 chart/model filtering semantics. Hiding a target/model from comparison charts should not delete records; request filters can either respect the visible model set by default in bench mode or expose an explicit `hidden:on/all` override.
+- All request-table and request-detail text must pass through the same safe inline/truncation helpers used by the dashboard. No prompt text, API keys, Authorization headers, cookies, signed URLs, raw provider bodies, or unredacted provider metadata may be rendered by default.
+- Generated output is sensitive even when it is model output rather than user input. It may be shown only in an explicit detail/output section after an explicit capture opt-in. It must never appear in request table rows, filter labels, lifecycle error messages, status lines, or logs.
+- Rendering must be bounded by terminal dimensions. Large runs should render only visible rows plus small headers/footers, not the full request set on every frame.
+- The first v0.4 implementation should favor deterministic keyboard interactions and unit/model tests over terminal screenshots or headless terminal emulation.
+
+Suggested internal files:
+
+```text
+internal/tui/request_explorer.go        request pane model, list/detail/filter modes, key handling helpers
+internal/tui/request_explorer_test.go   model tests for navigation, detail, filters, and privacy
+internal/tui/request_rows.go            requestRow construction, display column selection, safe formatting
+internal/tui/request_rows_test.go       row construction/order/redaction tests
+internal/tui/request_filter.go          filter and sort data structures, parser, predicate, comparator
+internal/tui/request_filter_test.go     filter/sort/parser tests
+internal/tui/request_detail.go          detail/zoom rendering sections
+internal/tui/request_detail_test.go     success/error/cache/transport/output detail rendering tests
+internal/tui/request_output.go          optional chunks.jsonl loading and per-request output reconstruction
+internal/tui/request_output_test.go     output opt-in, reconstruction, truncation, and redaction tests
+```
+
+Proposed store/display types. Names may change, but the implementation should preserve this separation of responsibilities:
+
+```go
+type requestExplorerState struct {
+    CursorRequestID string
+    Offset          int
+    Mode            requestExplorerMode // list, detail, filter
+    DetailSection   requestDetailSection
+    FilterInput     string
+    Filters         requestFilters
+    Sort            requestSort
+}
+
+type requestRow struct {
+    RequestID        string
+    Attempt          int
+    Phase            string // warmup|measured
+    TargetID         string
+    TargetName       string
+    Model            string
+    ProviderAPI      string
+    ServiceTier      string
+    Outcome          string // ok|error|canceled|unknown
+    HTTPStatus       string
+    ErrorCategory    string
+    FinishReason     string
+    TTFTMS           *float64
+    E2EMS            *float64
+    StreamTotalMS    *float64
+    TTFBMS           *float64
+    ProviderMS       *float64
+    E2EOutputTPS     *float64
+    GenerationTPS    *float64
+    PromptTokens     *int
+    CompletionTokens *int
+    CacheState       string // hit|miss|unknown
+    CachedTokens     *int
+    Conn             string // reused/new + protocol when known
+    OutputState      string // disabled|pending|available|empty|truncated
+}
+
+type requestFilters struct {
+    Query            string
+    TargetIDs        map[string]bool
+    Models           map[string]bool
+    ProviderAPIs     map[string]bool
+    Phases           map[string]bool
+    Outcomes         map[string]bool
+    HTTPStatuses     map[string]bool
+    HTTPClasses      map[string]bool // 2xx, 4xx, 5xx
+    ErrorCategories  map[string]bool
+    CacheStates      map[string]bool
+    MetricRanges     []metricRangeFilter
+    RequestIDSubstr  string
+    RespectChartVisibility bool
+}
+
+type requestSort string
+
+const (
+    requestSortCompletionOrder requestSort = "completion-order"
+    requestSortSlowestTTFT     requestSort = "slowest-ttft"
+    requestSortSlowestE2E      requestSort = "slowest-e2e"
+    requestSortSlowestStream   requestSort = "slowest-stream"
+    requestSortHighestTPS      requestSort = "highest-tps"
+    requestSortLowestTPS       requestSort = "lowest-tps"
+    requestSortErrorsFirst     requestSort = "errors-first"
+    requestSortTargetOrder     requestSort = "target-order"
+)
+```
+
+Suggested request explorer filter language for `/` input. This can be implemented incrementally, but tests should lock down whichever subset is shipped:
+
+```text
+model:gpt-5.5 target:target-a api:responses phase:measured outcome:error
+status:429 status:5xx error:http_status cache:hit id:000123
+warmup:false ttft>500 e2e<=2000 stream>3000 ttfb>=100 tps<20 tokens>=50
+sort:-ttft sort:e2e sort:errors sort:target clear
+```
+
+Parsing rules:
+
+- Split on whitespace; quoted values are optional for v0.4 only if tests cover them.
+- `key:value` filters are case-insensitive for keys and exact, case-sensitive for IDs/models unless documented otherwise.
+- Numeric metric filters support `>`, `>=`, `<`, `<=`, and `=`.
+- Missing metric values do not match numeric range filters unless the filter explicitly asks for missing values, for example `ttft:missing` if implemented.
+- Multiple values for the same dimension should be ORed within that dimension; different dimensions should be ANDed.
+- Invalid filters should not crash or clear the previous filter unexpectedly. Show a bounded validation message and keep the previous valid query active.
+- Always show active filters and sort order in the request explorer header or footer.
+
+Suggested keybindings for request exploration:
+
+| key | request list behavior |
+|---|---|
+| `5` or `r` | open request explorer pane |
+| `↑`/`↓` or `k`/`j` | move selected request row |
+| `pgup`/`pgdn` | move by one page |
+| `home`/`end` | jump to first/last matching request |
+| `enter` | open selected request detail |
+| `esc` | leave detail/filter mode, then return to overview if already in list mode |
+| `/` | edit filter query |
+| `ctrl+u` | clear filter query |
+| `s` | cycle common sort orders |
+| `e` | toggle errors-only filter |
+| `w` | cycle all/measured/warmup phases |
+| `o` | jump to output section in detail view when available |
+| `[`/`]` | previous/next detail section |
+
 ### [ ] 37. Design request-explorer UX, modes, and keybindings
 
 Add a clear request exploration mode shared by single-target `run --tui` and multi-target `bench --tui`.
@@ -3578,6 +3715,17 @@ Implementation details:
   - use a small set of sort/filter shortcut keys only if they are discoverable in the help footer.
 - Preserve benchmark target/model selection behavior from v0.3. If keybindings overlap, document precedence clearly by mode.
 - The request list must work while a run is still in progress and after it finishes. It can show partial results while active.
+- Define explicit mode transitions before implementation:
+  - chart pane + `5`/`r` -> request list;
+  - request list + `enter` -> selected request detail;
+  - request detail + `esc` -> request list;
+  - request list + `/` -> filter editor;
+  - filter editor + `enter` -> apply filter and return to request list;
+  - filter editor + `esc` -> discard edits and return to request list;
+  - request list + `esc` -> previous chart pane or overview;
+  - cancellation confirmation still takes priority while the benchmark is running.
+- In `bench --tui`, target/model selection keys should select chart targets outside the request pane and select request rows inside the request pane. If users need target filtering while in the request pane, expose it through filters rather than overloading row navigation.
+- Detail navigation should not require a mouse. If mouse support is ever added later, it must be optional and tested separately.
 
 Definition of done:
 
@@ -3605,6 +3753,15 @@ Implementation details:
 - Keep rows compact for narrow terminals and include more columns on wide terminals.
 - Never render prompts, API keys, Authorization headers, cookies, signed URLs, raw provider bodies, or generated output in the request table.
 - Reuse existing copy helpers so records stored in the TUI cannot be mutated by event producers.
+- Define row value semantics precisely:
+  - `Outcome=ok` means measured or warmup request completed with `Error == nil`;
+  - `Outcome=error` means `Error != nil`, regardless of whether partial timeline data exists;
+  - HTTP status is `-` when unavailable, not `0`;
+  - cache state is `hit` when provider-reported cached prompt tokens are greater than zero, `miss` when provider reported cache fields with zero cached tokens, and `unknown` otherwise;
+  - connection state should distinguish reused vs new when `GotConn` metadata exists and show protocol separately when space allows;
+  - output state is independent of success/error because some failed requests may have partial output and some successful requests may have no visible text.
+- Keep a row-level stable ordinal, e.g. completion index, so the list can show `#` and preserve selection across filter/sort changes by request ID when possible.
+- Avoid storing formatted-only strings as the source of truth. Store typed values in row structs and format at render time so filters/sorts do not parse display text.
 
 Definition of done:
 
@@ -3628,6 +3785,11 @@ Implementation details:
   - output preview unavailable because content capture was not enabled.
 - Keep rendering deterministic and bounded for large runs; do not render thousands of rows at once.
 - Preserve chart performance by deriving visible rows from store snapshots without expensive per-frame recomputation over large content blobs.
+- Suggested compact columns for narrow terminals: `#`, `request`, `phase`, `ok/error`, `ttft`, `e2e`, `status`, `model/target`.
+- Suggested wide columns: `#`, `request`, `target`, `model`, `phase`, `outcome`, `http`, `err`, `ttft`, `e2e`, `stream`, `ttfb`, `tps`, `tokens`, `cache`, `conn`, `finish`, `output`.
+- Highlight or prefix selected rows without relying only on color, for example `›` for cursor and `!` for failed requests.
+- Long model IDs, target names, request IDs, and error categories should be middle- or end-truncated consistently. Keep enough request ID suffix to identify rows against `requests.jsonl`.
+- Table headers should include current match count, total request count, active sort, active filters, and whether chart visibility filters are being respected.
 
 Definition of done:
 
@@ -3654,6 +3816,16 @@ Implementation details:
 - Provide section navigation for terminals that cannot show all details at once.
 - The detail view should distinguish missing metrics from observed zero values.
 - Error details should include enough provider status/body-snippet information to debug failures while preserving existing redaction guarantees.
+- Suggested detail sections:
+  1. `identity`: request ID, attempt, phase, target/model/provider/API, scenario, cache/connection mode, service tier;
+  2. `outcome`: success/error, finish reason, HTTP status/status text, error category/message/retryable, provider body snippet when already redacted;
+  3. `latency`: all derived request metrics with units and missing-vs-zero formatting;
+  4. `timeline`: key event offsets and waterfall chart;
+  5. `transport`: DNS/TCP/TLS/request write/server wait/protocol/reuse/TLS version/compression metadata;
+  6. `usage/cache`: prompt/completion/total tokens, reasoning tokens, cached tokens, cache hit/miss, cache IDs only if redacted;
+  7. `output`: availability, preview, and full captured visible output when enabled.
+- Detail view should show both a human summary and raw field names for important metrics, e.g. `TTFT delta (ttft_delta_ms)` so users can map what they see back to JSON output.
+- Include links-by-path rather than terminal hyperlinks if referencing report files, e.g. `requests.jsonl line unavailable in live view` or `chunks.jsonl loaded`.
 
 Definition of done:
 
@@ -3688,6 +3860,18 @@ Implementation details:
 - Keep the first implementation simple and deterministic. Prefer explicit filter fields or small shortcut toggles over a complex query language unless tests cover parsing thoroughly.
 - Display active filters and sort order in the request explorer footer/header.
 - Ensure filters never affect canonical summaries or report files.
+- Filter editor behavior:
+  - keep a committed filter query and a draft filter query;
+  - show parse errors inline while editing without applying invalid drafts;
+  - `enter` applies a valid draft;
+  - `esc` discards draft changes;
+  - `ctrl+u` clears the draft or committed filter, depending on mode;
+  - after applying filters, keep the selected request if it still matches, otherwise move to the nearest matching row.
+- Sort behavior:
+  - all sorts must be stable;
+  - missing numeric metrics sort last for slowest/highest sorts and last for lowest sorts unless a missing-first sort is explicitly added;
+  - tie-break by target order, completion order, then request ID for deterministic output.
+- Metric filters must use the documented metric names from `DerivedMetrics` where possible (`ttft_delta_ms`, `e2e_delta_ms`, `stream_total_ms`, `http_ttfb_ms`, `e2e_output_tps`, `generation_delta_output_tps`) and may support short aliases only if documented.
 
 Definition of done:
 
@@ -3714,7 +3898,20 @@ Implementation details:
   - show bounded previews in tables and scrollable/bounded full text in detail view;
   - avoid emitting high-volume per-chunk events unless an explicit debug mode is added and documented;
   - ensure content is redacted or omitted from logs and lifecycle error messages.
-- Decide whether TUI content comes from in-memory chunk capture, request-finished aggregate payloads, or loading `chunks.jsonl` after report writing. Document the chosen data path and its timing implications.
+- Preferred first implementation data path:
+  - while the benchmark is running, request details show output state as `pending until reports are written` when `--save-chunks` is enabled;
+  - after `report_write_finished`, the TUI loads `chunks.jsonl` from `OutputDir` asynchronously if it exists;
+  - chunk loading builds a bounded `map[request_id]outputCapture` in the TUI only;
+  - request rows update output state to `available`, `empty`, or `truncated` after loading;
+  - if loading fails, show a redacted TUI status message but do not fail the benchmark or report writing.
+- If a later implementation chooses in-memory live output capture instead, it must remain gated by `SaveChunks`, avoid high-volume event fanout, and prove with tests/race detector that it does not block provider streaming.
+- Output reconstruction rules:
+  - concatenate `ChunkRecord.Content` for visible content chunks in index order;
+  - ignore role-only, empty, usage-only, and terminal chunks for visible output;
+  - preserve refusal/tool/reasoning fields separately if/when `ChunkRecord` grows those fields;
+  - cap per-request retained output in the TUI, for example first/last N KiB with an explicit truncation marker;
+  - never infer tokenizer-level tokens from chunks in the output view.
+- If implementation diverges from the preferred `chunks.jsonl` loading path, document the final data path and its timing/privacy implications before marking the task complete.
 
 Definition of done:
 
