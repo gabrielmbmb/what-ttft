@@ -54,8 +54,8 @@ func shouldWriteComparisonTable(summary whatttft.RunSummary, metadata RunMetadat
 
 func writeComparisonMarkdown(builder *strings.Builder, summary whatttft.RunSummary, metadata RunMetadata) {
 	builder.WriteString("## Target comparison\n\n")
-	builder.WriteString("| target | provider | api | requested tier | observed tier | model | ok | err | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e tps mean | generation tps mean | system tps | rps |\n")
-	builder.WriteString("|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	builder.WriteString("| target | provider | api | requested tier | observed tier | model | ok | err | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e_output_tps mean | generation_delta_output_tps mean | generation_delta_output_tps count | system tps | rps |\n")
+	builder.WriteString("|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 
 	groups := groupsByTarget(summary.Groups)
 	if len(metadata.Targets) > 0 {
@@ -90,6 +90,7 @@ type comparisonRow struct {
 	e2eP95             *float64
 	e2eTPSMean         *float64
 	generationTPSMean  *float64
+	generationTPSCount int
 	systemTPS          *float64
 	rps                *float64
 }
@@ -115,6 +116,7 @@ func comparisonRowForTarget(target RunTargetMetadata, group *whatttft.SummaryGro
 	row.e2eP95 = group.Metrics.E2EDeltaMS.P95
 	row.e2eTPSMean = group.Metrics.E2EOutputTPS.Mean
 	row.generationTPSMean = group.Metrics.GenerationDeltaOutputTPS.Mean
+	row.generationTPSCount = group.Metrics.GenerationDeltaOutputTPS.Count
 	row.systemTPS = group.SystemTPS
 	row.rps = group.RPS
 	if row.observedTier == "" {
@@ -139,6 +141,7 @@ func comparisonRowForGroup(group whatttft.SummaryGroup) comparisonRow {
 		e2eP95:             group.Metrics.E2EDeltaMS.P95,
 		e2eTPSMean:         group.Metrics.E2EOutputTPS.Mean,
 		generationTPSMean:  group.Metrics.GenerationDeltaOutputTPS.Mean,
+		generationTPSCount: group.Metrics.GenerationDeltaOutputTPS.Count,
 		systemTPS:          group.SystemTPS,
 		rps:                group.RPS,
 	}
@@ -147,7 +150,7 @@ func comparisonRowForGroup(group whatttft.SummaryGroup) comparisonRow {
 func writeComparisonRow(builder *strings.Builder, row comparisonRow) {
 	fmt.Fprintf(
 		builder,
-		"| %s | %s | %s | %s | %s | %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+		"| %s | %s | %s | %s | %s | %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 		row.target,
 		row.provider,
 		row.api,
@@ -162,6 +165,7 @@ func writeComparisonRow(builder *strings.Builder, row comparisonRow) {
 		formatOptionalFloat(row.e2eP95),
 		formatOptionalFloat(row.e2eTPSMean),
 		formatOptionalFloat(row.generationTPSMean),
+		formatDistributionCount(row.generationTPSCount, row.successfulRequests),
 		formatOptionalFloat(row.systemTPS),
 		formatOptionalFloat(row.rps),
 	)
@@ -259,6 +263,14 @@ func formatOptionalFloat(value *float64) string {
 	}
 
 	return fmt.Sprintf("%.3f", *value)
+}
+
+func formatDistributionCount(count int, denominator int) string {
+	if denominator <= 0 {
+		return "0/0"
+	}
+
+	return fmt.Sprintf("%d/%d", count, denominator)
 }
 
 func formatStringIntMap(values map[string]int) string {

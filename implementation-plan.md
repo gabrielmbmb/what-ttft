@@ -1997,9 +1997,9 @@ Implementation details:
 - Suggested terminal comparison table columns:
 
   ```text
-  target        api        tier     model        ok err ttft_p50 ttft_p95 e2e_p50 e2e_p95 e2e_tps_mean gen_tps_mean system_tps rps
-  gpt-5.5      responses  default  gpt-5.5      50 0   312.7    450.9    980.0   1300.4   58.2         72.1         55.0       0.9
-  gpt-5.2      responses  default  gpt-5.2      50 0   280.1    420.3    870.5   1201.8   64.0         80.4         60.2       1.0
+  target        api        tier     model        ok err ttft_p50 ttft_p95 e2e_p50 e2e_p95 e2e_output_tps_mean generation_delta_output_tps_mean generation_delta_output_tps_count system_tps rps
+  gpt-5.5      responses  default  gpt-5.5      50 0   312.7    450.9    980.0   1300.4   58.2                 72.1                             50/50                             55.0       0.9
+  gpt-5.2      responses  default  gpt-5.2      50 0   280.1    420.3    870.5   1201.8   64.0                 80.4                             50/50                             60.2       1.0
   ```
 
 - Redact CLI args in metadata. `--config` path is not secret, but do not write resolved API key values.
@@ -2071,8 +2071,8 @@ Implementation details:
 - Add a high-level comparison table at the top of `summary.md` before detailed per-group metric tables:
 
   ```md
-  | target | provider | api | requested tier | observed tier | model | ok | err | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e tps mean | generation tps mean | system tps | rps |
-  |---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+  | target | provider | api | requested tier | observed tier | model | ok | err | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e_output_tps mean | generation_delta_output_tps mean | generation_delta_output_tps count | system tps | rps |
+  |---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
   ```
 
 - Keep the existing detailed per-group metric tables after the comparison table.
@@ -3365,6 +3365,28 @@ Definition of done:
 
 - Benchmark TTFT/E2E/TPS charts visibly identify each model/target series.
 - Duplicate model IDs no longer collapse to indistinguishable legend text.
+
+---
+
+### [x] 34.3. Make benchmark TPS columns explicit and show generation TPS sample counts
+
+Files:
+
+- `cmd/what-ttft/bench.go`
+- `internal/report/markdown.go`
+- `internal/tui/charts/target_table.go`
+- CLI, report, and chart tests
+
+Implementation details:
+
+- Rename ambiguous benchmark comparison columns from `e2e_tps_mean` / `gen_tps_mean` to `e2e_output_tps_mean` / `generation_delta_output_tps_mean`.
+- Display `generation_delta_output_tps_count` as `observed/successful` so short/buffered-output scenarios make sparse post-first-delta TPS samples obvious.
+- Preserve existing JSON metric names and request-level derived metric names.
+
+Definition of done:
+
+- CLI and Markdown target comparison tables show explicit TPS metric names and generation TPS sample counts.
+- Tests assert the new column names and count formatting.
 
 ---
 

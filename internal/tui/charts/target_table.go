@@ -25,12 +25,12 @@ func TargetTable(groups []whatttft.SummaryGroup, width int) string {
 
 	var builder strings.Builder
 	builder.WriteString("target comparison\n")
-	fmt.Fprintf(&builder, "%-18s %-*s %4s %4s %9s %9s %12s %12s %10s %8s", "target", modelWidth, "model", "ok", "err", "ttft_p50", "e2e_p50", "e2e_tps", "gen_tps", "system", "rps")
+	fmt.Fprintf(&builder, "%-18s %-*s %4s %4s %9s %9s %15s %15s %9s %10s %8s", "target", modelWidth, "model", "ok", "err", "ttft_p50", "e2e_p50", "e2e_output_tps", "gen_delta_tps", "gen_count", "system", "rps")
 	for _, group := range groups {
 		builder.WriteByte('\n')
 		fmt.Fprintf(
 			&builder,
-			"%-18s %-*s %4d %4d %9s %9s %12s %12s %10s %8s",
+			"%-18s %-*s %4d %4d %9s %9s %15s %15s %9s %10s %8s",
 			truncate(groupLabel(group), 18),
 			modelWidth,
 			truncate(group.Model, modelWidth),
@@ -40,12 +40,21 @@ func TargetTable(groups []whatttft.SummaryGroup, width int) string {
 			formatOptional(group.Metrics.E2EDeltaMS.P50),
 			formatOptional(group.Metrics.E2EOutputTPS.Mean),
 			formatOptional(group.Metrics.GenerationDeltaOutputTPS.Mean),
+			formatCount(group.Metrics.GenerationDeltaOutputTPS.Count, group.SuccessfulRequests),
 			formatOptional(group.SystemTPS),
 			formatOptional(group.RPS),
 		)
 	}
 
 	return builder.String()
+}
+
+func formatCount(count int, denominator int) string {
+	if denominator <= 0 {
+		return "0/0"
+	}
+
+	return fmt.Sprintf("%d/%d", count, denominator)
 }
 
 func targetSortKey(group whatttft.SummaryGroup) string {

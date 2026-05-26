@@ -22,10 +22,10 @@ func TestTargetTableValuesAndStableOrder(t *testing.T) {
 	tps := 20.0
 	groups := []whatttft.SummaryGroup{
 		{TargetID: "target-b", Model: "gpt-b", SuccessfulRequests: 1, Metrics: whatttft.MetricDistributions{TTFTDeltaMS: whatttft.Distribution{P50: &p50}}},
-		{TargetID: "target-a", Model: "gpt-a", SuccessfulRequests: 2, ErrorRequests: 1, Metrics: whatttft.MetricDistributions{E2EDeltaMS: whatttft.Distribution{P50: &e2e}, E2EOutputTPS: whatttft.Distribution{Mean: &tps}}, SystemTPS: &tps, RPS: &p50},
+		{TargetID: "target-a", Model: "gpt-a", SuccessfulRequests: 2, ErrorRequests: 1, Metrics: whatttft.MetricDistributions{E2EDeltaMS: whatttft.Distribution{P50: &e2e}, E2EOutputTPS: whatttft.Distribution{Mean: &tps}, GenerationDeltaOutputTPS: whatttft.Distribution{Count: 1, Mean: &tps}}, SystemTPS: &tps, RPS: &p50},
 	}
 	got := TargetTable(groups, 120)
-	if !strings.Contains(got, "target-a") || !strings.Contains(got, "gpt-a") || !strings.Contains(got, "100.0") || !strings.Contains(got, "20.0") {
+	if !strings.Contains(got, "target-a") || !strings.Contains(got, "gpt-a") || !strings.Contains(got, "100.0") || !strings.Contains(got, "20.0") || !strings.Contains(got, "1/2") || !strings.Contains(got, "e2e_output_tps") {
 		t.Fatalf("target table missing expected values:\n%s", got)
 	}
 	if strings.Index(got, "target-a") > strings.Index(got, "target-b") {

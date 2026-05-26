@@ -266,8 +266,8 @@ func TestBenchCommandAgainstFakeOpenAIServer(t *testing.T) {
 	if !strings.Contains(stdout.String(), "target-a") || !strings.Contains(stdout.String(), "target-b") {
 		t.Fatalf("stdout missing target comparison rows:\n%s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "e2e_tps_mean") || !strings.Contains(stdout.String(), "gen_tps_mean") {
-		t.Fatalf("stdout missing TPS comparison columns:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "e2e_output_tps_mean") || !strings.Contains(stdout.String(), "generation_delta_output_tps_mean") || !strings.Contains(stdout.String(), "generation_delta_output_tps_count") {
+		t.Fatalf("stdout missing explicit TPS comparison columns:\n%s", stdout.String())
 	}
 
 	requests := server.Requests()

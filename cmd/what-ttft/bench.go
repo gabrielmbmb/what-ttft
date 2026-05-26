@@ -539,14 +539,14 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 		result.Summary.SuccessfulRequests,
 		result.Summary.ErrorRequests,
 	)
-	writeLine(output, "target              api               tier       model               ok   err  ttft_p50  ttft_p95  e2e_p50   e2e_p95   e2e_tps_mean  gen_tps_mean  system_tps  rps")
+	writeLine(output, "target              api               tier       model               ok   err  ttft_p50  ttft_p95  e2e_p50   e2e_p95   e2e_output_tps_mean  generation_delta_output_tps_mean  generation_delta_output_tps_count  system_tps  rps")
 	groups := benchGroupsByTargetID(result.Summary.Groups)
 	for _, target := range plan.Targets {
 		group := groups[target.ID]
 		if group == nil {
 			writeFormatted(
 				output,
-				"%-19s %-17s %-10s %-19s %-4d %-4d %-9s %-9s %-9s %-9s %-13s %-13s %-11s %s\n",
+				"%-19s %-17s %-10s %-19s %-4d %-4d %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
 				target.ID,
 				target.OpenAI.API,
 				firstNonEmptyString(string(target.OpenAI.ServiceTier), "unset"),
@@ -561,13 +561,14 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 				"-",
 				"-",
 				"-",
+				"-",
 			)
 			continue
 		}
 
 		writeFormatted(
 			output,
-			"%-19s %-17s %-10s %-19s %-4d %-4d %-9s %-9s %-9s %-9s %-13s %-13s %-11s %s\n",
+			"%-19s %-17s %-10s %-19s %-4d %-4d %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
 			target.ID,
 			target.OpenAI.API,
 			firstNonEmptyString(string(target.OpenAI.ServiceTier), "unset"),
@@ -580,10 +581,19 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 			formatCLIOptionalFloat(group.Metrics.E2EDeltaMS.P95),
 			formatCLIOptionalFloat(group.Metrics.E2EOutputTPS.Mean),
 			formatCLIOptionalFloat(group.Metrics.GenerationDeltaOutputTPS.Mean),
+			formatCLIDistributionCount(group.Metrics.GenerationDeltaOutputTPS, group.SuccessfulRequests),
 			formatCLIOptionalFloat(group.SystemTPS),
 			formatCLIOptionalFloat(group.RPS),
 		)
 	}
+}
+
+func formatCLIDistributionCount(distribution whatttft.Distribution, denominator int) string {
+	if denominator <= 0 {
+		return "0/0"
+	}
+
+	return fmt.Sprintf("%d/%d", distribution.Count, denominator)
 }
 
 func benchGroupsByTargetID(groups []whatttft.SummaryGroup) map[string]*whatttft.SummaryGroup {

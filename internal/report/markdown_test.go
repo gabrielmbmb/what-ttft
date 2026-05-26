@@ -93,7 +93,7 @@ func TestMarkdownSummaryWithMetadataIncludesComparisonTable(t *testing.T) {
 	}}}
 
 	markdown := MarkdownSummaryWithMetadata(summary, metadata)
-	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "| target-a | openai | responses | default | default | gpt-a | 1 | 0 | 100.000 | 150.000", "e2e tps mean", "generation tps mean"} {
+	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "| target-a | openai | responses | default | default | gpt-a | 1 | 0 | 100.000 | 150.000", "e2e_output_tps mean", "generation_delta_output_tps mean", "generation_delta_output_tps count", "1/1"} {
 		if !strings.Contains(markdown, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, markdown)
 		}
