@@ -1,6 +1,6 @@
 # Implementation Plan: `what-ttft`
 
-This file is the source-of-truth TODO list for current and completed `what-ttft` milestones. The active milestone is v0.3: event-driven benchmark execution and Bubble Tea terminal dashboards. Completed v0.1/v0.2 plans are retained below for context and regression guardrails.
+This file is the source-of-truth TODO list for current and completed `what-ttft` milestones. The active milestone is v0.4: request exploration inside the existing Bubble Tea terminal dashboards. Completed v0.1/v0.2/v0.3 plans are retained below for context and regression guardrails.
 
 ## Agent execution instructions
 
@@ -3549,9 +3549,210 @@ Definition of done:
 
 ---
 
-## Future tasks beyond this v0.3 plan
+## v0.4 feature plan: TUI request explorer and request detail drilldown
 
-These are intentionally outside the current v0.3 feature set but should influence design decisions.
+Goal: make the existing `run --tui` and `bench --tui` dashboards useful for debugging individual requests after, and where practical during, a benchmark. Users should be able to identify suspicious requests, filter/sort the request set, open one request, inspect timing/HTTP/cache/usage/error details, and view generated output when content capture was explicitly enabled.
+
+Non-goals for v0.4:
+
+- Do not add a separate `what-ttft tui` command group. Request exploration is a presentation mode inside the existing `run --tui` and `bench --tui` commands.
+- Do not make generated content visible by default. Generated output can be sensitive and must remain gated by explicit capture controls such as `--save-chunks` or a clearly documented future output-preview flag.
+- Do not emit high-volume per-chunk/per-token live events by default. If request details need content, aggregate or load content through opt-in mechanisms that preserve benchmark hot-path timing.
+- Do not replace canonical report files. TUI request exploration is for live/operator inspection; `requests.jsonl`, `chunks.jsonl`, `summary.json`, and `run.json` remain authoritative.
+
+### [ ] 37. Design request-explorer UX, modes, and keybindings
+
+Add a clear request exploration mode shared by single-target `run --tui` and multi-target `bench --tui`.
+
+Implementation details:
+
+- Add a new dashboard mode/pane for request exploration, for example `5` or `r` for Requests.
+- Keep existing chart panes (`1`-`4`) stable unless there is a documented migration note.
+- In the request explorer:
+  - show a scrollable request table;
+  - use `↑`/`↓` or `j`/`k` to move selection;
+  - use page navigation for large runs;
+  - use `enter` to zoom into a selected request detail view;
+  - use `esc` to return from detail/filter modes;
+  - use `/` or another explicit key to edit filters;
+  - use a small set of sort/filter shortcut keys only if they are discoverable in the help footer.
+- Preserve benchmark target/model selection behavior from v0.3. If keybindings overlap, document precedence clearly by mode.
+- The request list must work while a run is still in progress and after it finishes. It can show partial results while active.
+
+Definition of done:
+
+- UX behavior and keybindings are documented in `README.md`.
+- TUI model tests cover switching into request explorer, row selection, detail open/close, and keybinding precedence for `bench --tui`.
+- The request explorer is reachable from both `run --tui` and `bench --tui` without changing how requests are executed.
+
+---
+
+### [ ] 38. Build request-explorer store indexes, row models, and redacted display fields
+
+Extend the TUI store with queryable request rows derived from completed `RequestRecord` values.
+
+Implementation details:
+
+- Maintain a stable request list in completion order and support deterministic sorting without mutating canonical record order.
+- Build row fields that help identify requests quickly:
+  - request ID and attempt index;
+  - warmup/measured phase;
+  - target ID/name, model, provider API, and service tier for `bench --tui`;
+  - success/error state, HTTP status, error category, and finish reason;
+  - TTFT, E2E, stream total, provider processing, TTFB, output TPS, generation TPS;
+  - completion tokens, prompt tokens, cache-hit/cached-token indicators;
+  - connection reuse/protocol and output-preview availability.
+- Keep rows compact for narrow terminals and include more columns on wide terminals.
+- Never render prompts, API keys, Authorization headers, cookies, signed URLs, raw provider bodies, or generated output in the request table.
+- Reuse existing copy helpers so records stored in the TUI cannot be mutated by event producers.
+
+Definition of done:
+
+- Store tests cover row generation for successful, failed, warmup, cache-hit, and multi-target records.
+- Store tests verify row order is stable and canonical request records are not mutated by sorting/filtering.
+- Dashboard tests verify sensitive strings in record metadata do not appear in request rows.
+
+---
+
+### [ ] 39. Implement request list rendering for run and bench dashboards
+
+Render the request explorer table as a first-class TUI pane.
+
+Implementation details:
+
+- For `run --tui`, default columns should prioritize request ID, phase, status, TTFT, E2E, TPS/tokens, HTTP status, and error category.
+- For `bench --tui`, include target/model columns and respect the v0.3 model visibility selection when appropriate, while still allowing filters to override or reveal hidden targets explicitly if the user asks.
+- Show useful empty states:
+  - no requests completed yet;
+  - filters matched no requests;
+  - output preview unavailable because content capture was not enabled.
+- Keep rendering deterministic and bounded for large runs; do not render thousands of rows at once.
+- Preserve chart performance by deriving visible rows from store snapshots without expensive per-frame recomputation over large content blobs.
+
+Definition of done:
+
+- Dashboard tests cover run and bench request-list rendering.
+- Tests cover narrow and wide terminal layouts.
+- The list updates when new `request_finished` events arrive.
+
+---
+
+### [ ] 40. Implement request detail / zoom view
+
+Allow users to open one request from the list and inspect detailed diagnostics.
+
+Implementation details:
+
+- Detail view sections should include:
+  - request identity: request ID, target/model, attempt, warmup/measured, cache mode, connection mode;
+  - outcome: success/error, provider finish reason, HTTP status, error category/message with secrets redacted;
+  - latency summary: TTFB, headers latency, first SSE/event, TTFT, E2E, stream total, generation duration, TPS metrics;
+  - timeline/waterfall using existing chart helpers where possible;
+  - transport: DNS/TCP/TLS/request-write/server-wait/protocol/connection reuse/TLS version;
+  - usage/cache: prompt/completion/total tokens, reasoning tokens when available, cached tokens, cache hit/miss metadata, service tier;
+  - output preview/content only when explicit content capture is enabled.
+- Provide section navigation for terminals that cannot show all details at once.
+- The detail view should distinguish missing metrics from observed zero values.
+- Error details should include enough provider status/body-snippet information to debug failures while preserving existing redaction guarantees.
+
+Definition of done:
+
+- Tests cover request detail rendering for success, provider error, non-200 HTTP status, missing metrics, observed zero metrics, cache hit, reused connection, and warmup request cases.
+- Tests verify secret-like strings in metadata are not rendered.
+- Detail view works for both `run --tui` and `bench --tui` records.
+
+---
+
+### [ ] 41. Add request filtering and sorting
+
+Support filtering the request list by common debugging dimensions.
+
+Implementation details:
+
+- Required filters:
+  - target/model/provider API;
+  - warmup vs measured;
+  - success vs failed;
+  - HTTP status code or status class;
+  - error category;
+  - cache hit/miss when cache metadata is available;
+  - metric thresholds/ranges for TTFT, E2E, stream total, TTFB, output TPS, and token counts;
+  - request ID substring.
+- Required sorts:
+  - completion order;
+  - slowest TTFT;
+  - slowest E2E/stream total;
+  - highest/lowest TPS;
+  - error/status first;
+  - target/model then request order for `bench --tui`.
+- Keep the first implementation simple and deterministic. Prefer explicit filter fields or small shortcut toggles over a complex query language unless tests cover parsing thoroughly.
+- Display active filters and sort order in the request explorer footer/header.
+- Ensure filters never affect canonical summaries or report files.
+
+Definition of done:
+
+- Unit tests cover every required filter and sort.
+- Model tests cover editing/applying/clearing filters and preserving selection when possible.
+- No filter path renders prompts, API keys, or generated content unless output content was explicitly enabled and the user is in the request detail/output section.
+
+---
+
+### [ ] 42. Add opt-in generated-output inspection for request details
+
+Make generated output available in the request detail view only when the user has explicitly chosen to capture content.
+
+Implementation details:
+
+- Reuse `--save-chunks` as the initial content opt-in unless a separate flag is justified and documented.
+- When content capture is disabled:
+  - request rows may show that output preview is unavailable;
+  - detail view should explain how to rerun with content capture enabled;
+  - no generated text should be retained solely for the TUI.
+- When content capture is enabled:
+  - reconstruct visible output per request from captured output chunks/deltas;
+  - preserve distinctions between visible text, refusal text, tool-call output, reasoning output, and metadata when available;
+  - show bounded previews in tables and scrollable/bounded full text in detail view;
+  - avoid emitting high-volume per-chunk events unless an explicit debug mode is added and documented;
+  - ensure content is redacted or omitted from logs and lifecycle error messages.
+- Decide whether TUI content comes from in-memory chunk capture, request-finished aggregate payloads, or loading `chunks.jsonl` after report writing. Document the chosen data path and its timing implications.
+
+Definition of done:
+
+- Tests verify generated output is unavailable when content capture is disabled.
+- Tests verify visible output can be inspected when content capture is enabled.
+- Tests verify output text is not shown in request rows by default and is only shown inside the explicit request detail/output section.
+- Fake-server tests cover multi-chunk output, empty chunks, role-only chunks, usage chunks, and failed requests with no output.
+
+---
+
+### [ ] 43. Document, test, and quality-gate the request explorer
+
+Finish v0.4 with documentation and deterministic tests.
+
+Implementation details:
+
+- Update README live-dashboard docs with request explorer screenshots as text examples if easy; do not require image assets.
+- Extend fake-provider/TUI tests with injected events rather than real terminals.
+- Add model tests for large request sets so scrolling/filtering remains bounded and deterministic.
+- Add privacy regression tests for request rows, request details, filters, and output-preview states.
+- Run the full local gate before marking v0.4 tasks complete:
+
+  ```sh
+  scripts/quality-gate.sh
+  ```
+
+Definition of done:
+
+- `go test ./...`, `go test -race ./...`, `golangci-lint run`, `go build ./...`, and fake-server smoke tests pass through `scripts/quality-gate.sh`.
+- README documents request explorer keybindings, filters, and output-content safety behavior.
+- Request explorer tests use no external provider network.
+- `implementation-plan.md` v0.4 tasks are marked `[x]` only as they are completed.
+
+---
+
+## Future tasks beyond this v0.4 plan
+
+These are intentionally outside the current v0.4 feature set but should influence design decisions.
 
 ### [ ] Future: additional provider protocols and APIs
 
