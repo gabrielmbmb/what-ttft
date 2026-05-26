@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	benchmarkVersion    = "v0.2.0"
+	benchmarkVersion    = "v0.3.0"
 	chunksJSONLName     = "chunks.jsonl"
 	defaultOutputRoot   = "runs"
 	requestsJSONLName   = "requests.jsonl"
