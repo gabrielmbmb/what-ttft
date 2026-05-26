@@ -229,11 +229,15 @@ Keyboard shortcuts:
 | `2` | TTFT-focused view |
 | `3` | E2E/TPS-focused view |
 | `4` | slowest-request waterfall |
-| `↑`/`↓` or `k`/`j` | select a benchmark target in `bench --tui` |
+| `5` or `r` | request explorer list for completed requests |
+| `↑`/`↓` or `k`/`j` | select a benchmark target in chart views; select a request row in the request explorer |
+| `pgup`/`pgdn`, `home`/`end` | page or jump in the request explorer |
 | `space` | after a benchmark finishes, toggle the selected target/model in comparison charts |
 | `a` | after a benchmark finishes, show all target/model series again |
-| `enter` | open selected-target detail in `bench --tui` |
-| `esc` | return from selected-target detail / close help |
+| `enter` | open selected-target detail in `bench --tui`; open selected request detail in the request explorer |
+| `/` | open request filter editor in the request explorer |
+| `ctrl+u` | clear the request filter draft/query |
+| `esc` | return from selected-target detail, request detail, filter editor, or close help |
 | `?` | toggle help |
 | `q` or `ctrl+c` | quit; while running, asks for cancellation confirmation |
 | `y` | confirm cancellation |

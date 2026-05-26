@@ -3,21 +3,29 @@ package tui
 import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Quit           key.Binding
-	Confirm        key.Binding
-	Cancel         key.Binding
-	Help           key.Binding
-	FocusNext      key.Binding
-	FocusPrev      key.Binding
-	TargetUp       key.Binding
-	TargetDown     key.Binding
-	ToggleTarget   key.Binding
-	ShowAllTargets key.Binding
-	Enter          key.Binding
-	Summary        key.Binding
-	TTFT           key.Binding
-	E2E            key.Binding
-	Waterfall      key.Binding
+	Quit            key.Binding
+	Confirm         key.Binding
+	Cancel          key.Binding
+	Help            key.Binding
+	FocusNext       key.Binding
+	FocusPrev       key.Binding
+	TargetUp        key.Binding
+	TargetDown      key.Binding
+	ToggleTarget    key.Binding
+	ShowAllTargets  key.Binding
+	RequestExplorer key.Binding
+	ExplorerBack    key.Binding
+	FilterRequests  key.Binding
+	ClearFilter     key.Binding
+	PageUp          key.Binding
+	PageDown        key.Binding
+	Home            key.Binding
+	End             key.Binding
+	Enter           key.Binding
+	Summary         key.Binding
+	TTFT            key.Binding
+	E2E             key.Binding
+	Waterfall       key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -62,6 +70,38 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("a"),
 			key.WithHelp("a", "show all"),
 		),
+		RequestExplorer: key.NewBinding(
+			key.WithKeys("5", "r"),
+			key.WithHelp("5/r", "requests"),
+		),
+		ExplorerBack: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "back"),
+		),
+		FilterRequests: key.NewBinding(
+			key.WithKeys("/"),
+			key.WithHelp("/", "filter requests"),
+		),
+		ClearFilter: key.NewBinding(
+			key.WithKeys("ctrl+u"),
+			key.WithHelp("ctrl+u", "clear filter"),
+		),
+		PageUp: key.NewBinding(
+			key.WithKeys("pgup"),
+			key.WithHelp("pgup", "page up"),
+		),
+		PageDown: key.NewBinding(
+			key.WithKeys("pgdown"),
+			key.WithHelp("pgdn", "page down"),
+		),
+		Home: key.NewBinding(
+			key.WithKeys("home"),
+			key.WithHelp("home", "first"),
+		),
+		End: key.NewBinding(
+			key.WithKeys("end"),
+			key.WithHelp("end", "last"),
+		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "target detail"),
@@ -86,14 +126,15 @@ func defaultKeyMap() keyMap {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.FocusNext, k.Summary, k.Quit}
+	return []key.Binding{k.Help, k.FocusNext, k.Summary, k.RequestExplorer, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Summary, k.TTFT, k.E2E, k.Waterfall},
+		{k.Summary, k.TTFT, k.E2E, k.Waterfall, k.RequestExplorer},
 		{k.FocusNext, k.FocusPrev, k.TargetUp, k.TargetDown},
-		{k.ToggleTarget, k.ShowAllTargets, k.Enter, k.Help, k.Quit},
+		{k.PageUp, k.PageDown, k.Home, k.End},
+		{k.FilterRequests, k.ClearFilter, k.ToggleTarget, k.ShowAllTargets, k.Enter, k.ExplorerBack, k.Help, k.Quit},
 		{k.Confirm, k.Cancel},
 	}
 }

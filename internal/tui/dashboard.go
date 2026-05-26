@@ -35,7 +35,7 @@ type dashboardLayout struct {
 func renderDashboard(m model) string {
 	layout := calculateDashboardLayout(m.width, m.height, m.help.ShowAll)
 	header := fitToBox(renderDashboardHeader(m, layout.Header.Width, layout.Header.Height, m.theme), layout.Header.Width, layout.Header.Height)
-	chartArea := fitToBox(renderChartArea(m.store, layout.Charts.Width, layout.Charts.Height, m.pane, m.theme), layout.Charts.Width, layout.Charts.Height)
+	chartArea := fitToBox(renderChartArea(m.store, layout.Charts.Width, layout.Charts.Height, m.pane, m.requestExplorer, m.theme), layout.Charts.Width, layout.Charts.Height)
 	metrics := fitToBox(renderMetricsPanel(m.store, layout.Metrics.Width, layout.Metrics.Height, m.help.ShowAll, dashboardStatusText(m), m.confirmingCancel, m.theme), layout.Metrics.Width, layout.Metrics.Height)
 
 	return joinVerticalToHeight([]string{header, chartArea, metrics}, layout.Root.Width, layout.Root.Height)
@@ -154,9 +154,12 @@ func dashboardContextLabels(store liveStore) []string {
 	return parts
 }
 
-func renderChartArea(store liveStore, width int, height int, mode pane, theme tuiTheme) string {
+func renderChartArea(store liveStore, width int, height int, mode pane, requestExplorer requestExplorerState, theme tuiTheme) string {
 	if height <= 0 || width <= 0 {
 		return ""
+	}
+	if mode == paneRequests {
+		return renderRequestExplorer(store, requestExplorer, width, height, theme)
 	}
 	if store.IsBenchmark() {
 		return renderBenchChartArea(store, width, height, mode, theme)
@@ -487,14 +490,14 @@ func renderBenchModelFilterLine(store liveStore) string {
 func keysHelpLine(store liveStore, helpVisible bool) string {
 	if store.IsBenchmark() {
 		if helpVisible {
-			return "keys: ↑/↓ or j/k target  space toggle after finish  a show all  enter detail  esc overview  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  ? help"
+			return "keys: ↑/↓ or j/k target  space toggle after finish  a show all  enter detail  5/r requests  esc overview  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  ? help"
 		}
-		return "keys: ? help  ↑/↓ target  space toggle after finish  a all  enter detail  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
+		return "keys: ? help  ↑/↓ target  space toggle after finish  a all  enter detail  5/r requests  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
 	}
 	if helpVisible {
-		return "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help"
+		return "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  5/r requests  q cancel/quit  esc close  ? help"
 	}
-	return "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
+	return "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  5/r requests  q cancel/quit"
 }
 
 func fitMetricsLines(metricLines []string, footerLines []string, height int) []string {

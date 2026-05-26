@@ -19,6 +19,7 @@ const (
 	paneTTFT
 	paneE2E
 	paneWaterfall
+	paneRequests
 	paneCount
 )
 
@@ -30,8 +31,9 @@ type model struct {
 	width  int
 	height int
 
-	focus int
-	pane  pane
+	focus           int
+	pane            pane
+	requestExplorer requestExplorerState
 
 	store            liveStore
 	running          bool
@@ -135,18 +137,26 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
-	case key.Matches(msg, m.keys.Cancel):
-		m.help.ShowAll = false
-		m.confirmingCancel = false
-		if m.store.targetDetail {
-			m.store.setTargetDetail(false)
-		}
 	case key.Matches(msg, m.keys.Quit):
 		if m.running && !m.completed && !m.canceled && !m.failed {
 			m.confirmingCancel = true
 			return m, nil
 		}
 		return m, tea.Quit
+	case m.pane == paneRequests:
+		var handled bool
+		m, handled = m.updateRequestExplorerKey(msg)
+		if handled {
+			return m, nil
+		}
+	case key.Matches(msg, m.keys.RequestExplorer):
+		m.openRequestExplorer()
+	case key.Matches(msg, m.keys.Cancel):
+		m.help.ShowAll = false
+		m.confirmingCancel = false
+		if m.store.targetDetail {
+			m.store.setTargetDetail(false)
+		}
 	case key.Matches(msg, m.keys.FocusNext):
 		m.focus = (m.focus + 1) % 4
 	case key.Matches(msg, m.keys.FocusPrev):

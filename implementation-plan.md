@@ -3697,7 +3697,7 @@ Suggested keybindings for request exploration:
 | `o` | jump to output section in detail view when available |
 | `[`/`]` | previous/next detail section |
 
-### [ ] 37. Design request-explorer UX, modes, and keybindings
+### [x] 37. Design request-explorer UX, modes, and keybindings
 
 Add a clear request exploration mode shared by single-target `run --tui` and multi-target `bench --tui`.
 
@@ -3726,6 +3726,16 @@ Implementation details:
   - cancellation confirmation still takes priority while the benchmark is running.
 - In `bench --tui`, target/model selection keys should select chart targets outside the request pane and select request rows inside the request pane. If users need target filtering while in the request pane, expose it through filters rather than overloading row navigation.
 - Detail navigation should not require a mouse. If mouse support is ever added later, it must be optional and tested separately.
+
+Implemented details:
+
+- Added a `paneRequests` TUI pane reachable with `5` or `r` from both `run --tui` and `bench --tui`.
+- Added request-explorer state for list, detail, and filter-editing modes, including previous-pane return behavior, cursor request ID, paging offset, draft filter input, and committed filter text.
+- Added keyboard handling for request row navigation (`↑`/`↓`, `j`/`k`, page up/down, home/end), request detail open/close (`enter`/`esc`), filter editor open/apply/discard (`/`, `enter`, `esc`), and filter clearing (`ctrl+u`).
+- Preserved cancellation confirmation and global quit behavior while making request-explorer row navigation take precedence over benchmark target navigation inside the request pane.
+- Added a first bounded request-list/detail renderer so the pane is visibly reachable before richer v0.4 row/filter/detail tasks are implemented.
+- Documented the new request-explorer keybindings in `README.md`.
+- Added TUI model tests for run request navigation/detail transitions, bench keybinding precedence, and filter editor transitions.
 
 Definition of done:
 
