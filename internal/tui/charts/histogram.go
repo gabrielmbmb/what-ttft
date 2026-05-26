@@ -80,7 +80,11 @@ func RenderHistogramChart(values []float64, opts HistogramOptions, theme Theme) 
 	chart.Draw()
 
 	minValue, maxValue := minMax(values)
-	content := strings.Join([]string{title + fmt.Sprintf("  bins=%d  n=%d  min=%.1f  max=%.1f", bins, len(values), minValue, maxValue), chart.View()}, "\n")
+	content := strings.Join([]string{
+		title + fmt.Sprintf("  bins=%d  n=%d  min=%.1f  max=%.1f", bins, len(values), minValue, maxValue),
+		chart.View(),
+		histogramXAxis(maxCount, opts.Width, histogramMaxLabelWidth(barData)),
+	}, "\n")
 	return fitChartText(content, opts.Width, opts.Height)
 }
 
@@ -134,6 +138,7 @@ func RenderMultiHistogramChart(series []NamedSeries, opts HistogramOptions, them
 	content := strings.Join([]string{
 		title + fmt.Sprintf("  bins=%d  n=%d  series=%d", bins, len(values), len(series)),
 		chart.View(),
+		histogramXAxis(maxCount, opts.Width, histogramMaxLabelWidth(barData)),
 		multiHistogramLegendLine(series, opts.Width, theme),
 	}, "\n")
 	return fitChartText(content, opts.Width, opts.Height)
@@ -235,6 +240,44 @@ func multiHistogramLegendLine(series []NamedSeries, width int, theme Theme) stri
 		parts = append(parts, fmt.Sprintf("%s %s n=%d", marker, truncateChartLabel(item.Label, labelWidth), len(item.Values)))
 	}
 	return "legend: " + strings.Join(parts, "  |  ")
+}
+
+func histogramXAxis(maxCount int, width int, labelWidth int) string {
+	if width <= 0 {
+		return ""
+	}
+	if maxCount < 0 {
+		maxCount = 0
+	}
+
+	prefixWidth := labelWidth + 1
+	if prefixWidth < 0 {
+		prefixWidth = 0
+	}
+	if prefixWidth >= width {
+		return truncateChartLine(fmt.Sprintf("x=requests 0-%d", maxCount), width)
+	}
+
+	prefix := strings.Repeat(" ", prefixWidth)
+	graphWidth := width - prefixWidth
+	leftLabel := "x=requests 0"
+	rightLabel := fmt.Sprintf("%d", maxCount)
+	if graphWidth <= len(leftLabel)+len(rightLabel)+1 {
+		return truncateChartLine(prefix+leftLabel+"-"+rightLabel, width)
+	}
+
+	fillWidth := graphWidth - len(leftLabel) - len(rightLabel)
+	return prefix + leftLabel + strings.Repeat("─", fillWidth) + rightLabel
+}
+
+func histogramMaxLabelWidth(data []barchart.BarData) int {
+	width := 0
+	for _, item := range data {
+		if len(item.Label) > width {
+			width = len(item.Label)
+		}
+	}
+	return width
 }
 
 func histogramTitle(title string) string {

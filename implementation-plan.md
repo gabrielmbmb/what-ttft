@@ -3452,6 +3452,26 @@ Definition of done:
 
 ---
 
+### [x] 35.1. Label histogram X axis with request counts
+
+Files:
+
+- `internal/tui/charts/histogram.go`
+- `internal/tui/charts/histogram_test.go`
+
+Implementation details:
+
+- Add an explicit horizontal `x=requests` axis row under ntcharts-backed TTFT histograms so histogram bar length maps to request count.
+- Use the largest per-bin count as the right-side axis bound for both single-series and multi-series stacked histograms.
+- Keep the existing legend row for multi-target benchmark histograms.
+
+Definition of done:
+
+- TTFT distribution charts show a visible request-count X axis.
+- Histogram tests assert the request-count axis label is rendered.
+
+---
+
 ### [ ] 36. Add v0.3 quality gates, TUI model tests, and smoke coverage
 
 Finish the milestone with tests and smoke checks that exercise events and TUI paths without requiring real providers.

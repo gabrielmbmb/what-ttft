@@ -9,7 +9,7 @@ import (
 // TestRenderHistogramChartUsesSemanticLabels verifies the ntcharts adapter labels units and bins.
 func TestRenderHistogramChartUsesSemanticLabels(t *testing.T) {
 	got := RenderHistogramChart([]float64{10, 20, 30, 40}, HistogramOptions{Width: 80, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
-	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "min=10.0", "max=40.0", "10-25", "25-40"} {
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "min=10.0", "max=40.0", "10-25", "25-40", "x=requests 0", "2"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("histogram chart missing %q:\n%s", want, got)
 		}
@@ -30,7 +30,7 @@ func TestRenderMultiHistogramChartIncludesSeriesLabels(t *testing.T) {
 		{Label: "gpt-a", Values: []float64{10, 20}},
 		{Label: "gpt-b", Values: []float64{30, 40}},
 	}, HistogramOptions{Width: 80, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
-	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "series=2", "legend:", "● gpt-a", "◆ gpt-b"} {
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "series=2", "x=requests 0", "legend:", "● gpt-a", "◆ gpt-b"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("multi-histogram chart missing %q:\n%s", want, got)
 		}
