@@ -3,19 +3,21 @@ package tui
 import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Quit       key.Binding
-	Confirm    key.Binding
-	Cancel     key.Binding
-	Help       key.Binding
-	FocusNext  key.Binding
-	FocusPrev  key.Binding
-	TargetUp   key.Binding
-	TargetDown key.Binding
-	Enter      key.Binding
-	Summary    key.Binding
-	TTFT       key.Binding
-	E2E        key.Binding
-	Waterfall  key.Binding
+	Quit           key.Binding
+	Confirm        key.Binding
+	Cancel         key.Binding
+	Help           key.Binding
+	FocusNext      key.Binding
+	FocusPrev      key.Binding
+	TargetUp       key.Binding
+	TargetDown     key.Binding
+	ToggleTarget   key.Binding
+	ShowAllTargets key.Binding
+	Enter          key.Binding
+	Summary        key.Binding
+	TTFT           key.Binding
+	E2E            key.Binding
+	Waterfall      key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -52,6 +54,14 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("down", "j"),
 			key.WithHelp("↓/j", "target down"),
 		),
+		ToggleTarget: key.NewBinding(
+			key.WithKeys("space"),
+			key.WithHelp("space", "toggle model"),
+		),
+		ShowAllTargets: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "show all"),
+		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "target detail"),
@@ -83,7 +93,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Summary, k.TTFT, k.E2E, k.Waterfall},
 		{k.FocusNext, k.FocusPrev, k.TargetUp, k.TargetDown},
-		{k.Enter, k.Help, k.Quit},
+		{k.ToggleTarget, k.ShowAllTargets, k.Enter, k.Help, k.Quit},
 		{k.Confirm, k.Cancel},
 	}
 }

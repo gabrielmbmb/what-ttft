@@ -108,7 +108,7 @@ func TestBenchmarkDashboardShowsRunStyleMultiModelCharts(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "legend:", "gpt-a latest", "gpt-b latest", "series=2", "x=request order per target"} {
+	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "legend:", "gpt-a latest", "gpt-b latest", "series=2", "x=request order per target", "models shown=2/2", "space toggle"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("benchmark dashboard missing %q:\n%s", want, content)
 		}
@@ -120,6 +120,30 @@ func TestBenchmarkDashboardShowsRunStyleMultiModelCharts(t *testing.T) {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("benchmark dashboard rendered forbidden string %q:\n%s", forbidden, content)
 		}
+	}
+}
+
+// TestBenchmarkDashboardCanHideFinishedTargets verifies post-run target visibility filters chart series without changing reports.
+func TestBenchmarkDashboardCanHideFinishedTargets(t *testing.T) {
+	app := benchmarkDashboardAppWithRecords(t)
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventBenchmarkFinished}})
+	app = updateModel(t, app, keyPress("j"))
+	app = updateModel(t, app, keyPress("space"))
+	content := app.View().Content
+
+	for _, want := range []string{"models shown=1/2", "selected=gpt-b[off]", "series=1", "gpt-a latest"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("filtered benchmark dashboard missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "gpt-b latest") {
+		t.Fatalf("hidden target still rendered as a chart series:\n%s", content)
+	}
+
+	app = updateModel(t, app, keyPress("a"))
+	content = app.View().Content
+	if !strings.Contains(content, "models shown=2/2") || !strings.Contains(content, "gpt-b latest") {
+		t.Fatalf("show-all did not restore hidden chart series:\n%s", content)
 	}
 }
 

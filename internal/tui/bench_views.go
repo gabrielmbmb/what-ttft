@@ -203,7 +203,7 @@ func renderBenchTargetTable(store liveStore, width int, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
-	lines := []string{fmt.Sprintf("%-2s %-16s %-9s %-9s %-9s %7s %4s %4s %-16s", "", "target", "status", "api", "tier", "done", "ok", "err", "model")}
+	lines := []string{fmt.Sprintf("%-2s %-5s %-16s %-9s %-9s %-9s %7s %4s %4s %-16s", "", "show", "target", "status", "api", "tier", "done", "ok", "err", "model")}
 	selectedID := store.selectedTargetID()
 	for _, row := range store.TargetRows() {
 		marker := " "
@@ -212,7 +212,11 @@ func renderBenchTargetTable(store liveStore, width int, height int) string {
 		}
 		api := firstNonEmpty(row.ProviderAPI, row.Provider, "-")
 		tier := firstNonEmpty(row.RequestedServiceTier, row.ObservedServiceTier, "-")
-		lines = append(lines, fmt.Sprintf("%-2s %-16s %-9s %-9s %-9s %3d/%-3d %4d %4d %-16s", marker, truncateVisible(row.ID, 16), row.Status, truncateVisible(api, 9), truncateVisible(tier, 9), row.Completed, row.Total, row.Successful, row.Errors, truncateVisible(row.Model, 16)))
+		visibility := "on"
+		if !row.Visible {
+			visibility = "off"
+		}
+		lines = append(lines, fmt.Sprintf("%-2s %-5s %-16s %-9s %-9s %-9s %3d/%-3d %4d %4d %-16s", marker, visibility, truncateVisible(row.ID, 16), row.Status, truncateVisible(api, 9), truncateVisible(tier, 9), row.Completed, row.Total, row.Successful, row.Errors, truncateVisible(row.Model, 16)))
 	}
 	if len(lines) == 1 {
 		lines = append(lines, "waiting for target events")
@@ -227,8 +231,12 @@ func renderBenchSelectedTargetPanel(store liveStore, width int, height int, them
 	}
 	selected := store.selectedTargetStore()
 	rows := selected.MetricRows()
+	visibility := "on"
+	if !store.targetVisible(targetID) {
+		visibility = "off"
+	}
 	lines := []string{
-		"selected=" + targetID + "  enter=detail  ↑/↓ or j/k=select  esc=overview",
+		"selected=" + targetID + "  show=" + visibility + "  space=toggle after finish  a=show all  esc=overview",
 		fmt.Sprintf("%-36s %5s  %-8s %-8s %-8s %-8s %s", "metric (selected target only)", "count", "p50", "p95", "p99", "mean", "unit"),
 		metricTableLine(metricRowByName(rows, metricTTFTDeltaMS)),
 		metricTableLine(metricRowByName(rows, metricE2EDeltaMS)),
@@ -242,6 +250,9 @@ func benchMetricSeries(store liveStore, name string) []charts.NamedSeries {
 	labels := benchSeriesLabels(rows)
 	series := make([]charts.NamedSeries, 0, len(rows))
 	for rowIndex, row := range rows {
+		if !row.Visible {
+			continue
+		}
 		values := make([]float64, 0)
 		for _, record := range store.recordsForTarget(row.ID) {
 			if record.Warmup || record.Error != nil {
@@ -301,7 +312,7 @@ func benchSeriesBaseLabel(row targetRow, duplicateModel bool) string {
 }
 
 func benchWaitingLabel(store liveStore, message string) string {
-	labels := benchTargetLabels(store.TargetRows())
+	labels := benchTargetLabels(visibleTargetRows(store.TargetRows()))
 	if len(labels) == 0 {
 		return message
 	}
@@ -315,4 +326,14 @@ func benchTargetLabels(rows []targetRow) []string {
 		labels = append(labels, labelsByID[row.ID])
 	}
 	return labels
+}
+
+func visibleTargetRows(rows []targetRow) []targetRow {
+	visible := make([]targetRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Visible {
+			visible = append(visible, row)
+		}
+	}
+	return visible
 }

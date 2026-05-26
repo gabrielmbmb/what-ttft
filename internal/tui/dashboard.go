@@ -425,8 +425,11 @@ func renderCompactMetricsBody(store liveStore, width int, height int, helpVisibl
 	}
 	lines = append(lines,
 		renderRatesLine(store),
-		renderProgressStatusLine(store, status),
 	)
+	if filterLine := renderBenchModelFilterLine(store); filterLine != "" {
+		lines = append(lines, filterLine)
+	}
+	lines = append(lines, renderProgressStatusLine(store, status))
 	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
 		lines = append(lines, "TPS unavailable: provider usage not reported")
 	}
@@ -443,17 +446,50 @@ func metricsFooterLines(store liveStore, helpVisible bool, status string) []stri
 	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
 		footerLines = append(footerLines, "TPS unavailable: provider usage not reported")
 	}
+	if filterLine := renderBenchModelFilterLine(store); filterLine != "" {
+		footerLines = append(footerLines, filterLine)
+	}
 	footerLines = append(footerLines, renderProgressStatusLine(store, status))
 	footerLines = append(footerLines, keysHelpLine(store, helpVisible))
 	return footerLines
 }
 
+func renderBenchModelFilterLine(store liveStore) string {
+	if !store.IsBenchmark() {
+		return ""
+	}
+	rows := store.TargetRows()
+	if len(rows) == 0 {
+		return ""
+	}
+	visibleCount := 0
+	for _, row := range rows {
+		if row.Visible {
+			visibleCount++
+		}
+	}
+	selectedID := store.selectedTargetID()
+	selectedLabel := selectedID
+	if selectedLabel == "" {
+		selectedLabel = "-"
+	}
+	labels := benchSeriesLabels(rows)
+	if label := labels[selectedID]; label != "" {
+		selectedLabel = label
+	}
+	selectedState := "off"
+	if store.targetVisible(selectedID) {
+		selectedState = "on"
+	}
+	return fmt.Sprintf("models shown=%d/%d  selected=%s[%s]  space=toggle after finish  a=show all", visibleCount, len(rows), safeInline(selectedLabel), selectedState)
+}
+
 func keysHelpLine(store liveStore, helpVisible bool) string {
 	if store.IsBenchmark() {
 		if helpVisible {
-			return "keys: ↑/↓ or j/k target  enter detail  esc overview  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  ? help"
+			return "keys: ↑/↓ or j/k target  space toggle after finish  a show all  enter detail  esc overview  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  ? help"
 		}
-		return "keys: ? help  ↑/↓ target  enter detail  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
+		return "keys: ? help  ↑/↓ target  space toggle after finish  a all  enter detail  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
 	}
 	if helpVisible {
 		return "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  esc close  ? help"

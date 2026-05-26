@@ -155,6 +155,14 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.store.selectTarget(-1)
 	case key.Matches(msg, m.keys.TargetDown):
 		m.store.selectTarget(1)
+	case key.Matches(msg, m.keys.ToggleTarget):
+		if m.store.IsBenchmark() && !m.running {
+			m.store.toggleSelectedTargetVisibility()
+		}
+	case key.Matches(msg, m.keys.ShowAllTargets):
+		if m.store.IsBenchmark() && !m.running {
+			m.store.showAllTargets()
+		}
 	case key.Matches(msg, m.keys.Enter):
 		if m.store.IsBenchmark() && m.store.selectedTargetID() != "" {
 			m.store.setTargetDetail(true)

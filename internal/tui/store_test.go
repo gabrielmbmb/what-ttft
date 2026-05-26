@@ -195,6 +195,41 @@ func TestLiveStoreBenchmarkTargetsTrackStatus(t *testing.T) {
 	}
 }
 
+// TestLiveStoreTargetVisibilityFiltersComparisonSeries verifies hidden benchmark targets are omitted from comparison chart series without changing stable style indexes.
+func TestLiveStoreTargetVisibilityFiltersComparisonSeries(t *testing.T) {
+	store := newLiveStore()
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, BenchmarkName: "bench", Targets: []whatttft.RunEventTarget{
+		{TargetID: "target-a", Model: "gpt-a"},
+		{TargetID: "target-b", Model: "gpt-b"},
+	}})
+	for _, record := range []whatttft.RequestRecord{
+		tuiTestRecord("target-a-req-000000", "target-a", 10, 100, nil),
+		tuiTestRecord("target-b-req-000000", "target-b", 90, 200, nil),
+	} {
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, TargetID: record.TargetID, RequestID: record.RequestID, Record: &record})
+	}
+
+	store.selectTarget(1)
+	store.toggleSelectedTargetVisibility()
+	if store.targetVisible("target-b") || store.visibleTargetCount() != 1 {
+		t.Fatalf("target visibility after hide = b:%t count:%d, want hidden/count 1", store.targetVisible("target-b"), store.visibleTargetCount())
+	}
+	series := benchMetricSeries(store, metricTTFTDeltaMS)
+	if len(series) != 1 || series[0].Label != "gpt-a" || series[0].StyleIndex != 0 {
+		t.Fatalf("filtered series = %#v, want only gpt-a with stable style index 0", series)
+	}
+
+	store.selectTarget(-1)
+	store.toggleSelectedTargetVisibility()
+	if !store.targetVisible("target-a") || store.visibleTargetCount() != 1 {
+		t.Fatalf("last visible target was hidden: a:%t count:%d", store.targetVisible("target-a"), store.visibleTargetCount())
+	}
+	store.showAllTargets()
+	if !store.targetVisible("target-a") || !store.targetVisible("target-b") || store.visibleTargetCount() != 2 {
+		t.Fatalf("show all visibility = a:%t b:%t count:%d, want all visible", store.targetVisible("target-a"), store.targetVisible("target-b"), store.visibleTargetCount())
+	}
+}
+
 // TestLiveStoreSelectedTargetStoreFiltersRecords verifies selected target detail charts use only that target's records.
 func TestLiveStoreSelectedTargetStoreFiltersRecords(t *testing.T) {
 	store := newLiveStore()

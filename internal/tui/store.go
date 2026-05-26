@@ -43,6 +43,7 @@ type liveStore struct {
 	targetDetail         bool
 	targets              map[string]*targetState
 	targetOrderIDs       []string
+	hiddenTargets        map[string]bool
 
 	totalRequests      int
 	warmupRequests     int
@@ -62,6 +63,7 @@ func newLiveStore() liveStore {
 		activeRequests: make(map[string]struct{}),
 		records:        make(map[string]whatttft.RequestRecord),
 		targets:        make(map[string]*targetState),
+		hiddenTargets:  make(map[string]bool),
 	}
 }
 
@@ -74,6 +76,9 @@ func (s *liveStore) applyEvent(event whatttft.RunEvent) {
 	}
 	if s.targets == nil {
 		s.targets = make(map[string]*targetState)
+	}
+	if s.hiddenTargets == nil {
+		s.hiddenTargets = make(map[string]bool)
 	}
 
 	s.applyEventContext(event)
@@ -443,6 +448,7 @@ func (s liveStore) TargetRows() []targetRow {
 			continue
 		}
 		row := state.row()
+		row.Visible = s.targetVisible(targetID)
 		if group := groups[targetID]; group != nil {
 			row.Successful = max(row.Successful, group.SuccessfulRequests)
 			row.Errors = max(row.Errors, group.ErrorRequests)
@@ -495,6 +501,51 @@ func (s *liveStore) setTargetDetail(detail bool) {
 		return
 	}
 	s.targetDetail = detail
+}
+
+func (s *liveStore) toggleSelectedTargetVisibility() {
+	if s == nil {
+		return
+	}
+	targetID := s.selectedTargetID()
+	if targetID == "" {
+		return
+	}
+	if s.hiddenTargets == nil {
+		s.hiddenTargets = make(map[string]bool)
+	}
+	if s.hiddenTargets[targetID] {
+		delete(s.hiddenTargets, targetID)
+		return
+	}
+	if s.visibleTargetCount() <= 1 {
+		return
+	}
+	s.hiddenTargets[targetID] = true
+}
+
+func (s *liveStore) showAllTargets() {
+	if s == nil {
+		return
+	}
+	s.hiddenTargets = make(map[string]bool)
+}
+
+func (s liveStore) targetVisible(targetID string) bool {
+	if strings.TrimSpace(targetID) == "" {
+		return true
+	}
+	return !s.hiddenTargets[targetID]
+}
+
+func (s liveStore) visibleTargetCount() int {
+	count := 0
+	for _, targetID := range s.targetOrderIDs {
+		if s.targetVisible(targetID) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s liveStore) selectedTargetStore() liveStore {
@@ -750,6 +801,7 @@ type targetRow struct {
 	Errors               int
 	Active               int
 	Concurrency          int
+	Visible              bool
 }
 
 func (s *targetState) applyEventContext(event whatttft.RunEvent) {

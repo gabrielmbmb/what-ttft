@@ -230,6 +230,8 @@ Keyboard shortcuts:
 | `3` | E2E/TPS-focused view |
 | `4` | slowest-request waterfall |
 | `↑`/`↓` or `k`/`j` | select a benchmark target in `bench --tui` |
+| `space` | after a benchmark finishes, toggle the selected target/model in comparison charts |
+| `a` | after a benchmark finishes, show all target/model series again |
 | `enter` | open selected-target detail in `bench --tui` |
 | `esc` | return from selected-target detail / close help |
 | `?` | toggle help |

@@ -152,7 +152,7 @@ func TestModelHelpAndPaneKeys(t *testing.T) {
 	}
 }
 
-// TestModelBenchmarkTargetNavigationKeys verifies benchmark target selection and detail-mode key handling without a terminal.
+// TestModelBenchmarkTargetNavigationKeys verifies benchmark target selection, detail-mode, and post-run visibility key handling without a terminal.
 func TestModelBenchmarkTargetNavigationKeys(t *testing.T) {
 	app := newModel(nil)
 	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, Targets: []whatttft.RunEventTarget{{TargetID: "target-a"}, {TargetID: "target-b"}}}})
@@ -171,6 +171,19 @@ func TestModelBenchmarkTargetNavigationKeys(t *testing.T) {
 	app = updateModel(t, app, keyPress("esc"))
 	if app.store.targetDetail {
 		t.Fatal("target detail = true after esc, want false")
+	}
+	app = updateModel(t, app, keyPress("space"))
+	if !app.store.targetVisible("target-b") {
+		t.Fatal("target-b hidden while benchmark is still running; visibility toggles should be post-run only")
+	}
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventBenchmarkFinished}})
+	app = updateModel(t, app, keyPress("space"))
+	if app.store.targetVisible("target-b") {
+		t.Fatal("target-b visible after post-run space toggle, want hidden")
+	}
+	app = updateModel(t, app, keyPress("a"))
+	if !app.store.targetVisible("target-b") {
+		t.Fatal("target-b hidden after show-all key, want visible")
 	}
 	app = updateModel(t, app, keyPress("k"))
 	if got := app.store.selectedTargetID(); got != "target-a" {
@@ -222,6 +235,8 @@ func keyPress(value string) tea.KeyPressMsg {
 		return tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})
 	case "esc":
 		return tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc})
+	case "space":
+		return tea.KeyPressMsg(tea.Key{Code: tea.KeySpace})
 	}
 	if strings.HasPrefix(value, "ctrl+") && len(value) == len("ctrl+")+1 {
 		return tea.KeyPressMsg(tea.Key{Code: rune(value[len(value)-1]), Mod: tea.ModCtrl})
