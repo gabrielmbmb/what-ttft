@@ -27,6 +27,7 @@ type liveStore struct {
 	targetID             string
 	targetName           string
 	provider             string
+	providerAPI          string
 	model                string
 	scenarioName         string
 	cacheMode            whatttft.CacheMode
@@ -235,6 +236,9 @@ func (s *liveStore) applyEventContext(event whatttft.RunEvent) {
 	}
 	if event.Provider != "" {
 		s.provider = event.Provider
+	}
+	if event.ProviderAPI != "" {
+		s.providerAPI = event.ProviderAPI
 	}
 	if event.Model != "" {
 		s.model = event.Model

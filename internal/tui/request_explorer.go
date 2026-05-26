@@ -211,15 +211,15 @@ func renderRequestExplorer(store liveStore, state requestExplorerState, width in
 }
 
 func renderRequestExplorerList(store liveStore, state requestExplorerState, width int, height int, theme tuiTheme) string {
-	records := store.completedRecords()
+	rows := store.requestRows()
 	bodyWidth := panelInnerWidth(width)
 	bodyHeight := panelInnerHeight(height)
-	if len(records) == 0 {
+	if len(rows) == 0 {
 		body := "no requests completed yet\nrequests appear here after request_finished events\nkeys: esc overview  / filter  enter detail"
 		return panel("Requests", fitToBox(body, bodyWidth, bodyHeight), width, height, theme, roleAccent)
 	}
 
-	selected := requestRecordIndex(records, state.CursorRequestID)
+	selected := requestRowIndex(rows, state.CursorRequestID)
 	if selected < 0 {
 		selected = 0
 	}
@@ -227,10 +227,10 @@ func renderRequestExplorerList(store liveStore, state requestExplorerState, widt
 	if pageSize < 1 {
 		pageSize = 1
 	}
-	offset := requestExplorerOffsetForSelection(state.Offset, selected, pageSize, len(records))
+	offset := requestExplorerOffsetForSelection(state.Offset, selected, pageSize, len(rows))
 	end := offset + pageSize
-	if end > len(records) {
-		end = len(records)
+	if end > len(rows) {
+		end = len(rows)
 	}
 
 	filterLabel := state.CommittedFilter
@@ -241,11 +241,11 @@ func renderRequestExplorerList(store liveStore, state requestExplorerState, widt
 		filterLabel = "none"
 	}
 	lines := []string{
-		fmt.Sprintf("requests=%d  selected=%d/%d  filter=%s  sort=completion-order", len(records), selected+1, len(records), safeInline(filterLabel)),
+		fmt.Sprintf("requests=%d  selected=%d/%d  filter=%s  sort=completion-order", len(rows), selected+1, len(rows), safeInline(filterLabel)),
 		requestExplorerHeader(store.IsBenchmark(), bodyWidth),
 	}
 	for index := offset; index < end; index++ {
-		lines = append(lines, requestExplorerRow(records[index], index, index == selected, store.IsBenchmark(), bodyWidth))
+		lines = append(lines, requestExplorerRow(rows[index], index == selected, store.IsBenchmark(), bodyWidth))
 	}
 	if state.Mode == requestExplorerModeFilter {
 		lines = append(lines, "filter: enter apply  esc discard  ctrl+u clear")
@@ -262,30 +262,29 @@ func requestExplorerHeader(benchmark bool, width int) string {
 	return fmt.Sprintf("%-2s %-5s %-24s %-8s %-5s %8s %8s %8s", "", "#", "request", "phase", "ok", "ttft", "e2e", "http")
 }
 
-func requestExplorerRow(record whatttft.RequestRecord, index int, selected bool, benchmark bool, width int) string {
+func requestExplorerRow(row requestRow, selected bool, benchmark bool, width int) string {
 	marker := " "
 	if selected {
 		marker = "›"
 	}
-	outcome := "ok"
-	if record.Error != nil {
+	outcome := row.Outcome
+	if outcome == requestOutcomeError {
 		outcome = "err"
 	}
-	phase := "meas"
-	if record.Warmup {
+	phase := row.Phase
+	if phase == requestPhaseMeasured {
+		phase = "meas"
+	}
+	if phase == requestPhaseWarmup {
 		phase = "warm"
 	}
-	status := "-"
-	if record.HTTP.StatusCode != 0 {
-		status = fmt.Sprintf("%d", record.HTTP.StatusCode)
-	}
-	requestID := truncateVisible(safeInline(record.RequestID), 24)
+	requestID := truncateVisible(row.RequestID, 24)
 	if benchmark && width >= 96 {
-		target := truncateVisible(safeInline(firstNonEmpty(record.TargetID, "-")), 14)
-		model := truncateVisible(safeInline(firstNonEmpty(record.Model, "-")), 16)
-		return fmt.Sprintf("%-2s %-5d %-24s %-14s %-16s %-7s %-5s %8s %8s %8s", marker, index+1, requestID, target, model, phase, outcome, formatMetricValue(record.Derived.TTFTDeltaMS), formatMetricValue(record.Derived.E2EDeltaMS), status)
+		target := truncateVisible(firstNonEmpty(row.TargetID, "-"), 14)
+		model := truncateVisible(firstNonEmpty(row.Model, "-"), 16)
+		return fmt.Sprintf("%-2s %-5d %-24s %-14s %-16s %-7s %-5s %8s %8s %8s", marker, row.Ordinal+1, requestID, target, model, phase, outcome, formatMetricValue(row.TTFTMS), formatMetricValue(row.E2EMS), row.HTTPStatus)
 	}
-	return fmt.Sprintf("%-2s %-5d %-24s %-8s %-5s %8s %8s %8s", marker, index+1, requestID, phase, outcome, formatMetricValue(record.Derived.TTFTDeltaMS), formatMetricValue(record.Derived.E2EDeltaMS), status)
+	return fmt.Sprintf("%-2s %-5d %-24s %-8s %-5s %8s %8s %8s", marker, row.Ordinal+1, requestID, phase, outcome, formatMetricValue(row.TTFTMS), formatMetricValue(row.E2EMS), row.HTTPStatus)
 }
 
 func renderRequestExplorerDetail(store liveStore, state requestExplorerState, width int, height int, theme tuiTheme) string {

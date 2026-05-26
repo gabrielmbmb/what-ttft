@@ -147,6 +147,24 @@ func TestBenchmarkDashboardCanHideFinishedTargets(t *testing.T) {
 	}
 }
 
+// TestRequestExplorerRowsDoNotRenderSecretMetadata verifies request rows omit prompt/API/chunk-like sensitive fields.
+func TestRequestExplorerRowsDoNotRenderSecretMetadata(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 120, Height: 30})
+	record := tuiTestRecord("req-1", "target-a", 10, 100, &whatttft.ErrorRecord{Category: "provider", Message: "redacted", BodySnippet: "SECRET_API_KEY raw provider body Authorization prompt text"})
+	record.Cache.Extra = map[string]any{"ignored": "SECRET_API_KEY secret prompt chunk text Authorization"}
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, Provider: "openai", Model: "gpt-test", TotalRequests: 1, MeasuredRequests: 1}})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	app = updateModel(t, app, keyPress("r"))
+	content := app.View().Content
+
+	for _, forbidden := range []string{"SECRET_API_KEY", "raw provider body", "secret prompt", "chunk text", "Authorization"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("request explorer row rendered forbidden string %q:\n%s", forbidden, content)
+		}
+	}
+}
+
 // TestBenchmarkDashboardSelectedTargetDetailUsesSelectedRecords verifies selected-target detail is scoped to one target.
 func TestBenchmarkDashboardSelectedTargetDetailUsesSelectedRecords(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)

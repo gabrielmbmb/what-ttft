@@ -3745,7 +3745,7 @@ Definition of done:
 
 ---
 
-### [ ] 38. Build request-explorer store indexes, row models, and redacted display fields
+### [x] 38. Build request-explorer store indexes, row models, and redacted display fields
 
 Extend the TUI store with queryable request rows derived from completed `RequestRecord` values.
 
@@ -3772,6 +3772,17 @@ Implementation details:
   - output state is independent of success/error because some failed requests may have partial output and some successful requests may have no visible text.
 - Keep a row-level stable ordinal, e.g. completion index, so the list can show `#` and preserve selection across filter/sort changes by request ID when possible.
 - Avoid storing formatted-only strings as the source of truth. Store typed values in row structs and format at render time so filters/sorts do not parse display text.
+
+Implemented details:
+
+- Added `internal/tui/request_rows.go` with typed request row construction from copied `RequestRecord` snapshots and target metadata.
+- Added stable row ordinals, target ordinals, phase/outcome/cache/connection/output state labels, HTTP status fallback, token pointers, latency/TPS pointers, provider API, service tier, target/model labels, and protocol fields.
+- Added `liveStore.requestRows()` so run and bench request explorers use the same queryable row model.
+- Added copy-based `sortRequestRows` scaffolding for deterministic completion-order, target-order, and errors-first row ordering without mutating the input rows or canonical store order.
+- Added `providerAPI` to live store context so single-target and benchmark request rows can carry provider API metadata from lifecycle events.
+- Updated the initial request explorer list renderer to consume typed request rows rather than formatting directly from `RequestRecord` values.
+- Added store tests for successful, failed, warmup, cache-hit, cache-miss, and multi-target row generation; sorting/copy behavior; and canonical record-order immutability.
+- Added a dashboard privacy regression test proving request rows do not render ignored secret-like cache metadata or provider body snippets.
 
 Definition of done:
 
