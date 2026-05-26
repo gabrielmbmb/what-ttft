@@ -16,6 +16,7 @@ const (
 	metricE2EDeltaMS                    = "e2e_delta_ms"
 	metricStreamTotalMS                 = "stream_total_ms"
 	metricServerWaitToFirstByteMS       = "server_wait_to_first_byte_ms"
+	metricCompletionTokens              = "completion_tokens"
 	metricE2EOutputTPS                  = "e2e_output_tps"
 	metricGenerationDeltaOutputTPS      = "generation_delta_output_tps"
 	metricStreamProtocolToFirstOutputMS = "stream_protocol_to_first_output_ms"
@@ -554,6 +555,7 @@ func (s liveStore) MetricRows() []metricRow {
 		metricRowFromValues(metricServerWaitToFirstByteMS, "ms", s.metricValues(metricServerWaitToFirstByteMS)),
 		metricRowFromValues(metricTTFTDeltaMS, "ms", s.metricValues(metricTTFTDeltaMS)),
 		metricRowFromValues(metricE2EDeltaMS, "ms", s.metricValues(metricE2EDeltaMS)),
+		metricRowFromValues(metricCompletionTokens, "tokens", s.completionTokenValues()),
 		metricRowFromValues(metricE2EOutputTPS, "tokens/s", s.metricValues(metricE2EOutputTPS)),
 		metricRowFromValues(metricGenerationDeltaOutputTPS, "tokens/s", s.metricValues(metricGenerationDeltaOutputTPS)),
 	}
@@ -661,6 +663,18 @@ func measuredOutcomeCounts(records []whatttft.RequestRecord) (int, int) {
 // RunSeries returns successful measured request metric values in completion order.
 func (s liveStore) RunSeries(name string) []float64 {
 	return s.metricValues(name)
+}
+
+func (s liveStore) completionTokenValues() []float64 {
+	var values []float64
+	for _, record := range s.completedRecords() {
+		if record.Warmup || record.Error != nil || record.CompletionTokens == nil {
+			continue
+		}
+		values = append(values, float64(*record.CompletionTokens))
+	}
+
+	return values
 }
 
 func (s liveStore) metricValues(name string) []float64 {
@@ -1027,6 +1041,7 @@ func copyMetricDistributions(metrics whatttft.MetricDistributions) whatttft.Metr
 		TCPConnectMS:                        copyDistribution(metrics.TCPConnectMS),
 		TLSMS:                               copyDistribution(metrics.TLSMS),
 		RequestWriteMS:                      copyDistribution(metrics.RequestWriteMS),
+		CompletionTokens:                    copyDistribution(metrics.CompletionTokens),
 		E2EOutputTPS:                        copyDistribution(metrics.E2EOutputTPS),
 		GenerationDeltaOutputTPS:            copyDistribution(metrics.GenerationDeltaOutputTPS),
 	}

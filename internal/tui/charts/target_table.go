@@ -25,17 +25,19 @@ func TargetTable(groups []whatttft.SummaryGroup, width int) string {
 
 	var builder strings.Builder
 	builder.WriteString("target comparison\n")
-	fmt.Fprintf(&builder, "%-18s %-*s %4s %4s %9s %9s %15s %15s %9s %10s %8s", "target", modelWidth, "model", "ok", "err", "ttft_p50", "e2e_p50", "e2e_output_tps", "gen_delta_tps", "gen_count", "system", "rps")
+	fmt.Fprintf(&builder, "%-18s %-*s %4s %4s %12s %11s %9s %9s %15s %15s %9s %10s %8s", "target", modelWidth, "model", "ok", "err", "tokens_total", "token_recs", "ttft_p50", "e2e_p50", "e2e_output_tps", "gen_delta_tps", "gen_count", "system", "rps")
 	for _, group := range groups {
 		builder.WriteByte('\n')
 		fmt.Fprintf(
 			&builder,
-			"%-18s %-*s %4d %4d %9s %9s %15s %15s %9s %10s %8s",
+			"%-18s %-*s %4d %4d %12d %11s %9s %9s %15s %15s %9s %10s %8s",
 			truncate(groupLabel(group), 18),
 			modelWidth,
 			truncate(group.Model, modelWidth),
 			group.SuccessfulRequests,
 			group.ErrorRequests,
+			group.TotalCompletionTokens,
+			formatCount(group.CompletionTokenRecords, group.SuccessfulRequests),
 			formatOptional(group.Metrics.TTFTDeltaMS.P50),
 			formatOptional(group.Metrics.E2EDeltaMS.P50),
 			formatOptional(group.Metrics.E2EOutputTPS.Mean),

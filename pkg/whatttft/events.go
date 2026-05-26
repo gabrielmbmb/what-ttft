@@ -415,6 +415,7 @@ func cloneMetricDistributions(metrics MetricDistributions) MetricDistributions {
 		TCPConnectMS:                        cloneDistribution(metrics.TCPConnectMS),
 		TLSMS:                               cloneDistribution(metrics.TLSMS),
 		RequestWriteMS:                      cloneDistribution(metrics.RequestWriteMS),
+		CompletionTokens:                    cloneDistribution(metrics.CompletionTokens),
 		E2EOutputTPS:                        cloneDistribution(metrics.E2EOutputTPS),
 		GenerationDeltaOutputTPS:            cloneDistribution(metrics.GenerationDeltaOutputTPS),
 	}

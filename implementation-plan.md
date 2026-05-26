@@ -3390,6 +3390,31 @@ Definition of done:
 
 ---
 
+### [x] 34.4. Add generated-token total metrics to summaries and comparison tables
+
+Files:
+
+- `pkg/whatttft/summary.go`
+- `cmd/what-ttft/bench.go`
+- `internal/report/markdown.go`
+- `internal/tui/dashboard.go`
+- `internal/tui/charts/target_table.go`
+- Summary, CLI, report, and TUI tests
+
+Implementation details:
+
+- Add a `completion_tokens` distribution over successful measured requests with provider-reported output token counts.
+- Surface aggregate generated-token totals with `completion_tokens_total` / `total_completion_tokens` and `completion_token_records` so TPS metrics have token-volume context.
+- Add token total columns to benchmark CLI and Markdown comparison tables.
+- Show generated-token totals in the live TUI metrics footer without dropping existing latency/transport metrics.
+
+Definition of done:
+
+- Machine-readable summaries include per-request completion-token distributions and aggregate token totals.
+- Human-readable CLI, Markdown, and TUI summaries make the generated-token volume visible next to TPS metrics.
+
+---
+
 ### [ ] 35. Update README and examples for v0.3 live dashboards and events
 
 Document the new user-facing behavior only after `run --tui` and `bench --tui` exist.

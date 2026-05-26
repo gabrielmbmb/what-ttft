@@ -90,7 +90,7 @@ func TestDashboardDefaultShowsCharts(t *testing.T) {
 	app := dashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "tokens/s", "METRICS", "metric (successful measured reqs)", "p50", "p95", "p99", "mean"} {
+	for _, want := range []string{"TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "tokens/s", "completion_tokens_total=8", "completion_token_records=2", "METRICS", "metric (successful measured reqs)", "p50", "p95", "p99", "mean"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, content)
 		}

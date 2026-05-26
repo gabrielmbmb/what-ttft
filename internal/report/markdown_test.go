@@ -50,7 +50,9 @@ func TestMarkdownSummaryIncludesKeyMetricNames(t *testing.T) {
 		"server_wait_minus_provider_processing_ms",
 		"e2e_delta_ms",
 		"e2e_output_tps",
+		"completion_tokens",
 		"generation_delta_output_tps",
+		"completion_token_records: 0",
 		"system_tps: 100.000",
 		"rps: 90.000",
 	} {
@@ -93,7 +95,7 @@ func TestMarkdownSummaryWithMetadataIncludesComparisonTable(t *testing.T) {
 	}}}
 
 	markdown := MarkdownSummaryWithMetadata(summary, metadata)
-	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "| target-a | openai | responses | default | default | gpt-a | 1 | 0 | 100.000 | 150.000", "e2e_output_tps mean", "generation_delta_output_tps mean", "generation_delta_output_tps count", "1/1"} {
+	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "| target-a | openai | responses | default | default | gpt-a | 1 | 0", "completion_tokens total", "completion_token_records", "e2e_output_tps mean", "generation_delta_output_tps mean", "generation_delta_output_tps count", "1/1"} {
 		if !strings.Contains(markdown, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, markdown)
 		}

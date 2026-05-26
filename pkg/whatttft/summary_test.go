@@ -49,6 +49,7 @@ func TestSummarizeExcludesWarmupAndAggregatesMeasuredRequests(t *testing.T) {
 	assertSummaryDistribution(t, "ttft_delta_ms", group.Metrics.TTFTDeltaMS, 1, 10)
 	assertSummaryDistribution(t, "provider_processing_ms", group.Metrics.ProviderProcessingMS, 1, 3)
 	assertSummaryDistribution(t, "server_wait_minus_provider_processing_ms", group.Metrics.ServerWaitMinusProviderProcessingMS, 1, 2)
+	assertSummaryDistribution(t, "completion_tokens", group.Metrics.CompletionTokens, 1, 10)
 	assertSummaryDistribution(t, "generation_delta_output_tps", group.Metrics.GenerationDeltaOutputTPS, 1, 112.5)
 	if group.Metrics.TTFTDeltaMS.P50 != nil && *group.Metrics.TTFTDeltaMS.P50 == 999 {
 		t.Fatal("warmup TTFT leaked into measured distribution")

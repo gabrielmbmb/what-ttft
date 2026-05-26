@@ -419,9 +419,14 @@ func renderCompactMetricsBody(store liveStore, width int, height int, helpVisibl
 	rows := store.MetricRows()
 	lines := []string{
 		compactMetricLine(metricTTFTDeltaMS, metricRowByName(rows, metricTTFTDeltaMS)) + "  " + compactMetricLine(metricE2EDeltaMS, metricRowByName(rows, metricE2EDeltaMS)),
+	}
+	if tokenLine := renderTokenTotalsLine(store); tokenLine != "" {
+		lines = append(lines, tokenLine)
+	}
+	lines = append(lines,
 		renderRatesLine(store),
 		renderProgressStatusLine(store, status),
-	}
+	)
 	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
 		lines = append(lines, "TPS unavailable: provider usage not reported")
 	}
@@ -431,7 +436,10 @@ func renderCompactMetricsBody(store liveStore, width int, height int, helpVisibl
 
 func metricsFooterLines(store liveStore, helpVisible bool, status string) []string {
 	rows := store.MetricRows()
-	footerLines := []string{renderRatesLine(store)}
+	footerLines := []string{renderTokenTotalsLine(store), renderRatesLine(store)}
+	if footerLines[0] == "" {
+		footerLines = footerLines[1:]
+	}
 	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
 		footerLines = append(footerLines, "TPS unavailable: provider usage not reported")
 	}
@@ -486,6 +494,7 @@ func orderedMetricRowsForPanel(rows []metricRow) []metricRow {
 		metricHTTPTTFBMS,
 		metricProviderProcessingMS,
 		metricServerWaitToFirstByteMS,
+		metricCompletionTokens,
 	}
 	ordered := make([]metricRow, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
@@ -515,6 +524,14 @@ func metricRowByName(rows []metricRow, name string) metricRow {
 	return metricRow{Name: name}
 }
 
+func renderTokenTotalsLine(store liveStore) string {
+	total, records := storeCompletionTokens(store)
+	if records == 0 {
+		return ""
+	}
+	return fmt.Sprintf("completion_tokens_total=%d tokens  completion_token_records=%d", total, records)
+}
+
 func renderRatesLine(store liveStore) string {
 	systemTPS, rps := storeRates(store)
 	return "system_tps=" + formatMetricValue(systemTPS) + " tokens/s  rps=" + formatMetricValue(rps) + " req/s"
@@ -541,6 +558,16 @@ func renderProgressStatusLine(store liveStore, status string) string {
 		fields = append(fields, "status="+safeInline(stripStatusPrefix(status)))
 	}
 	return strings.Join(fields, "  ")
+}
+
+func storeCompletionTokens(store liveStore) (int, int) {
+	total := 0
+	records := 0
+	for _, group := range store.Groups() {
+		total += group.TotalCompletionTokens
+		records += group.CompletionTokenRecords
+	}
+	return total, records
 }
 
 func storeRates(store liveStore) (*float64, *float64) {

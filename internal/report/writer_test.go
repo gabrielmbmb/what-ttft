@@ -155,7 +155,7 @@ func TestWriteRunWritesMultiTargetMetadataAndMarkdown(t *testing.T) {
 		t.Fatalf("read summary markdown: %v", err)
 	}
 	markdown := string(markdownBytes)
-	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "target-a", "target-b", "responses", "e2e_output_tps mean", "generation_delta_output_tps mean", "generation_delta_output_tps count"} {
+	for _, want := range []string{"## Target comparison", "| target | provider | api | requested tier | observed tier | model | ok | err |", "target-a", "target-b", "responses", "completion_tokens total", "completion_token_records", "e2e_output_tps mean", "generation_delta_output_tps mean", "generation_delta_output_tps count"} {
 		if !strings.Contains(markdown, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, markdown)
 		}

@@ -54,8 +54,8 @@ func shouldWriteComparisonTable(summary whatttft.RunSummary, metadata RunMetadat
 
 func writeComparisonMarkdown(builder *strings.Builder, summary whatttft.RunSummary, metadata RunMetadata) {
 	builder.WriteString("## Target comparison\n\n")
-	builder.WriteString("| target | provider | api | requested tier | observed tier | model | ok | err | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e_output_tps mean | generation_delta_output_tps mean | generation_delta_output_tps count | system tps | rps |\n")
-	builder.WriteString("|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	builder.WriteString("| target | provider | api | requested tier | observed tier | model | ok | err | completion_tokens total | completion_token_records | ttft p50 ms | ttft p95 ms | e2e p50 ms | e2e p95 ms | e2e_output_tps mean | generation_delta_output_tps mean | generation_delta_output_tps count | system tps | rps |\n")
+	builder.WriteString("|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 
 	groups := groupsByTarget(summary.Groups)
 	if len(metadata.Targets) > 0 {
@@ -84,6 +84,8 @@ type comparisonRow struct {
 	model              string
 	successfulRequests int
 	errorRequests      int
+	completionTokens   int
+	completionRecords  int
 	ttftP50            *float64
 	ttftP95            *float64
 	e2eP50             *float64
@@ -110,6 +112,8 @@ func comparisonRowForTarget(target RunTargetMetadata, group *whatttft.SummaryGro
 
 	row.successfulRequests = group.SuccessfulRequests
 	row.errorRequests = group.ErrorRequests
+	row.completionTokens = group.TotalCompletionTokens
+	row.completionRecords = group.CompletionTokenRecords
 	row.ttftP50 = group.Metrics.TTFTDeltaMS.P50
 	row.ttftP95 = group.Metrics.TTFTDeltaMS.P95
 	row.e2eP50 = group.Metrics.E2EDeltaMS.P50
@@ -135,6 +139,8 @@ func comparisonRowForGroup(group whatttft.SummaryGroup) comparisonRow {
 		model:              group.Model,
 		successfulRequests: group.SuccessfulRequests,
 		errorRequests:      group.ErrorRequests,
+		completionTokens:   group.TotalCompletionTokens,
+		completionRecords:  group.CompletionTokenRecords,
 		ttftP50:            group.Metrics.TTFTDeltaMS.P50,
 		ttftP95:            group.Metrics.TTFTDeltaMS.P95,
 		e2eP50:             group.Metrics.E2EDeltaMS.P50,
@@ -150,7 +156,7 @@ func comparisonRowForGroup(group whatttft.SummaryGroup) comparisonRow {
 func writeComparisonRow(builder *strings.Builder, row comparisonRow) {
 	fmt.Fprintf(
 		builder,
-		"| %s | %s | %s | %s | %s | %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+		"| %s | %s | %s | %s | %s | %s | %d | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 		row.target,
 		row.provider,
 		row.api,
@@ -159,6 +165,8 @@ func writeComparisonRow(builder *strings.Builder, row comparisonRow) {
 		row.model,
 		row.successfulRequests,
 		row.errorRequests,
+		row.completionTokens,
+		formatDistributionCount(row.completionRecords, row.successfulRequests),
 		formatOptionalFloat(row.ttftP50),
 		formatOptionalFloat(row.ttftP95),
 		formatOptionalFloat(row.e2eP50),
@@ -198,8 +206,9 @@ func writeGroupMarkdown(builder *strings.Builder, group whatttft.SummaryGroup) {
 	}
 	builder.WriteString("\n")
 
-	if group.SystemTPS != nil || group.RPS != nil || group.TotalCompletionTokens > 0 {
+	if group.SystemTPS != nil || group.RPS != nil || group.TotalCompletionTokens > 0 || group.CompletionTokenRecords > 0 {
 		fmt.Fprintf(builder, "total_completion_tokens: %d\n", group.TotalCompletionTokens)
+		fmt.Fprintf(builder, "completion_token_records: %d\n", group.CompletionTokenRecords)
 		fmt.Fprintf(builder, "system_tps: %s\n", formatOptionalFloat(group.SystemTPS))
 		fmt.Fprintf(builder, "rps: %s\n\n", formatOptionalFloat(group.RPS))
 	}
@@ -238,6 +247,7 @@ func metricRows(metrics whatttft.MetricDistributions) []metricRow {
 		{name: "tcp_connect_ms", distribution: metrics.TCPConnectMS},
 		{name: "tls_ms", distribution: metrics.TLSMS},
 		{name: "request_write_ms", distribution: metrics.RequestWriteMS},
+		{name: "completion_tokens", distribution: metrics.CompletionTokens},
 		{name: "e2e_output_tps", distribution: metrics.E2EOutputTPS},
 		{name: "generation_delta_output_tps", distribution: metrics.GenerationDeltaOutputTPS},
 	}

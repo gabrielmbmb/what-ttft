@@ -539,14 +539,14 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 		result.Summary.SuccessfulRequests,
 		result.Summary.ErrorRequests,
 	)
-	writeLine(output, "target              api               tier       model               ok   err  ttft_p50  ttft_p95  e2e_p50   e2e_p95   e2e_output_tps_mean  generation_delta_output_tps_mean  generation_delta_output_tps_count  system_tps  rps")
+	writeLine(output, "target              api               tier       model               ok   err  completion_tokens_total  completion_token_records  ttft_p50  ttft_p95  e2e_p50   e2e_p95   e2e_output_tps_mean  generation_delta_output_tps_mean  generation_delta_output_tps_count  system_tps  rps")
 	groups := benchGroupsByTargetID(result.Summary.Groups)
 	for _, target := range plan.Targets {
 		group := groups[target.ID]
 		if group == nil {
 			writeFormatted(
 				output,
-				"%-19s %-17s %-10s %-19s %-4d %-4d %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
+				"%-19s %-17s %-10s %-19s %-4d %-4d %-24s %-24s %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
 				target.ID,
 				target.OpenAI.API,
 				firstNonEmptyString(string(target.OpenAI.ServiceTier), "unset"),
@@ -562,19 +562,23 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 				"-",
 				"-",
 				"-",
+				"-",
+				"-",
 			)
 			continue
 		}
 
 		writeFormatted(
 			output,
-			"%-19s %-17s %-10s %-19s %-4d %-4d %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
+			"%-19s %-17s %-10s %-19s %-4d %-4d %-24d %-24s %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
 			target.ID,
 			target.OpenAI.API,
 			firstNonEmptyString(string(target.OpenAI.ServiceTier), "unset"),
 			target.OpenAI.Model,
 			group.SuccessfulRequests,
 			group.ErrorRequests,
+			group.TotalCompletionTokens,
+			formatCLIUsageRecordCount(group.CompletionTokenRecords, group.SuccessfulRequests),
 			formatCLIOptionalFloat(group.Metrics.TTFTDeltaMS.P50),
 			formatCLIOptionalFloat(group.Metrics.TTFTDeltaMS.P95),
 			formatCLIOptionalFloat(group.Metrics.E2EDeltaMS.P50),
@@ -588,12 +592,16 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 	}
 }
 
-func formatCLIDistributionCount(distribution whatttft.Distribution, denominator int) string {
+func formatCLIUsageRecordCount(count int, denominator int) string {
 	if denominator <= 0 {
 		return "0/0"
 	}
 
-	return fmt.Sprintf("%d/%d", distribution.Count, denominator)
+	return fmt.Sprintf("%d/%d", count, denominator)
+}
+
+func formatCLIDistributionCount(distribution whatttft.Distribution, denominator int) string {
+	return formatCLIUsageRecordCount(distribution.Count, denominator)
 }
 
 func benchGroupsByTargetID(groups []whatttft.SummaryGroup) map[string]*whatttft.SummaryGroup {

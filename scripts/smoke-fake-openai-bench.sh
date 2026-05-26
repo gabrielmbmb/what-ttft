@@ -302,7 +302,7 @@ for target_id, group in groups.items():
         raise SystemExit(f"missing generation_delta_output_tps for {target_id}: {metrics.get('generation_delta_output_tps')}")
 
 summary_md = (out_dir / "summary.md").read_text(encoding="utf-8")
-for expected in ("## Target comparison", "target-a", "target-b", "e2e_output_tps mean", "generation_delta_output_tps mean", "generation_delta_output_tps count"):
+for expected in ("## Target comparison", "target-a", "target-b", "completion_tokens total", "completion_token_records", "e2e_output_tps mean", "generation_delta_output_tps mean", "generation_delta_output_tps count"):
     if expected not in summary_md:
         raise SystemExit(f"summary.md missing {expected!r}")
 

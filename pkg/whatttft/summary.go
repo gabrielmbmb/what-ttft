@@ -177,6 +177,9 @@ type MetricDistributions struct {
 	// RequestWriteMS summarizes request_write_ms over successful measured requests; units are milliseconds and Count zero means no values were observed.
 	RequestWriteMS Distribution `json:"request_write_ms"`
 
+	// CompletionTokens summarizes provider-reported output/completion token counts over successful measured requests; units are tokens and Count zero means no values were observed.
+	CompletionTokens Distribution `json:"completion_tokens"`
+
 	// E2EOutputTPS summarizes e2e_output_tps over successful measured requests; units are tokens/second, includes TTFT, and Count zero means no values were observed.
 	E2EOutputTPS Distribution `json:"e2e_output_tps"`
 
@@ -254,6 +257,7 @@ type metricValueSet struct {
 	tcpConnect                  []float64
 	tls                         []float64
 	requestWrite                []float64
+	completionTokens            []float64
 	e2eOutputTPS                []float64
 	generationDeltaOutputTPS    []float64
 }
@@ -329,6 +333,7 @@ func (b *summaryGroupBuilder) addUsage(record RequestRecord) {
 
 	b.completionTokenCount++
 	b.completionTokenTotal += *record.CompletionTokens
+	b.metrics.completionTokens = append(b.metrics.completionTokens, float64(*record.CompletionTokens))
 }
 
 func (b *summaryGroupBuilder) addCache(cache CacheRecord) {
@@ -388,6 +393,7 @@ func (b *summaryGroupBuilder) build() SummaryGroup {
 		TCPConnectMS:                        summarizeValues(b.metrics.tcpConnect),
 		TLSMS:                               summarizeValues(b.metrics.tls),
 		RequestWriteMS:                      summarizeValues(b.metrics.requestWrite),
+		CompletionTokens:                    summarizeValues(b.metrics.completionTokens),
 		E2EOutputTPS:                        summarizeValues(b.metrics.e2eOutputTPS),
 		GenerationDeltaOutputTPS:            summarizeValues(b.metrics.generationDeltaOutputTPS),
 	}
