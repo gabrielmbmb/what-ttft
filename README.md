@@ -189,6 +189,55 @@ what-ttft bench \
   --out runs/openai-gpt-5-priority-compare
 ```
 
+## Live terminal dashboard
+
+`--tui` is a presentation mode for the existing `run` and `bench` commands. It does not create a separate command group, change request timing, run provider calls from the UI, or replace the canonical report files.
+
+Single-target dashboard:
+
+```sh
+what-ttft run \
+  --provider openai \
+  --model gpt-5.5 \
+  --api-key-env OPENAI_API_KEY \
+  --prompt "Answer in one short sentence: what is the capital of France?" \
+  --samples 50 \
+  --warmup 5 \
+  --cache-mode cache-bust \
+  --connection-mode warm \
+  --reasoning-effort none \
+  --max-output-tokens 64 \
+  --tui
+```
+
+Multi-target benchmark dashboard:
+
+```sh
+what-ttft bench --config examples/openai-model-compare.yaml --tui
+```
+
+The dashboard uses the full terminal, including an alternate screen when supported. Use it in an interactive terminal with enough space for charts; for CI, scripts, cron jobs, or log capture, prefer the same commands without `--tui`. The non-TUI path writes the same reports and avoids terminal control sequences in logs.
+
+Keyboard shortcuts:
+
+| key | action |
+|---|---|
+| `1` | overview charts |
+| `2` | TTFT-focused view |
+| `3` | E2E/TPS-focused view |
+| `4` | slowest-request waterfall |
+| `↑`/`↓` or `k`/`j` | select a benchmark target in `bench --tui` |
+| `enter` | open selected-target detail in `bench --tui` |
+| `esc` | return from selected-target detail / close help |
+| `?` | toggle help |
+| `q` or `ctrl+c` | quit; while running, asks for cancellation confirmation |
+| `y` | confirm cancellation |
+| `n` | keep the run/benchmark running after a cancellation prompt |
+
+Cancellation is graceful. If a TUI or context cancellation happens after at least one request record exists, `what-ttft` writes partial reports using the normal filenames (`run.json`, `requests.jsonl`, `chunks.jsonl` when enabled, `summary.json`, and `summary.md`) and exits with code `130`. The terminal summary says that partial results were written. If cancellation happens before any request record is available, the command exits with code `130` without partial report files. Report-writing failures exit with code `1` and are shown in stderr and the live dashboard status.
+
+The live dashboard is intentionally decoupled from benchmark execution and report writing. Live chart updates are best-effort event rendering; under extreme load, dropped UI events may make the display lag or skip intermediate states, but final report files remain authoritative.
+
 ## Common options
 
 ```text
@@ -216,6 +265,7 @@ what-ttft bench \
 --include-usage
 --legacy-max-tokens
 --overwrite
+--tui
 ```
 
 Notes:
@@ -253,6 +303,7 @@ Important metrics:
 | `generation_delta_ms` | Time between first and last visible output deltas. |
 | `server_wait_to_first_byte_ms` | Time from request write completion to first response byte. |
 | `stream_protocol_to_first_output_ms` | Time from first response byte to first visible output delta. |
+| `completion_tokens` | Distribution of provider-reported generated/output token counts per successful measured request, when usage is available. |
 | `e2e_output_tps` | User-perceived output-token throughput: provider-reported output/completion tokens divided by request-start-to-last-visible-delta seconds, when usage is available. This includes TTFT. For Responses reasoning models, provider output tokens may include hidden reasoning tokens. |
 | `generation_delta_output_tps` | Post-first-delta output-token throughput: `max(output_tokens - 1, 0)` divided by first-visible-delta-to-last-visible-delta seconds. This uses visible chunk/delta timestamps, not true per-token timestamps, so it is not `decode_tps` or token ITL. |
 | `system_tps` | Total successful output tokens divided by the first-successful-request to last-successful-response window for a summary group. |
@@ -266,6 +317,7 @@ OpenAI-compatible streams do not guarantee that one chunk equals one tokenizer t
 
 TPS terms are deliberately separate:
 
+- `completion_tokens` and `total_completion_tokens` describe generated-token volume; use them to judge whether TPS metrics are based on enough output.
 - `e2e_output_tps` is user-perceived per-request output throughput and includes TTFT.
 - `generation_delta_output_tps` is a post-first-visible-delta approximation based on visible delta timing, not true token timestamps.
 - `system_tps` is group-level total successful output tokens divided by the successful response window.
@@ -291,9 +343,11 @@ summary.md        human-readable metric table
 
 `requests.jsonl` is the most useful file for detailed investigation. It contains raw timelines, HTTP trace metadata, derived metrics, usage fields, cache fields, requested/observed service tier fields, and errors for each request.
 
-`summary.md` is the quickest way to compare p50, p95, p99, mean, and max values for the main metrics. For `bench` runs, it starts with a target comparison table containing per-target success/error counts, TTFT/E2E percentiles, user-perceived TPS, post-first-delta TPS, system TPS, and RPS.
+`summary.md` is the quickest way to compare p50, p95, p99, mean, and max values for the main metrics. For `bench` runs, it starts with a target comparison table containing per-target success/error counts, generated-token totals, token-usage record counts, TTFT/E2E percentiles, `e2e_output_tps_mean`, `generation_delta_output_tps_mean`, `generation_delta_output_tps_count`, system TPS, and RPS.
 
 For YAML `bench` runs, `run.json` also records the benchmark name, config path, config SHA-256, target execution order, and per-target metadata such as target ID/name, provider API, model, requested service tier, observed service tier counts, redacted base URL, and API-key environment variable name. API key values are never written.
+
+Canceled runs and benchmarks with partial records use the same output filenames as completed runs. Partial `requests.jsonl` files contain only records completed before cancellation, and partial `summary.json` / `summary.md` files summarize those completed measured records. Request-level provider failures remain visible as `error` objects in `requests.jsonl`; aggregate failure counts and categories appear in summaries.
 
 ## Cache modes
 

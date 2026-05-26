@@ -3415,7 +3415,7 @@ Definition of done:
 
 ---
 
-### [ ] 35. Update README and examples for v0.3 live dashboards and events
+### [x] 35. Update README and examples for v0.3 live dashboards and events
 
 Document the new user-facing behavior only after `run --tui` and `bench --tui` exist.
 
