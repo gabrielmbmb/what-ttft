@@ -134,7 +134,7 @@ func RenderMultiHistogramChart(series []NamedSeries, opts HistogramOptions, them
 	content := strings.Join([]string{
 		title + fmt.Sprintf("  bins=%d  n=%d  series=%d", bins, len(values), len(series)),
 		chart.View(),
-		multiHistogramLegendLine(series),
+		multiHistogramLegendLine(series, opts.Width, theme),
 	}, "\n")
 	return fitChartText(content, opts.Width, opts.Height)
 }
@@ -227,12 +227,14 @@ func multiHistogramBarData(series []NamedSeries, bins int, theme Theme) ([]barch
 	return data, maxCount
 }
 
-func multiHistogramLegendLine(series []NamedSeries) string {
+func multiHistogramLegendLine(series []NamedSeries, width int, theme Theme) string {
 	parts := make([]string, 0, len(series))
-	for _, item := range series {
-		parts = append(parts, fmt.Sprintf("%s n=%d", truncateChartLabel(item.Label, 16), len(item.Values)))
+	labelWidth := legendLabelWidth(width, len(series), 5)
+	for index, item := range series {
+		marker := theme.seriesStyle(index).Render(string(seriesMarker(index)))
+		parts = append(parts, fmt.Sprintf("%s %s n=%d", marker, truncateChartLabel(item.Label, labelWidth), len(item.Values)))
 	}
-	return "series: " + strings.Join(parts, "  |  ")
+	return "legend: " + strings.Join(parts, "  |  ")
 }
 
 func histogramTitle(title string) string {

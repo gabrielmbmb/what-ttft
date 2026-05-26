@@ -213,6 +213,17 @@ func TestLiveStoreSelectedTargetStoreFiltersRecords(t *testing.T) {
 	}
 }
 
+// TestBenchSeriesLabelsDisambiguateDuplicateModels verifies legends stay readable when targets share a model ID.
+func TestBenchSeriesLabelsDisambiguateDuplicateModels(t *testing.T) {
+	labels := benchSeriesLabels([]targetRow{
+		{ID: "gpt-5.5-priority", Name: "GPT-5.5 Priority", Model: "gpt-5.5", RequestedServiceTier: "priority"},
+		{ID: "gpt-5.5-default", Name: "GPT-5.5 Default", Model: "gpt-5.5", RequestedServiceTier: "default"},
+	})
+	if labels["gpt-5.5-priority"] != "GPT-5.5 Priority" || labels["gpt-5.5-default"] != "GPT-5.5 Default" {
+		t.Fatalf("duplicate model legend labels = %#v, want target names", labels)
+	}
+}
+
 // TestLiveStoreCurrentTargetFallbacks verifies target labels degrade gracefully when IDs or names are missing.
 func TestLiveStoreCurrentTargetFallbacks(t *testing.T) {
 	store := newLiveStore()

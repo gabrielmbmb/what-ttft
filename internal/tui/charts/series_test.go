@@ -34,7 +34,7 @@ func TestRenderMultiSeriesChartIncludesSeriesLabels(t *testing.T) {
 		{Label: "gpt-a", Values: []float64{10, 20, 15}},
 		{Label: "gpt-b", Values: []float64{30, 25, 35}},
 	}, SeriesChartOptions{Width: 72, Height: 12, Title: "ttft_delta_ms", Unit: "ms"}, PlainTheme())
-	for _, want := range []string{"ttft_delta_ms (ms)", "series=2", "gpt-a", "gpt-b", "latest=15.0 ms", "latest=35.0 ms", "x=request order per target"} {
+	for _, want := range []string{"ttft_delta_ms (ms)", "legend:", "● gpt-a", "◆ gpt-b", "series=2", "latest=15.0 ms", "latest=35.0 ms", "x=request order per target"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("multi-series chart missing %q:\n%s", want, got)
 		}

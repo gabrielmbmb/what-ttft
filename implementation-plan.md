@@ -3346,6 +3346,28 @@ Definition of done:
 
 ---
 
+### [x] 34.2. Add explicit benchmark chart legends
+
+Files:
+
+- `internal/tui/bench_views.go`
+- `internal/tui/charts/series.go`
+- `internal/tui/charts/histogram.go`
+- TUI chart/dashboard tests
+
+Implementation details:
+
+- Multi-target benchmark charts must display an explicit `legend:` row so users can map each line/bar color and marker to a model or target.
+- Legend labels should prefer model IDs when unique, but use target names/service tiers/IDs to disambiguate repeated model IDs.
+- The line chart and histogram legends should use stable markers (`●`, `◆`, etc.) that match the rendered series order, with color when available and readable no-color output in tests.
+
+Definition of done:
+
+- Benchmark TTFT/E2E/TPS charts visibly identify each model/target series.
+- Duplicate model IDs no longer collapse to indistinguishable legend text.
+
+---
+
 ### [ ] 35. Update README and examples for v0.3 live dashboards and events
 
 Document the new user-facing behavior only after `run --tui` and `bench --tui` exist.

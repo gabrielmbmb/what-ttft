@@ -30,7 +30,7 @@ func TestRenderMultiHistogramChartIncludesSeriesLabels(t *testing.T) {
 		{Label: "gpt-a", Values: []float64{10, 20}},
 		{Label: "gpt-b", Values: []float64{30, 40}},
 	}, HistogramOptions{Width: 80, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
-	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "series=2", "gpt-a", "gpt-b"} {
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "series=2", "legend:", "● gpt-a", "◆ gpt-b"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("multi-histogram chart missing %q:\n%s", want, got)
 		}

@@ -255,23 +255,49 @@ func benchMetricSeries(store liveStore, name string) []charts.NamedSeries {
 }
 
 func benchSeriesLabels(rows []targetRow) map[string]string {
-	baseLabels := make(map[string]string, len(rows))
-	counts := make(map[string]int, len(rows))
+	modelCounts := make(map[string]int, len(rows))
 	for _, row := range rows {
-		label := firstNonEmpty(row.Model, row.Name, row.ID)
+		if row.Model != "" {
+			modelCounts[row.Model]++
+		}
+	}
+
+	baseLabels := make(map[string]string, len(rows))
+	labelCounts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		label := benchSeriesBaseLabel(row, modelCounts[row.Model] > 1)
 		baseLabels[row.ID] = label
-		counts[label]++
+		labelCounts[label]++
 	}
 
 	labels := make(map[string]string, len(rows))
 	for _, row := range rows {
 		label := baseLabels[row.ID]
-		if counts[label] > 1 && row.ID != "" {
+		if labelCounts[label] > 1 && row.ID != "" {
 			label = label + " (" + row.ID + ")"
 		}
 		labels[row.ID] = label
 	}
 	return labels
+}
+
+func benchSeriesBaseLabel(row targetRow, duplicateModel bool) string {
+	if row.Model == "" {
+		return firstNonEmpty(row.Name, row.ID, "target")
+	}
+	if !duplicateModel {
+		return row.Model
+	}
+	if row.Name != "" && row.Name != row.Model {
+		return row.Name
+	}
+	if row.RequestedServiceTier != "" {
+		return row.Model + " " + row.RequestedServiceTier
+	}
+	if row.ID != "" {
+		return row.Model + " (" + row.ID + ")"
+	}
+	return row.Model
 }
 
 func benchWaitingLabel(store liveStore, message string) string {

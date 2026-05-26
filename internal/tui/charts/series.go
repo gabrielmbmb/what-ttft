@@ -150,7 +150,7 @@ func RenderMultiSeriesChart(series []NamedSeries, opts SeriesChartOptions, theme
 		chart.DrawRuneWithStyle(canvas.Float64Point{X: float64(len(item.Values)), Y: item.Values[len(item.Values)-1]}, marker, style)
 	}
 
-	legend := multiSeriesLegendLine(series, opts.Unit)
+	legend := multiSeriesLegendLine(series, opts.Unit, opts.Width, theme)
 	footer := fmt.Sprintf("x=request order per target  y=%s  series=%d", unitOrValue(opts.Unit), len(series))
 	content := strings.Join([]string{title, chart.View(), legend, footer}, "\n")
 	return fitChartText(content, opts.Width, opts.Height)
@@ -236,14 +236,32 @@ func seriesMarker(index int) rune {
 	return markers[index%len(markers)]
 }
 
-func multiSeriesLegendLine(series []NamedSeries, unit string) string {
+func multiSeriesLegendLine(series []NamedSeries, unit string, width int, theme Theme) string {
 	parts := make([]string, 0, len(series))
 	unitSuffix := unitSuffix(unit)
-	for _, item := range series {
+	labelWidth := legendLabelWidth(width, len(series), 18+len(unitSuffix))
+	for index, item := range series {
 		latest := item.Values[len(item.Values)-1]
-		parts = append(parts, fmt.Sprintf("%s latest=%.1f%s", truncateChartLabel(item.Label, 18), latest, unitSuffix))
+		marker := theme.seriesStyle(index).Render(string(seriesMarker(index)))
+		parts = append(parts, fmt.Sprintf("%s %s latest=%.1f%s", marker, truncateChartLabel(item.Label, labelWidth), latest, unitSuffix))
 	}
-	return "series: " + strings.Join(parts, "  |  ")
+	return "legend: " + strings.Join(parts, "  |  ")
+}
+
+func legendLabelWidth(width int, seriesCount int, valueWidth int) int {
+	if seriesCount <= 0 {
+		return 12
+	}
+	separatorWidth := 5 * (seriesCount - 1)
+	available := width - len("legend: ") - separatorWidth - seriesCount*(2+valueWidth)
+	labelWidth := available / seriesCount
+	if labelWidth < 8 {
+		return 8
+	}
+	if labelWidth > 32 {
+		return 32
+	}
+	return labelWidth
 }
 
 func unitSuffix(unit string) string {

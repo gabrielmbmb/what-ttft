@@ -108,7 +108,7 @@ func TestBenchmarkDashboardShowsRunStyleMultiModelCharts(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "gpt-a", "gpt-b", "series=2", "x=request order per target"} {
+	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "legend:", "gpt-a latest", "gpt-b latest", "series=2", "x=request order per target"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("benchmark dashboard missing %q:\n%s", want, content)
 		}
