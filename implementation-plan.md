@@ -3472,6 +3472,30 @@ Definition of done:
 
 ---
 
+### [x] 35.2. Stabilize benchmark chart colors and simplify histogram axis labels
+
+Files:
+
+- `internal/tui/theme.go`
+- `internal/tui/charts/series.go`
+- `internal/tui/charts/histogram.go`
+- chart/theme tests
+
+Implementation details:
+
+- Use one stable model/target palette across TTFT, E2E, TPS, and histogram charts so the same target keeps the same color in every panel.
+- Preserve per-target color/marker indices even when a metric is missing for an earlier target, so remaining targets do not shift colors.
+- Avoid duplicate colors within the fixed model palette; generate deterministic fallback colors only after the fixed palette is exhausted.
+- Move the histogram X-axis meaning into the legend (`x=request count`) and keep the axis row itself to tick labels only.
+
+Definition of done:
+
+- Multi-target benchmark chart legends identify the X-axis meaning and target/model series without changing colors between panels.
+- Histogram X-axis labels no longer include explanatory prose.
+- Tests cover stable palette assignment and explicit style-index preservation.
+
+---
+
 ### [ ] 36. Add v0.3 quality gates, TUI model tests, and smoke coverage
 
 Finish the milestone with tests and smoke checks that exercise events and TUI paths without requiring real providers.

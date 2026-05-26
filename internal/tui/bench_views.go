@@ -241,7 +241,7 @@ func benchMetricSeries(store liveStore, name string) []charts.NamedSeries {
 	rows := store.TargetRows()
 	labels := benchSeriesLabels(rows)
 	series := make([]charts.NamedSeries, 0, len(rows))
-	for _, row := range rows {
+	for rowIndex, row := range rows {
 		values := make([]float64, 0)
 		for _, record := range store.recordsForTarget(row.ID) {
 			if record.Warmup || record.Error != nil {
@@ -249,7 +249,7 @@ func benchMetricSeries(store liveStore, name string) []charts.NamedSeries {
 			}
 			appendMetricValue(&values, metricValue(record, name))
 		}
-		series = append(series, charts.NamedSeries{Label: labels[row.ID], Values: values})
+		series = append(series, charts.NamedSeries{Label: labels[row.ID], Values: values, StyleIndex: rowIndex, UseStyleIndex: true})
 	}
 	return series
 }

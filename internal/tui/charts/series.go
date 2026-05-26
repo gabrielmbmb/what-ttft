@@ -42,6 +42,12 @@ type NamedSeries struct {
 
 	// Values contains observed metric values in request order; non-finite values are ignored and values are not mutated.
 	Values []float64
+
+	// StyleIndex is the stable model/target color and marker index; zero is valid and UseStyleIndex=false means the input order is used.
+	StyleIndex int
+
+	// UseStyleIndex reports whether StyleIndex was explicitly set by the caller to keep colors stable when other series have no data.
+	UseStyleIndex bool
 }
 
 // RenderSeriesChart renders a request-order metric series using ntcharts linechart primitives.
@@ -132,8 +138,9 @@ func RenderMultiSeriesChart(series []NamedSeries, opts SeriesChartOptions, theme
 	)
 	chart.DrawXYAxisAndLabel()
 	for seriesIndex, item := range series {
-		style := theme.seriesStyle(seriesIndex)
-		marker := seriesMarker(seriesIndex)
+		styleIndex := resolvedSeriesStyleIndex(item, seriesIndex)
+		style := theme.seriesStyle(styleIndex)
+		marker := seriesMarker(styleIndex)
 		if len(item.Values) == 1 {
 			chart.DrawRuneWithStyle(canvas.Float64Point{X: 1, Y: item.Values[0]}, marker, style)
 			continue
@@ -141,7 +148,7 @@ func RenderMultiSeriesChart(series []NamedSeries, opts SeriesChartOptions, theme
 		for index := 0; index < len(item.Values)-1; index++ {
 			from := canvas.Float64Point{X: float64(index + 1), Y: item.Values[index]}
 			to := canvas.Float64Point{X: float64(index + 2), Y: item.Values[index+1]}
-			if seriesIndex%2 == 0 {
+			if styleIndex%2 == 0 {
 				chart.DrawBrailleLineWithStyle(from, to, style)
 			} else {
 				chart.DrawLineWithStyle(from, to, runes.ArcLineStyle, style)
@@ -191,7 +198,11 @@ func cleanNamedSeries(series []NamedSeries) []NamedSeries {
 		if label == "" {
 			label = fmt.Sprintf("series-%d", index+1)
 		}
-		cleaned = append(cleaned, NamedSeries{Label: label, Values: values})
+		styleIndex := index
+		if item.UseStyleIndex {
+			styleIndex = item.StyleIndex
+		}
+		cleaned = append(cleaned, NamedSeries{Label: label, Values: values, StyleIndex: styleIndex, UseStyleIndex: true})
 	}
 	return cleaned
 }
@@ -219,8 +230,14 @@ func maxSeriesLength(series []NamedSeries) int {
 }
 
 func (theme Theme) seriesStyle(index int) lipgloss.Style {
+	if index < 0 {
+		index = 0
+	}
 	if len(theme.Palette) > 0 {
-		return theme.Palette[index%len(theme.Palette)]
+		if index < len(theme.Palette) {
+			return theme.Palette[index]
+		}
+		return generatedSeriesStyle(index)
 	}
 	if index%3 == 1 {
 		return theme.SecondarySeries
@@ -231,9 +248,22 @@ func (theme Theme) seriesStyle(index int) lipgloss.Style {
 	return theme.Series
 }
 
+func generatedSeriesStyle(index int) lipgloss.Style {
+	// Use a deterministic walk through the 256-color cube after the fixed palette is exhausted.
+	color := 16 + ((index * 37) % 216)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("%d", color)))
+}
+
 func seriesMarker(index int) rune {
 	markers := []rune{'●', '◆', '▲', '■', '✦', '✚', '✕', '○'}
 	return markers[index%len(markers)]
+}
+
+func resolvedSeriesStyleIndex(item NamedSeries, fallback int) int {
+	if item.UseStyleIndex {
+		return item.StyleIndex
+	}
+	return fallback
 }
 
 func multiSeriesLegendLine(series []NamedSeries, unit string, width int, theme Theme) string {
@@ -241,8 +271,9 @@ func multiSeriesLegendLine(series []NamedSeries, unit string, width int, theme T
 	unitSuffix := unitSuffix(unit)
 	labelWidth := legendLabelWidth(width, len(series), 18+len(unitSuffix))
 	for index, item := range series {
+		styleIndex := resolvedSeriesStyleIndex(item, index)
 		latest := item.Values[len(item.Values)-1]
-		marker := theme.seriesStyle(index).Render(string(seriesMarker(index)))
+		marker := theme.seriesStyle(styleIndex).Render(string(seriesMarker(styleIndex)))
 		parts = append(parts, fmt.Sprintf("%s %s latest=%.1f%s", marker, truncateChartLabel(item.Label, labelWidth), latest, unitSuffix))
 	}
 	return "legend: " + strings.Join(parts, "  |  ")

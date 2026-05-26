@@ -56,7 +56,7 @@ func RenderHistogramChart(values []float64, opts HistogramOptions, theme Theme) 
 		return fitChartText(Histogram(values, bins, opts.Width), opts.Width, opts.Height)
 	}
 
-	chartHeight := opts.Height - 2
+	chartHeight := opts.Height - 3
 	if chartHeight < 3 {
 		return fitChartText(Histogram(values, bins, opts.Width), opts.Width, opts.Height)
 	}
@@ -84,6 +84,7 @@ func RenderHistogramChart(values []float64, opts HistogramOptions, theme Theme) 
 		title + fmt.Sprintf("  bins=%d  n=%d  min=%.1f  max=%.1f", bins, len(values), minValue, maxValue),
 		chart.View(),
 		histogramXAxis(maxCount, opts.Width, histogramMaxLabelWidth(barData)),
+		histogramLegendLine(),
 	}, "\n")
 	return fitChartText(content, opts.Width, opts.Height)
 }
@@ -215,10 +216,11 @@ func multiHistogramBarData(series []NamedSeries, bins int, theme Theme) ([]barch
 				continue
 			}
 			total += count
+			styleIndex := resolvedSeriesStyleIndex(series[seriesIndex], seriesIndex)
 			barValues = append(barValues, barchart.BarValue{
 				Name:  truncateChartLabel(series[seriesIndex].Label, 18),
 				Value: float64(count),
-				Style: theme.seriesStyle(seriesIndex),
+				Style: theme.seriesStyle(styleIndex),
 			})
 		}
 		if total > maxCount {
@@ -233,13 +235,18 @@ func multiHistogramBarData(series []NamedSeries, bins int, theme Theme) ([]barch
 }
 
 func multiHistogramLegendLine(series []NamedSeries, width int, theme Theme) string {
-	parts := make([]string, 0, len(series))
+	parts := []string{"x=request count"}
 	labelWidth := legendLabelWidth(width, len(series), 5)
 	for index, item := range series {
-		marker := theme.seriesStyle(index).Render(string(seriesMarker(index)))
+		styleIndex := resolvedSeriesStyleIndex(item, index)
+		marker := theme.seriesStyle(styleIndex).Render(string(seriesMarker(styleIndex)))
 		parts = append(parts, fmt.Sprintf("%s %s n=%d", marker, truncateChartLabel(item.Label, labelWidth), len(item.Values)))
 	}
 	return "legend: " + strings.Join(parts, "  |  ")
+}
+
+func histogramLegendLine() string {
+	return "legend: x=request count"
 }
 
 func histogramXAxis(maxCount int, width int, labelWidth int) string {
@@ -255,15 +262,25 @@ func histogramXAxis(maxCount int, width int, labelWidth int) string {
 		prefixWidth = 0
 	}
 	if prefixWidth >= width {
-		return truncateChartLine(fmt.Sprintf("x=requests 0-%d", maxCount), width)
+		return truncateChartLine(fmt.Sprintf("0-%d", maxCount), width)
 	}
 
 	prefix := strings.Repeat(" ", prefixWidth)
 	graphWidth := width - prefixWidth
-	leftLabel := "x=requests 0"
+	leftLabel := "0"
 	rightLabel := fmt.Sprintf("%d", maxCount)
 	if graphWidth <= len(leftLabel)+len(rightLabel)+1 {
 		return truncateChartLine(prefix+leftLabel+"-"+rightLabel, width)
+	}
+
+	if maxCount > 1 {
+		midLabel := fmt.Sprintf("%d", maxCount/2)
+		if graphWidth >= len(leftLabel)+len(midLabel)+len(rightLabel)+4 {
+			remaining := graphWidth - len(leftLabel) - len(midLabel) - len(rightLabel)
+			leftFill := remaining / 2
+			rightFill := remaining - leftFill
+			return prefix + leftLabel + strings.Repeat("─", leftFill) + midLabel + strings.Repeat("─", rightFill) + rightLabel
+		}
 	}
 
 	fillWidth := graphWidth - len(leftLabel) - len(rightLabel)

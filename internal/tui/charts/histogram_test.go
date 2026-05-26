@@ -9,7 +9,7 @@ import (
 // TestRenderHistogramChartUsesSemanticLabels verifies the ntcharts adapter labels units and bins.
 func TestRenderHistogramChartUsesSemanticLabels(t *testing.T) {
 	got := RenderHistogramChart([]float64{10, 20, 30, 40}, HistogramOptions{Width: 80, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
-	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "min=10.0", "max=40.0", "10-25", "25-40", "x=requests 0", "2"} {
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "min=10.0", "max=40.0", "10-25", "25-40", "legend: x=request count", "0", "2"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("histogram chart missing %q:\n%s", want, got)
 		}
@@ -19,7 +19,7 @@ func TestRenderHistogramChartUsesSemanticLabels(t *testing.T) {
 // TestRenderHistogramChartHeightEqualBinsShowsBars verifies a focused TTFT panel with one row per bin is not blank.
 func TestRenderHistogramChartHeightEqualBinsShowsBars(t *testing.T) {
 	got := RenderHistogramChart([]float64{659.9, 931.3, 7673.8, 2988.9, 3820.6, 1200, 2500, 6000}, HistogramOptions{Width: 100, Height: 10, Bins: 8, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
-	if !strings.Contains(got, "660-1537") || !strings.Contains(got, "█") {
+	if !strings.Contains(got, "660-1662") || !strings.Contains(got, "█") {
 		t.Fatalf("histogram chart should show bin labels and bars when height equals bins:\n%s", got)
 	}
 }
@@ -30,7 +30,7 @@ func TestRenderMultiHistogramChartIncludesSeriesLabels(t *testing.T) {
 		{Label: "gpt-a", Values: []float64{10, 20}},
 		{Label: "gpt-b", Values: []float64{30, 40}},
 	}, HistogramOptions{Width: 80, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
-	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "series=2", "x=requests 0", "legend:", "● gpt-a", "◆ gpt-b"} {
+	for _, want := range []string{"TTFT distribution (ms)", "bins=2", "n=4", "series=2", "legend: x=request count", "● gpt-a", "◆ gpt-b"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("multi-histogram chart missing %q:\n%s", want, got)
 		}

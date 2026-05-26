@@ -41,6 +41,17 @@ func TestRenderMultiSeriesChartIncludesSeriesLabels(t *testing.T) {
 	}
 }
 
+// TestRenderMultiSeriesChartPreservesExplicitStyleIndex verifies colors/markers stay stable when earlier series have no data.
+func TestRenderMultiSeriesChartPreservesExplicitStyleIndex(t *testing.T) {
+	got := RenderMultiSeriesChart([]NamedSeries{
+		{Label: "empty-a", Values: nil, StyleIndex: 0, UseStyleIndex: true},
+		{Label: "gpt-b", Values: []float64{30}, StyleIndex: 1, UseStyleIndex: true},
+	}, SeriesChartOptions{Width: 48, Height: 8, Title: "ttft_delta_ms", Unit: "ms"}, PlainTheme())
+	if !strings.Contains(got, "◆ gpt-b") || strings.Contains(got, "● gpt-b") {
+		t.Fatalf("multi-series chart did not preserve explicit style index after dropping empty series:\n%s", got)
+	}
+}
+
 // TestRenderSeriesChartEmptyAndNonFinite verifies unavailable/non-finite inputs render an explicit empty state.
 func TestRenderSeriesChartEmptyAndNonFinite(t *testing.T) {
 	got := RenderSeriesChart([]float64{math.NaN(), math.Inf(1)}, SeriesChartOptions{Width: 48, Height: 6, Title: "e2e_delta_ms", Unit: "ms", EmptyLabel: "waiting for first successful measured request"}, PlainTheme())

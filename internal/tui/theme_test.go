@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -31,6 +32,29 @@ func TestStatusPillUsesTextAndSymbols(t *testing.T) {
 	for input, want := range cases {
 		if got := statusPill(input, theme); !strings.Contains(got, want) {
 			t.Fatalf("statusPill(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// TestChartThemeUsesStableUniqueModelPalette verifies target series colors are independent of chart metric role.
+func TestChartThemeUsesStableUniqueModelPalette(t *testing.T) {
+	theme := newTheme(false)
+	ttftPalette := theme.chartTheme(roleChartTTFT).Palette
+	e2ePalette := theme.chartTheme(roleChartE2E).Palette
+	tpsPalette := theme.chartTheme(roleChartTPS).Palette
+	if len(ttftPalette) < 4 || len(e2ePalette) < 4 || len(tpsPalette) < 4 {
+		t.Fatalf("palette sizes ttft/e2e/tps = %d/%d/%d, want at least 4", len(ttftPalette), len(e2ePalette), len(tpsPalette))
+	}
+
+	seen := make(map[string]struct{}, len(ttftPalette))
+	for index := range ttftPalette {
+		color := fmt.Sprint(ttftPalette[index].GetForeground())
+		if _, exists := seen[color]; exists {
+			t.Fatalf("duplicate model palette color at index %d: %s", index, color)
+		}
+		seen[color] = struct{}{}
+		if fmt.Sprint(e2ePalette[index].GetForeground()) != color || fmt.Sprint(tpsPalette[index].GetForeground()) != color {
+			t.Fatalf("palette color index %d differs across chart roles", index)
 		}
 	}
 }

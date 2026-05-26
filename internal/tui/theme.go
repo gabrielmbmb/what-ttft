@@ -113,16 +113,27 @@ func (theme tuiTheme) chartTheme(role themeRole) charts.Theme {
 		Label:           theme.Muted,
 		Series:          theme.style(role),
 		SecondarySeries: theme.Accent,
-		Palette: []lipgloss.Style{
-			theme.style(role),
-			theme.ChartE2E,
-			theme.ChartTPS,
-			theme.ChartWaterfall,
-			theme.Accent,
-			theme.Good,
-			theme.Warn,
-			theme.Bad,
-		},
-		Muted: theme.Muted,
+		Palette:         theme.modelPalette(),
+		Muted:           theme.Muted,
+	}
+}
+
+func (theme tuiTheme) modelPalette() []lipgloss.Style {
+	if theme.noColor {
+		return nil
+	}
+	return []lipgloss.Style{
+		lipgloss.NewStyle().Foreground(lipgloss.Color("81")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("141")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("42")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("63")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("196")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("201")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("220")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("45")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("129")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("118")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("208")),
 	}
 }
