@@ -3792,7 +3792,7 @@ Definition of done:
 
 ---
 
-### [ ] 39. Implement request list rendering for run and bench dashboards
+### [x] 39. Implement request list rendering for run and bench dashboards
 
 Render the request explorer table as a first-class TUI pane.
 
@@ -3811,6 +3811,17 @@ Implementation details:
 - Highlight or prefix selected rows without relying only on color, for example `›` for cursor and `!` for failed requests.
 - Long model IDs, target names, request IDs, and error categories should be middle- or end-truncated consistently. Keep enough request ID suffix to identify rows against `requests.jsonl`.
 - Table headers should include current match count, total request count, active sort, active filters, and whether chart visibility filters are being respected.
+
+Implemented details:
+
+- Reworked request-list rendering to use adaptive compact, benchmark, and wide table layouts with bounded rows based on terminal height.
+- Added compact run columns for narrow terminals, benchmark target/model columns for medium-width bench views, and wide diagnostic columns for target, model, phase, outcome, HTTP status, error category, TTFT, E2E, stream total, TTFB, TPS, tokens, cache, connection, and output state.
+- Added selected/error row markers that do not rely only on color.
+- Added request-list status headers showing matched/total request counts, selected row, active filter text, sort order, and count of rows hidden by benchmark chart model visibility.
+- Made `bench --tui` request lists respect v0.3 chart model visibility by default while preserving canonical records for future filter overrides.
+- Added no-request and no-match empty states.
+- Added simple text matching for the committed filter text as list-rendering scaffolding; full filter parsing/sorting remains task 41.
+- Added dashboard tests for run list updates from `request_finished`, wide bench list rendering and chart visibility, narrow layout bounds, and no-match rendering.
 
 Definition of done:
 

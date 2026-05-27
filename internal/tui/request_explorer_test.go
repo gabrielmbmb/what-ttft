@@ -115,3 +115,93 @@ func TestRequestExplorerFilterModeTransitions(t *testing.T) {
 		t.Fatalf("discard changed committed/draft filter = %q/%q, want err/err", app.requestExplorer.CommittedFilter, app.requestExplorer.FilterInput)
 	}
 }
+
+// TestRequestExplorerRunListRenderingUpdates verifies run request-list rendering updates as request_finished events arrive.
+func TestRequestExplorerRunListRenderingUpdates(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 100, Height: 28})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, Provider: "openai", Model: "gpt-test", TotalRequests: 2, MeasuredRequests: 2}})
+	app = updateModel(t, app, keyPress("r"))
+	if content := app.View().Content; !strings.Contains(content, "no requests completed yet") {
+		t.Fatalf("empty request explorer missing waiting state:\n%s", content)
+	}
+
+	first := tuiTestRecord("req-000000", "", 10, 100, nil)
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: first.RequestID, Record: &first}})
+	content := app.View().Content
+	for _, want := range []string{"requests=1/1", "req-000000", "meas", "ok", "10.0", "100.0", "gpt-test"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("run request explorer missing %q after first request:\n%s", want, content)
+		}
+	}
+
+	second := tuiTestRecord("req-000001", "", 20, 200, &whatttft.ErrorRecord{Category: "provider"})
+	second.HTTP.StatusCode = 500
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: second.RequestID, Record: &second}})
+	content = app.View().Content
+	for _, want := range []string{"requests=2/2", "req-000001", "err", "500"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("run request explorer missing %q after second request:\n%s", want, content)
+		}
+	}
+}
+
+// TestRequestExplorerBenchWideListRenderingAndVisibility verifies bench request rows include target/model columns and respect chart visibility.
+func TestRequestExplorerBenchWideListRenderingAndVisibility(t *testing.T) {
+	app := benchmarkDashboardAppWithRecords(t)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 150, Height: 36})
+	app = updateModel(t, app, keyPress("r"))
+	content := app.View().Content
+	for _, want := range []string{"target", "model", "stream", "ttfb", "tokens", "cache", "conn", "output", "target-a", "gpt-a", "target-b", "gpt-b", "requests=2/2"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("wide bench request explorer missing %q:\n%s", want, content)
+		}
+	}
+
+	app = updateModel(t, app, keyPress("esc"))
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventBenchmarkFinished}})
+	app = updateModel(t, app, keyPress("j"))
+	app = updateModel(t, app, keyPress("space"))
+	app = updateModel(t, app, keyPress("r"))
+	content = app.View().Content
+	if !strings.Contains(content, "requests=1/2") || !strings.Contains(content, "hidden_by_chart=1") || !strings.Contains(content, "target-a") {
+		t.Fatalf("filtered bench request explorer missing visible target/hidden count:\n%s", content)
+	}
+	if strings.Contains(content, "target-b-req-000000") {
+		t.Fatalf("hidden target request still rendered:\n%s", content)
+	}
+}
+
+// TestRequestExplorerNarrowListRendering verifies narrow terminals use compact request columns.
+func TestRequestExplorerNarrowListRendering(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 62, Height: 18})
+	record := tuiTestRecord("req-compact", "target-a", 10, 100, nil)
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, Model: "gpt-compact", TotalRequests: 1, MeasuredRequests: 1}})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	app = updateModel(t, app, keyPress("r"))
+	content := app.View().Content
+	for _, want := range []string{"request", "ph", "model", "req-compact", "gpt-test"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("compact request explorer missing %q:\n%s", want, content)
+		}
+	}
+	if got := dashboardMaxLineWidth(content); got > 62 {
+		t.Fatalf("compact request explorer width = %d, want <= 62\n%s", got, content)
+	}
+}
+
+// TestRequestExplorerNoMatchesState verifies active filters that match nothing render a useful empty state.
+func TestRequestExplorerNoMatchesState(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 100, Height: 28})
+	record := tuiTestRecord("req-000000", "", 10, 100, nil)
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, TotalRequests: 1, MeasuredRequests: 1}})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	app = updateModel(t, app, keyPress("r"))
+	app.requestExplorer.CommittedFilter = "does-not-match"
+	content := app.View().Content
+	if !strings.Contains(content, "no requests match current view") || !strings.Contains(content, "filter=does-not-match") {
+		t.Fatalf("request explorer missing no-match state:\n%s", content)
+	}
+}
