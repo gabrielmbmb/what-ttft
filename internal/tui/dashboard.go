@@ -36,9 +36,10 @@ func renderDashboard(m model) string {
 	layout := calculateDashboardLayout(m.width, m.height, m.help.ShowAll)
 	header := fitToBox(renderDashboardHeader(m, layout.Header.Width, layout.Header.Height, m.theme), layout.Header.Width, layout.Header.Height)
 	chartArea := fitToBox(renderChartArea(m.store, layout.Charts.Width, layout.Charts.Height, m.pane, m.requestExplorer, m.theme), layout.Charts.Width, layout.Charts.Height)
-	metrics := fitToBox(renderMetricsPanel(m.store, layout.Metrics.Width, layout.Metrics.Height, m.help.ShowAll, dashboardStatusText(m), m.confirmingCancel, m.theme), layout.Metrics.Width, layout.Metrics.Height)
+	metrics := fitToBox(renderMetricsPanel(m.store, layout.Metrics.Width, layout.Metrics.Height, dashboardStatusText(m), m.confirmingCancel, m.theme), layout.Metrics.Width, layout.Metrics.Height)
+	footer := fitToBox(renderShortcutFooter(m, layout.Footer.Width, layout.Footer.Height, m.theme), layout.Footer.Width, layout.Footer.Height)
 
-	return joinVerticalToHeight([]string{header, chartArea, metrics}, layout.Root.Width, layout.Root.Height)
+	return joinVerticalToHeight([]string{header, chartArea, metrics, footer}, layout.Root.Width, layout.Root.Height)
 }
 
 func calculateDashboardLayout(width int, height int, helpVisible bool) dashboardLayout {
@@ -49,11 +50,34 @@ func calculateDashboardLayout(width int, height int, helpVisible bool) dashboard
 		height = defaultDashboardHeight
 	}
 
+	footerHeight := 3
+	if height < 14 {
+		footerHeight = 2
+	}
+	if height < 8 {
+		footerHeight = 1
+	}
+	if helpVisible && height >= 18 {
+		footerHeight = 5
+	} else if helpVisible && height >= 12 {
+		footerHeight = 4
+	}
+	if footerHeight > height-minimumChartHeight {
+		footerHeight = height - minimumChartHeight
+	}
+	if footerHeight < 0 {
+		footerHeight = 0
+	}
+	availableHeight := height - footerHeight
+	if availableHeight < minimumChartHeight {
+		availableHeight = minimumChartHeight
+	}
+
 	headerHeight := 4
-	metricsHeight := 13
+	metricsHeight := 12
 	if width < wideDashboardWidth || height < wideDashboardHeight {
 		headerHeight = 3
-		metricsHeight = 13
+		metricsHeight = 12
 	}
 	if width < mediumDashboardWidth || height < mediumDashboardHeight {
 		headerHeight = 2
@@ -63,21 +87,18 @@ func calculateDashboardLayout(width int, height int, helpVisible bool) dashboard
 		headerHeight = 1
 		metricsHeight = 4
 	}
-	if helpVisible {
-		metricsHeight++
-	}
-	if metricsHeight > height-headerHeight-minimumChartHeight {
-		metricsHeight = height - headerHeight - minimumChartHeight
+	if metricsHeight > availableHeight-headerHeight-minimumChartHeight {
+		metricsHeight = availableHeight - headerHeight - minimumChartHeight
 	}
 	if metricsHeight < 1 {
 		metricsHeight = 1
 	}
-	chartHeight := height - headerHeight - metricsHeight
+	chartHeight := availableHeight - headerHeight - metricsHeight
 	if chartHeight < minimumChartHeight {
 		chartHeight = minimumChartHeight
 	}
-	if headerHeight+metricsHeight+chartHeight > height {
-		chartHeight = height - headerHeight - metricsHeight
+	if headerHeight+metricsHeight+chartHeight > availableHeight {
+		chartHeight = availableHeight - headerHeight - metricsHeight
 		if chartHeight < 0 {
 			chartHeight = 0
 		}
@@ -89,7 +110,7 @@ func calculateDashboardLayout(width int, height int, helpVisible bool) dashboard
 		Header:  layoutBox{Width: width, Height: headerHeight},
 		Charts:  layoutBox{Width: width, Height: chartHeight},
 		Metrics: layoutBox{Width: width, Height: metricsHeight},
-		Footer:  layoutBox{Width: width, Height: 0},
+		Footer:  layoutBox{Width: width, Height: footerHeight},
 	}
 }
 
@@ -244,8 +265,8 @@ func renderMediumOverview(store liveStore, width int, height int, theme tuiTheme
 		renderE2ETrendPanel(store, width, e2eHeight, theme),
 	}
 	if remaining > 0 {
-		if remaining >= 5 {
-			tpsHeight := min(remaining-1, max(4, remaining/2))
+		if remaining >= 4 {
+			tpsHeight := min(remaining-1, max(2, remaining/2))
 			sections = append(sections, renderDistributionPanel(store, width, remaining-tpsHeight, theme), renderTPSChartPanel(store, width, tpsHeight, theme))
 		} else {
 			sections = append(sections, renderDistributionPanel(store, width, remaining, theme))
@@ -389,15 +410,15 @@ func emptyRequestRecord() whatttft.RequestRecord {
 	return whatttft.RequestRecord{}
 }
 
-func renderMetricsPanel(store liveStore, width int, height int, helpVisible bool, status string, confirmingCancel bool, theme tuiTheme) string {
+func renderMetricsPanel(store liveStore, width int, height int, status string, confirmingCancel bool, theme tuiTheme) string {
 	if height <= 0 || width <= 0 {
 		return ""
 	}
-	body := renderMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), helpVisible, status, confirmingCancel)
+	body := renderMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), status, confirmingCancel)
 	return panel("METRICS", body, width, height, theme, roleAccent)
 }
 
-func renderMetricsBody(store liveStore, width int, height int, helpVisible bool, status string, confirmingCancel bool) string {
+func renderMetricsBody(store liveStore, width int, height int, status string, confirmingCancel bool) string {
 	if height <= 0 || width <= 0 {
 		return ""
 	}
@@ -406,41 +427,38 @@ func renderMetricsBody(store liveStore, width int, height int, helpVisible bool,
 	}
 
 	if width < 86 || height <= 5 {
-		return renderCompactMetricsBody(store, width, height, helpVisible, status)
+		return renderCompactMetricsBody(store, width, height, status)
 	}
 
 	metricLines := []string{fmt.Sprintf("%-36s %5s  %-8s %-8s %-8s %-8s %s", "metric (successful measured reqs)", "count", "p50", "p95", "p99", "mean", "unit")}
 	for _, row := range orderedMetricRowsForPanel(store.MetricRows()) {
 		metricLines = append(metricLines, metricTableLine(row))
 	}
-	footerLines := metricsFooterLines(store, helpVisible, status)
+	footerLines := metricsFooterLines(store, status)
 	lines := fitMetricsLines(metricLines, footerLines, height)
 	return fitToBox(strings.Join(lines, "\n"), width, height)
 }
 
-func renderCompactMetricsBody(store liveStore, width int, height int, helpVisible bool, status string) string {
+func renderCompactMetricsBody(store liveStore, width int, height int, status string) string {
 	rows := store.MetricRows()
 	lines := []string{
 		compactMetricLine(metricTTFTDeltaMS, metricRowByName(rows, metricTTFTDeltaMS)) + "  " + compactMetricLine(metricE2EDeltaMS, metricRowByName(rows, metricE2EDeltaMS)),
 	}
+	lines = append(lines, renderCompactProgressStatusLine(store, status))
 	if tokenLine := renderTokenTotalsLine(store); tokenLine != "" {
 		lines = append(lines, tokenLine)
 	}
-	lines = append(lines,
-		renderRatesLine(store),
-	)
+	lines = append(lines, renderRatesLine(store))
 	if filterLine := renderBenchModelFilterLine(store); filterLine != "" {
 		lines = append(lines, filterLine)
 	}
-	lines = append(lines, renderProgressStatusLine(store, status))
 	if metricRowByName(rows, metricE2EOutputTPS).Count == 0 && metricRowByName(rows, metricGenerationDeltaOutputTPS).Count == 0 {
 		lines = append(lines, "TPS unavailable: provider usage not reported")
 	}
-	lines = append(lines, keysHelpLine(store, helpVisible))
 	return fitToBox(strings.Join(lines, "\n"), width, height)
 }
 
-func metricsFooterLines(store liveStore, helpVisible bool, status string) []string {
+func metricsFooterLines(store liveStore, status string) []string {
 	rows := store.MetricRows()
 	footerLines := []string{renderTokenTotalsLine(store), renderRatesLine(store)}
 	if footerLines[0] == "" {
@@ -453,7 +471,6 @@ func metricsFooterLines(store liveStore, helpVisible bool, status string) []stri
 		footerLines = append(footerLines, filterLine)
 	}
 	footerLines = append(footerLines, renderProgressStatusLine(store, status))
-	footerLines = append(footerLines, keysHelpLine(store, helpVisible))
 	return footerLines
 }
 
@@ -485,19 +502,6 @@ func renderBenchModelFilterLine(store liveStore) string {
 		selectedState = "on"
 	}
 	return fmt.Sprintf("models shown=%d/%d  selected=%s[%s]  space=toggle after finish  a=show all", visibleCount, len(rows), safeInline(selectedLabel), selectedState)
-}
-
-func keysHelpLine(store liveStore, helpVisible bool) string {
-	if store.IsBenchmark() {
-		if helpVisible {
-			return "keys: ↑/↓ or j/k target  space toggle after finish  a show all  enter detail  5/r requests  esc overview  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit  ? help"
-		}
-		return "keys: ? help  ↑/↓ target  space toggle after finish  a all  enter detail  5/r requests  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  q cancel/quit"
-	}
-	if helpVisible {
-		return "keys: 1 overview  2 TTFT  3 E2E/TPS  4 waterfall  5/r requests  q cancel/quit  esc close  ? help"
-	}
-	return "keys: ? help  1 overview  2 TTFT  3 E2E/TPS  4 waterfall  5/r requests  q cancel/quit"
 }
 
 func fitMetricsLines(metricLines []string, footerLines []string, height int) []string {
@@ -574,6 +578,18 @@ func renderTokenTotalsLine(store liveStore) string {
 func renderRatesLine(store liveStore) string {
 	systemTPS, rps := storeRates(store)
 	return "system_tps=" + formatMetricValue(systemTPS) + " tokens/s  rps=" + formatMetricValue(rps) + " req/s"
+}
+
+func renderCompactProgressStatusLine(store liveStore, status string) string {
+	progress := store.Progress()
+	parts := []string{
+		"status=" + safeInline(stripStatusPrefix(status)),
+		fmt.Sprintf("active=%d", progress.Active),
+		fmt.Sprintf("completed=%d/%d", progress.Completed, progress.Total),
+		fmt.Sprintf("ok=%d", progress.Successful),
+		fmt.Sprintf("err=%d", progress.Errors),
+	}
+	return strings.Join(parts, "  ")
 }
 
 func renderProgressStatusLine(store liveStore, status string) string {

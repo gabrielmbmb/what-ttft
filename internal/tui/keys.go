@@ -50,7 +50,7 @@ func defaultKeyMap() keyMap {
 		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
-			key.WithHelp("?", "help"),
+			key.WithHelp("?", "shortcuts"),
 		),
 		FocusNext: key.NewBinding(
 			key.WithKeys("tab"),

@@ -357,7 +357,7 @@ func renderRequestExplorerList(store liveStore, state requestExplorerState, widt
 	bodyWidth := panelInnerWidth(width)
 	bodyHeight := panelInnerHeight(height)
 	if totalRows == 0 {
-		body := "no requests completed yet\nrequests appear here after request_finished events\nkeys: esc overview  / filter  enter detail"
+		body := "no requests completed yet\nrequests appear here after request_finished events"
 		return panel("Requests", fitToBox(body, bodyWidth, bodyHeight), width, height, theme, roleAccent)
 	}
 	if len(rows) == 0 {
@@ -369,7 +369,8 @@ func renderRequestExplorerList(store liveStore, state requestExplorerState, widt
 	if selected < 0 {
 		selected = 0
 	}
-	pageSize := bodyHeight - 3
+	tailLines := requestExplorerTailLines(state)
+	pageSize := bodyHeight - 2 - len(tailLines)
 	if pageSize < 1 {
 		pageSize = 1
 	}
@@ -395,15 +396,15 @@ func renderRequestExplorerList(store liveStore, state requestExplorerState, widt
 	for index := offset; index < end; index++ {
 		lines = append(lines, requestExplorerRow(rows[index], index == selected, layout))
 	}
-	if state.Mode == requestExplorerModeFilter {
-		if state.FilterError != "" {
-			lines = append(lines, "filter error: "+requestFilterDisplay(state.FilterError))
-		}
-		lines = append(lines, "filter: enter apply  esc discard  ctrl+u clear")
-	} else {
-		lines = append(lines, "keys: ↑/↓ row  pgup/pgdn page  enter detail  / filter  s sort  e errors  w phase  esc overview")
-	}
+	lines = append(lines, tailLines...)
 	return panel("Requests", fitToBox(strings.Join(lines, "\n"), bodyWidth, bodyHeight), width, height, theme, roleAccent)
+}
+
+func requestExplorerTailLines(state requestExplorerState) []string {
+	if state.Mode == requestExplorerModeFilter && state.FilterError != "" {
+		return []string{"filter error: " + requestFilterDisplay(state.FilterError)}
+	}
+	return nil
 }
 
 type requestExplorerTableLayout int
@@ -476,7 +477,6 @@ func renderRequestExplorerNoMatches(state requestExplorerState, totalRows int, h
 	if hiddenRows > 0 {
 		lines = append(lines, "bench chart model visibility is hiding some requests; leave request pane and press a to show all models")
 	}
-	lines = append(lines, "keys: esc overview  / filter  ctrl+u clear")
 	return strings.Join(lines, "\n")
 }
 

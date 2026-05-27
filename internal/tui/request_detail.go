@@ -83,8 +83,7 @@ func renderRequestDetail(store liveStore, state requestExplorerState, width int,
 	lines := []string{
 		fmt.Sprintf("request=%s  row=%d/%d  section=%s %d/%d", row.RequestID, selected+1, len(rows), section.label(), int(section)+1, int(requestDetailSectionCount)),
 	}
-	lines = append(lines, requestDetailSectionLines(store, row, record, section, bodyWidth, bodyHeight-len(lines)-1, theme)...)
-	lines = append(lines, "keys: esc request list  [/] section  ↑/↓ request  o output")
+	lines = append(lines, requestDetailSectionLines(store, row, record, section, bodyWidth, bodyHeight-len(lines), theme)...)
 	return panel("Request detail · "+section.label(), fitToBox(strings.Join(lines, "\n"), bodyWidth, bodyHeight), width, height, theme, roleAccent)
 }
 

@@ -103,12 +103,57 @@ func TestDashboardDefaultShowsCharts(t *testing.T) {
 	}
 }
 
+// TestDashboardShortcutFooterIsContextualAndExpandable verifies shortcut help is pinned and responds to pane/mode changes.
+func TestDashboardShortcutFooterIsContextualAndExpandable(t *testing.T) {
+	app := dashboardAppWithRecords(t)
+	content := app.View().Content
+	for _, want := range []string{"Shortcuts · ? more", "charts:", "5/r requests", "? all keys"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("dashboard shortcut footer missing %q:\n%s", want, content)
+		}
+	}
+
+	app = updateModel(t, app, keyPress("?"))
+	content = app.View().Content
+	for _, want := range []string{"Shortcuts · ? less", "global:", "requests:", "detail/filter:"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("expanded shortcut footer missing %q:\n%s", want, content)
+		}
+	}
+
+	app = updateModel(t, app, keyPress("?"))
+	app = updateModel(t, app, keyPress("r"))
+	content = app.View().Content
+	for _, want := range []string{"Requests", "Shortcuts · ? more", "requests:", "enter detail", "/ filter", "s sort"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("request-list shortcut footer missing %q:\n%s", want, content)
+		}
+	}
+
+	app = updateModel(t, app, keyPress("/"))
+	content = app.View().Content
+	for _, want := range []string{"filter:", "enter apply", "esc discard", "ctrl+u clear"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("filter shortcut footer missing %q:\n%s", want, content)
+		}
+	}
+
+	app = updateModel(t, app, keyPress("esc"))
+	app = updateModel(t, app, keyPress("enter"))
+	content = app.View().Content
+	for _, want := range []string{"Request detail", "request detail:", "[/] section", "o output", "esc list"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("detail shortcut footer missing %q:\n%s", want, content)
+		}
+	}
+}
+
 // TestBenchmarkDashboardShowsRunStyleMultiModelCharts verifies bench overview reuses run-style charts with multiple model series.
 func TestBenchmarkDashboardShowsRunStyleMultiModelCharts(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "legend:", "gpt-a latest", "gpt-b latest", "series=2", "x=request order per target", "models shown=2/2", "space toggle"} {
+	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "legend:", "gpt-a latest", "gpt-b latest", "series=2", "x=request order per target", "models shown=2/2", "Shortcuts", "space toggle"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("benchmark dashboard missing %q:\n%s", want, content)
 		}
@@ -197,15 +242,15 @@ func TestDashboardChartsUpdateOnRequestFinished(t *testing.T) {
 	}
 }
 
-// TestMetricsPanelPinnedAcrossModes verifies the metrics panel stays at the bottom in every chart mode.
-func TestMetricsPanelPinnedAcrossModes(t *testing.T) {
+// TestMetricsPanelAndShortcutsPinnedAcrossModes verifies metrics and shortcut help stay visible in every chart mode.
+func TestMetricsPanelAndShortcutsPinnedAcrossModes(t *testing.T) {
 	for _, mode := range []pane{paneSummary, paneTTFT, paneE2E, paneWaterfall} {
 		app := dashboardAppWithRecords(t)
 		app.pane = mode
 		content := app.View().Content
-		bottom := bottomLines(content, 13)
-		if !strings.Contains(bottom, "METRICS") || !strings.Contains(bottom, "metric (successful measured reqs)") || !strings.Contains(bottom, "keys:") {
-			t.Fatalf("mode %d bottom metrics panel missing:\n%s", mode, bottom)
+		bottom := bottomLines(content, 15)
+		if !strings.Contains(bottom, "METRICS") || !strings.Contains(bottom, "metric (successful measured reqs)") || !strings.Contains(bottom, "Shortcuts") || !strings.Contains(bottom, "5/r requests") {
+			t.Fatalf("mode %d bottom metrics/shortcuts panels missing:\n%s", mode, bottom)
 		}
 	}
 }

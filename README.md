@@ -221,6 +221,8 @@ what-ttft bench --config examples/openai-model-compare.yaml --tui
 
 The dashboard uses the full terminal, including an alternate screen when supported. Use it in an interactive terminal with enough space for charts; for CI, scripts, cron jobs, or log capture, prefer the same commands without `--tui`. The non-TUI path writes the same reports and avoids terminal control sequences in logs.
 
+A context-aware `Shortcuts` footer is pinned at the bottom of the dashboard and request explorer. Press `?` to expand the footer into a fuller guide for chart, request-list, request-detail, filter, and benchmark-target actions.
+
 Keyboard shortcuts:
 
 | key | action |
@@ -243,7 +245,7 @@ Keyboard shortcuts:
 | `[` / `]` | move between selected-request detail sections |
 | `o` | jump to the selected-request output section |
 | `esc` | return from selected-target detail, request detail, filter editor, or close help |
-| `?` | toggle help |
+| `?` | expand/collapse the shortcut footer |
 | `q` or `ctrl+c` | quit; while running, asks for cancellation confirmation |
 | `y` | confirm cancellation |
 | `n` | keep the run/benchmark running after a cancellation prompt |
@@ -259,7 +261,8 @@ Requests
 requests=3/30  selected=1/3  filter=outcome:error status:5xx sort:-ttft  sort=slowest-ttft
    #   request              target      model        phase out   http  err        ttft     e2e  stream    ttfb     tps tokens cache conn   output
 ›  7   target-a-req-000006  target-a    gpt-5-mini   meas  err   500   provider   842.1  900.3   921.0   88.4       -      - unknown reused disabled
-keys: ↑/↓ row  pgup/pgdn page  enter detail  / filter  s sort  e errors  w phase  esc overview
+Shortcuts · ? more
+requests: ↑/↓ move  •  enter detail  •  / filter  •  s sort  •  e errors  •  w phase  •  pgup/pgdn page  •  home/end jump  •  esc overview
 ```
 
 ```text
@@ -267,7 +270,8 @@ Request detail · output
 request=target-a-req-000006  row=1/3  section=output 7/7
 output_state=disabled
 output_preview=unavailable; rerun with --save-chunks to write chunks.jsonl and enable request output inspection
-keys: esc request list  [/] section  ↑/↓ request  o output
+Shortcuts · ? more
+request detail: [/] section  •  o output  •  ↑/↓ request  •  esc list  •  ? all keys
 ```
 
 Cancellation is graceful. If a TUI or context cancellation happens after at least one request record exists, `what-ttft` writes partial reports using the normal filenames (`run.json`, `requests.jsonl`, `chunks.jsonl` when enabled, `summary.json`, and `summary.md`) and exits with code `130`. The terminal summary says that partial results were written. If cancellation happens before any request record is available, the command exits with code `130` without partial report files. Report-writing failures exit with code `1` and are shown in stderr and the live dashboard status.
