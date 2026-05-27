@@ -173,16 +173,21 @@ func TestBenchmarkDashboardModelMetricsArePerTarget(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)
 	content := app.View().Content
 
-	gptALine := lineContaining(content, "10.0/10.0")
-	if !strings.Contains(gptALine, "gpt-a") || !strings.Contains(gptALine, "target-a") || !strings.Contains(gptALine, "100.0/100.0") {
+	for _, want := range []string{"ttft50", "ttft95", "e2e50", "e2e95"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("model metrics table missing distinct percentile column %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "ttft p50/p95") || strings.Contains(content, "e2e p50/p95") || strings.Contains(content, "10.0/10.0") || strings.Contains(content, "90.0/90.0") {
+		t.Fatalf("model metrics table should not combine percentiles with slash-separated cells:\n%s", content)
+	}
+	gptALine := lineContaining(content, "gpt-a                        target-a")
+	if !strings.Contains(gptALine, "gpt-a") || !strings.Contains(gptALine, "10.0") || !strings.Contains(gptALine, "100.0") {
 		t.Fatalf("gpt-a model metrics row missing target-scoped values:\n%s", content)
 	}
-	gptBLine := lineContaining(content, "90.0/90.0")
-	if !strings.Contains(gptBLine, "gpt-b") || !strings.Contains(gptBLine, "target-b") || !strings.Contains(gptBLine, "200.0/200.0") {
+	gptBLine := lineContaining(content, "gpt-b                        target-b")
+	if !strings.Contains(gptBLine, "gpt-b") || !strings.Contains(gptBLine, "90.0") || !strings.Contains(gptBLine, "200.0") {
 		t.Fatalf("gpt-b model metrics row missing target-scoped values:\n%s", content)
-	}
-	if strings.Contains(gptALine, "90.0/90.0") || strings.Contains(gptBLine, "10.0/10.0") {
-		t.Fatalf("model metrics rows leaked values across targets:\ngpt-a=%s\ngpt-b=%s", gptALine, gptBLine)
 	}
 }
 

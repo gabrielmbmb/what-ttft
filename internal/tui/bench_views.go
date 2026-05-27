@@ -301,7 +301,7 @@ func renderCompactBenchMetricsBody(store liveStore, rows []benchModelMetricRow, 
 	}
 	lines := []string{
 		fmt.Sprintf("selected=%s  target=%s  show=%s", safeInline(row.Label), safeInline(row.Target.ID), visibility),
-		fmt.Sprintf("done=%d/%d  ok=%d  err=%d  ttft_p50=%s  e2e_p50=%s  tps_mean=%s", row.Target.Completed, row.Target.Total, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.E2E.P50), formatMetricValue(row.TPS.Mean)),
+		fmt.Sprintf("done=%d/%d  ok=%d  err=%d  ttft_p50=%s  ttft_p95=%s  e2e_p50=%s  e2e_p95=%s  tps_mean=%s", row.Target.Completed, row.Target.Total, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.TTFT.P95), formatMetricValue(row.E2E.P50), formatMetricValue(row.E2E.P95), formatMetricValue(row.TPS.Mean)),
 	}
 	if height >= 4 {
 		lines = append(lines, benchMetricsShownLine(rows))
@@ -361,9 +361,9 @@ func benchMetricsFooterLines(store liveStore, status string) []string {
 
 func benchMetricsTableHeader(width int) string {
 	if width < 120 {
-		return fmt.Sprintf("%-2s %-4s %-24s %7s %4s %4s %8s %8s %8s", "", "show", "model/target", "done", "ok", "err", "ttft50", "e2e50", "tpsμ")
+		return fmt.Sprintf("%-2s %-4s %-20s %7s %4s %4s %7s %7s %7s %7s %7s", "", "show", "model/target", "done", "ok", "err", "ttft50", "ttft95", "e2e50", "e2e95", "tpsμ")
 	}
-	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4s %4s %-15s %-15s %8s %7s", "", "show", "model/target", "target", "done", "ok", "err", "ttft p50/p95", "e2e p50/p95", "tpsμ", "tokμ")
+	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4s %4s %8s %8s %8s %8s %8s %7s", "", "show", "model/target", "target", "done", "ok", "err", "ttft50", "ttft95", "e2e50", "e2e95", "tpsμ", "tokμ")
 }
 
 func benchMetricsTableLine(row benchModelMetricRow, selected bool, width int) string {
@@ -381,13 +381,9 @@ func benchMetricsTableLine(row benchModelMetricRow, selected bool, width int) st
 		done = fmt.Sprintf("%d/?", row.Target.Completed)
 	}
 	if width < 120 {
-		return fmt.Sprintf("%-2s %-4s %-24s %7s %4d %4d %8s %8s %8s", marker, visibility, truncateVisible(label, 24), done, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.E2E.P50), formatMetricValue(row.TPS.Mean))
+		return fmt.Sprintf("%-2s %-4s %-20s %7s %4d %4d %7s %7s %7s %7s %7s", marker, visibility, truncateVisible(label, 20), done, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.TTFT.P95), formatMetricValue(row.E2E.P50), formatMetricValue(row.E2E.P95), formatMetricValue(row.TPS.Mean))
 	}
-	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4d %4d %-15s %-15s %8s %7s", marker, visibility, truncateVisible(label, 28), truncateVisible(row.Target.ID, 16), done, row.Target.Successful, row.Target.Errors, metricPair(row.TTFT.P50, row.TTFT.P95), metricPair(row.E2E.P50, row.E2E.P95), formatMetricValue(row.TPS.Mean), formatMetricValue(row.CompletionTokenMean))
-}
-
-func metricPair(first *float64, second *float64) string {
-	return formatMetricValue(first) + "/" + formatMetricValue(second)
+	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4d %4d %8s %8s %8s %8s %8s %7s", marker, visibility, truncateVisible(label, 28), truncateVisible(row.Target.ID, 16), done, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.TTFT.P95), formatMetricValue(row.E2E.P50), formatMetricValue(row.E2E.P95), formatMetricValue(row.TPS.Mean), formatMetricValue(row.CompletionTokenMean))
 }
 
 func metricRowFromTargetRecords(name string, unit string, records []whatttft.RequestRecord) metricRow {

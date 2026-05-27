@@ -223,7 +223,7 @@ The dashboard uses the full terminal, including an alternate screen when support
 
 A context-aware `Shortcuts` footer is pinned at the bottom of the dashboard and request explorer. Press `?` to expand the footer into a fuller guide for chart, request-list, request-detail, filter, and benchmark-target actions.
 
-In `bench --tui`, the bottom panel is a `MODEL METRICS` matrix instead of an aggregate metrics table. It follows the selected benchmark target and shows per-model/per-target request counts, errors, TTFT p50/p95, E2E p50/p95, mean output TPS, and average completion tokens so model comparisons do not hide behind all-target aggregation.
+In `bench --tui`, the bottom panel is a `MODEL METRICS` matrix instead of an aggregate metrics table. It follows the selected benchmark target and shows per-model/per-target request counts, errors, distinct TTFT p50 and p95 columns, distinct E2E p50 and p95 columns, mean output TPS, and average completion tokens so model comparisons do not hide behind all-target aggregation.
 
 Keyboard shortcuts:
 
