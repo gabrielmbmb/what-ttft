@@ -414,6 +414,9 @@ func renderMetricsPanel(store liveStore, width int, height int, status string, c
 	if height <= 0 || width <= 0 {
 		return ""
 	}
+	if store.IsBenchmark() {
+		return renderBenchMetricsPanel(store, width, height, status, confirmingCancel, theme)
+	}
 	body := renderMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), status, confirmingCancel)
 	return panel("METRICS", body, width, height, theme, roleAccent)
 }

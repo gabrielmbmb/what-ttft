@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gabrielmbmb/what-ttft/internal/tui/charts"
+	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
 func renderBenchChartArea(store liveStore, width int, height int, mode pane, theme tuiTheme) string {
@@ -222,6 +223,199 @@ func renderBenchTargetTable(store liveStore, width int, height int) string {
 		lines = append(lines, "waiting for target events")
 	}
 	return fitToBox(strings.Join(lines, "\n"), width, height)
+}
+
+type benchModelMetricRow struct {
+	Target              targetRow
+	Label               string
+	TTFT                metricRow
+	E2E                 metricRow
+	TPS                 metricRow
+	CompletionTokenMean *float64
+}
+
+func renderBenchMetricsPanel(store liveStore, width int, height int, status string, confirmingCancel bool, theme tuiTheme) string {
+	if height <= 0 || width <= 0 {
+		return ""
+	}
+	body := renderBenchMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), status, confirmingCancel)
+	return panel("MODEL METRICS", body, width, height, theme, roleAccent)
+}
+
+func renderBenchMetricsBody(store liveStore, width int, height int, status string, confirmingCancel bool) string {
+	if height <= 0 || width <= 0 {
+		return ""
+	}
+	if confirmingCancel {
+		status = "Cancel the running benchmark? Press y to confirm or n/esc to continue."
+	}
+	rows := benchModelMetricRows(store)
+	if len(rows) == 0 {
+		return fitToBox(strings.Join([]string{"waiting for benchmark target metrics", renderProgressStatusLine(store, status)}, "\n"), width, height)
+	}
+	if width < 96 || height <= 5 {
+		return renderCompactBenchMetricsBody(store, rows, width, height, status)
+	}
+
+	selected := store.selectedTarget
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= len(rows) {
+		selected = len(rows) - 1
+	}
+	footerLines := benchMetricsFooterLines(store, status)
+	headerLines := []string{
+		benchMetricsSummaryLine(rows, selected, width),
+		benchMetricsTableHeader(width),
+	}
+	pageSize := height - len(headerLines) - len(footerLines)
+	if pageSize < 1 {
+		pageSize = 1
+	}
+	offset := requestExplorerOffsetForSelection(0, selected, pageSize, len(rows))
+	end := offset + pageSize
+	if end > len(rows) {
+		end = len(rows)
+	}
+	lines := append([]string(nil), headerLines...)
+	for index := offset; index < end; index++ {
+		lines = append(lines, benchMetricsTableLine(rows[index], index == selected, width))
+	}
+	lines = append(lines, footerLines...)
+	return fitToBox(strings.Join(lines, "\n"), width, height)
+}
+
+func renderCompactBenchMetricsBody(store liveStore, rows []benchModelMetricRow, width int, height int, status string) string {
+	selected := store.selectedTarget
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= len(rows) {
+		selected = len(rows) - 1
+	}
+	row := rows[selected]
+	visibility := "on"
+	if !row.Target.Visible {
+		visibility = "off"
+	}
+	lines := []string{
+		fmt.Sprintf("selected=%s  target=%s  show=%s", safeInline(row.Label), safeInline(row.Target.ID), visibility),
+		fmt.Sprintf("done=%d/%d  ok=%d  err=%d  ttft_p50=%s  e2e_p50=%s  tps_mean=%s", row.Target.Completed, row.Target.Total, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.E2E.P50), formatMetricValue(row.TPS.Mean)),
+	}
+	if height >= 4 {
+		lines = append(lines, benchMetricsShownLine(rows))
+	}
+	if height >= 5 {
+		lines = append(lines, renderCompactProgressStatusLine(store, status))
+	}
+	return fitToBox(strings.Join(lines, "\n"), width, height)
+}
+
+func benchModelMetricRows(store liveStore) []benchModelMetricRow {
+	targets := store.TargetRows()
+	labels := benchSeriesLabels(targets)
+	rows := make([]benchModelMetricRow, 0, len(targets))
+	for _, target := range targets {
+		records := store.recordsForTarget(target.ID)
+		rows = append(rows, benchModelMetricRow{
+			Target:              target,
+			Label:               labels[target.ID],
+			TTFT:                metricRowFromTargetRecords(metricTTFTDeltaMS, "ms", records),
+			E2E:                 metricRowFromTargetRecords(metricE2EDeltaMS, "ms", records),
+			TPS:                 metricRowFromTargetRecords(metricE2EOutputTPS, "tokens/s", records),
+			CompletionTokenMean: completionTokenMean(records),
+		})
+	}
+	return rows
+}
+
+func benchMetricsSummaryLine(rows []benchModelMetricRow, selected int, width int) string {
+	selectedLabel := "-"
+	selectedTarget := "-"
+	if selected >= 0 && selected < len(rows) {
+		selectedLabel = rows[selected].Label
+		selectedTarget = rows[selected].Target.ID
+	}
+	line := fmt.Sprintf("selected=%s  target=%s  %s  rows=%d/%d", safeInline(selectedLabel), safeInline(selectedTarget), benchMetricsShownLine(rows), selected+1, len(rows))
+	return truncateVisible(line, width)
+}
+
+func benchMetricsShownLine(rows []benchModelMetricRow) string {
+	visible := 0
+	for _, row := range rows {
+		if row.Target.Visible {
+			visible++
+		}
+	}
+	return fmt.Sprintf("models shown=%d/%d", visible, len(rows))
+}
+
+func benchMetricsFooterLines(store liveStore, status string) []string {
+	lines := []string{renderProgressStatusLine(store, status)}
+	if tokenLine := renderTokenTotalsLine(store); tokenLine != "" {
+		lines = append([]string{tokenLine}, lines...)
+	}
+	return lines
+}
+
+func benchMetricsTableHeader(width int) string {
+	if width < 120 {
+		return fmt.Sprintf("%-2s %-4s %-24s %7s %4s %4s %8s %8s %8s", "", "show", "model/target", "done", "ok", "err", "ttft50", "e2e50", "tpsμ")
+	}
+	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4s %4s %-15s %-15s %8s %7s", "", "show", "model/target", "target", "done", "ok", "err", "ttft p50/p95", "e2e p50/p95", "tpsμ", "tokμ")
+}
+
+func benchMetricsTableLine(row benchModelMetricRow, selected bool, width int) string {
+	marker := " "
+	if selected {
+		marker = "›"
+	}
+	visibility := "on"
+	if !row.Target.Visible {
+		visibility = "off"
+	}
+	label := firstNonEmpty(row.Label, row.Target.Model, row.Target.Name, row.Target.ID, "target")
+	done := fmt.Sprintf("%d/%d", row.Target.Completed, row.Target.Total)
+	if row.Target.Total == 0 {
+		done = fmt.Sprintf("%d/?", row.Target.Completed)
+	}
+	if width < 120 {
+		return fmt.Sprintf("%-2s %-4s %-24s %7s %4d %4d %8s %8s %8s", marker, visibility, truncateVisible(label, 24), done, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.E2E.P50), formatMetricValue(row.TPS.Mean))
+	}
+	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4d %4d %-15s %-15s %8s %7s", marker, visibility, truncateVisible(label, 28), truncateVisible(row.Target.ID, 16), done, row.Target.Successful, row.Target.Errors, metricPair(row.TTFT.P50, row.TTFT.P95), metricPair(row.E2E.P50, row.E2E.P95), formatMetricValue(row.TPS.Mean), formatMetricValue(row.CompletionTokenMean))
+}
+
+func metricPair(first *float64, second *float64) string {
+	return formatMetricValue(first) + "/" + formatMetricValue(second)
+}
+
+func metricRowFromTargetRecords(name string, unit string, records []whatttft.RequestRecord) metricRow {
+	values := make([]float64, 0, len(records))
+	for _, record := range records {
+		if record.Warmup || record.Error != nil {
+			continue
+		}
+		appendMetricValue(&values, metricValue(record, name))
+	}
+	return metricRowFromValues(name, unit, values)
+}
+
+func completionTokenMean(records []whatttft.RequestRecord) *float64 {
+	total := 0
+	count := 0
+	for _, record := range records {
+		if record.Warmup || record.Error != nil || record.CompletionTokens == nil {
+			continue
+		}
+		total += *record.CompletionTokens
+		count++
+	}
+	if count == 0 {
+		return nil
+	}
+	mean := float64(total) / float64(count)
+	return &mean
 }
 
 func renderBenchSelectedTargetPanel(store liveStore, width int, height int, theme tuiTheme) string {

@@ -153,7 +153,7 @@ func TestBenchmarkDashboardShowsRunStyleMultiModelCharts(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)
 	content := app.View().Content
 
-	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "legend:", "gpt-a latest", "gpt-b latest", "series=2", "x=request order per target", "models shown=2/2", "Shortcuts", "space toggle"} {
+	for _, want := range []string{"what-ttft bench", "target_order=serial", "TTFT trend · ttft_delta_ms", "E2E trend · e2e_delta_ms", "TTFT distribution · histogram", "Output TPS trend · e2e_output_tps", "legend:", "gpt-a latest", "gpt-b latest", "series=2", "x=request order per target", "MODEL METRICS", "model/target", "models shown=2/2", "Shortcuts", "space toggle"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("benchmark dashboard missing %q:\n%s", want, content)
 		}
@@ -168,6 +168,24 @@ func TestBenchmarkDashboardShowsRunStyleMultiModelCharts(t *testing.T) {
 	}
 }
 
+// TestBenchmarkDashboardModelMetricsArePerTarget verifies the bench metrics panel compares models without aggregating them together.
+func TestBenchmarkDashboardModelMetricsArePerTarget(t *testing.T) {
+	app := benchmarkDashboardAppWithRecords(t)
+	content := app.View().Content
+
+	gptALine := lineContaining(content, "10.0/10.0")
+	if !strings.Contains(gptALine, "gpt-a") || !strings.Contains(gptALine, "target-a") || !strings.Contains(gptALine, "100.0/100.0") {
+		t.Fatalf("gpt-a model metrics row missing target-scoped values:\n%s", content)
+	}
+	gptBLine := lineContaining(content, "90.0/90.0")
+	if !strings.Contains(gptBLine, "gpt-b") || !strings.Contains(gptBLine, "target-b") || !strings.Contains(gptBLine, "200.0/200.0") {
+		t.Fatalf("gpt-b model metrics row missing target-scoped values:\n%s", content)
+	}
+	if strings.Contains(gptALine, "90.0/90.0") || strings.Contains(gptBLine, "10.0/10.0") {
+		t.Fatalf("model metrics rows leaked values across targets:\ngpt-a=%s\ngpt-b=%s", gptALine, gptBLine)
+	}
+}
+
 // TestBenchmarkDashboardCanHideFinishedTargets verifies post-run target visibility filters chart series without changing reports.
 func TestBenchmarkDashboardCanHideFinishedTargets(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)
@@ -176,7 +194,7 @@ func TestBenchmarkDashboardCanHideFinishedTargets(t *testing.T) {
 	app = updateModel(t, app, keyPress("space"))
 	content := app.View().Content
 
-	for _, want := range []string{"models shown=1/2", "selected=gpt-b[off]", "series=1", "gpt-a latest"} {
+	for _, want := range []string{"models shown=1/2", "selected=gpt-b", "off  gpt-b", "series=1", "gpt-a latest"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("filtered benchmark dashboard missing %q:\n%s", want, content)
 		}
