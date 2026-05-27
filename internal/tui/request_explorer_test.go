@@ -37,7 +37,7 @@ func TestRequestExplorerRunNavigationAndDetail(t *testing.T) {
 	if app.requestExplorer.Mode != requestExplorerModeDetail {
 		t.Fatalf("request explorer mode = %d, want detail", app.requestExplorer.Mode)
 	}
-	if content := app.View().Content; !strings.Contains(content, "Request detail") || !strings.Contains(content, "req-000001") || !strings.Contains(content, "ttft_delta_ms=20.0") {
+	if content := app.View().Content; !strings.Contains(content, "Request detail") || !strings.Contains(content, "req-000001") || !strings.Contains(content, "section=identity") {
 		t.Fatalf("request detail missing selected request:\n%s", content)
 	}
 

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
-
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
@@ -22,6 +20,7 @@ type requestExplorerState struct {
 	CursorRequestID string
 	Offset          int
 	Mode            requestExplorerMode
+	DetailSection   requestDetailSection
 	PreviousPane    pane
 	FilterInput     string
 	CommittedFilter string
@@ -53,6 +52,15 @@ func (m model) updateRequestExplorerKey(msg tea.KeyPressMsg) (model, bool) {
 		}
 		m.pane = m.requestExplorer.previousPaneOrSummary()
 		m.requestExplorer.Mode = requestExplorerModeList
+		return m, true
+	case m.requestExplorer.Mode == requestExplorerModeDetail && key.Matches(msg, m.keys.DetailSectionPrev):
+		m.requestExplorer.moveDetailSection(-1)
+		return m, true
+	case m.requestExplorer.Mode == requestExplorerModeDetail && key.Matches(msg, m.keys.DetailSectionNext):
+		m.requestExplorer.moveDetailSection(1)
+		return m, true
+	case m.requestExplorer.Mode == requestExplorerModeDetail && key.Matches(msg, m.keys.OutputSection):
+		m.requestExplorer.DetailSection = requestDetailSectionOutput
 		return m, true
 	case key.Matches(msg, m.keys.FilterRequests):
 		m.requestExplorer.Mode = requestExplorerModeFilter
@@ -194,15 +202,6 @@ func requestExplorerPageSize(height int) int {
 		pageSize = 25
 	}
 	return pageSize
-}
-
-func requestRecordIndex(records []whatttft.RequestRecord, requestID string) int {
-	for index, record := range records {
-		if record.RequestID == requestID {
-			return index
-		}
-	}
-	return -1
 }
 
 func renderRequestExplorer(store liveStore, state requestExplorerState, width int, height int, theme tuiTheme) string {
@@ -422,88 +421,7 @@ func requestExplorerPhaseLabel(row requestRow) string {
 }
 
 func renderRequestExplorerDetail(store liveStore, state requestExplorerState, width int, height int, theme tuiTheme) string {
-	records := store.completedRecords()
-	selected := requestRecordIndex(records, state.CursorRequestID)
-	if selected < 0 && len(records) > 0 {
-		selected = 0
-	}
-	if selected < 0 {
-		return panel("Request detail", "no request selected\nesc requests", width, height, theme, roleAccent)
-	}
-	record := records[selected]
-	bodyWidth := panelInnerWidth(width)
-	bodyHeight := panelInnerHeight(height)
-	lines := []string{
-		fmt.Sprintf("request=%s  #%d/%d  attempt=%d  phase=%s", safeInline(record.RequestID), selected+1, len(records), record.Attempt, requestPhase(record)),
-		fmt.Sprintf("target=%s  model=%s  provider=%s  protocol=%s", safeInline(firstNonEmpty(record.TargetID, "-")), safeInline(firstNonEmpty(record.Model, "-")), safeInline(firstNonEmpty(record.Provider, "-")), safeInline(firstNonEmpty(record.HTTP.Protocol, "-"))),
-		fmt.Sprintf("outcome=%s  http=%s  finish=%s", requestOutcome(record), requestHTTPStatus(record), safeInline(firstNonEmpty(requestFinishReason(record), "-"))),
-		fmt.Sprintf("ttft_delta_ms=%s  e2e_delta_ms=%s  stream_total_ms=%s  http_ttfb_ms=%s", formatMetricValue(record.Derived.TTFTDeltaMS), formatMetricValue(record.Derived.E2EDeltaMS), formatMetricValue(record.Derived.StreamTotalMS), formatMetricValue(record.Derived.HTTPTTFBMS)),
-		fmt.Sprintf("e2e_output_tps=%s  generation_delta_output_tps=%s", formatMetricValue(record.Derived.E2EOutputTPS), formatMetricValue(record.Derived.GenerationDeltaOutputTPS)),
-		fmt.Sprintf("prompt_tokens=%s  completion_tokens=%s  total_tokens=%s", formatIntPointer(record.PromptTokens), formatIntPointer(record.CompletionTokens), formatIntPointer(record.TotalTokens)),
-		fmt.Sprintf("cache=%s  conn=%s  protocol=%s", requestCacheState(record), requestConnState(record), safeInline(firstNonEmpty(record.HTTP.Protocol, "-"))),
-	}
-	if record.Error != nil {
-		lines = append(lines, fmt.Sprintf("error_category=%s  retryable=%t", safeInline(firstNonEmpty(record.Error.Category, "unknown")), record.Error.Retryable))
-		if record.Error.Message != "" {
-			lines = append(lines, "error_message="+safeInline(record.Error.Message))
-		}
-	}
-	lines = append(lines, "keys: esc request list  [/]=filters later  output requires --save-chunks")
-	return panel("Request detail", fitToBox(strings.Join(lines, "\n"), bodyWidth, bodyHeight), width, height, theme, roleAccent)
-}
-
-func requestPhase(record whatttft.RequestRecord) string {
-	if record.Warmup {
-		return "warmup"
-	}
-	return "measured"
-}
-
-func requestOutcome(record whatttft.RequestRecord) string {
-	if record.Error != nil {
-		return "error"
-	}
-	return "ok"
-}
-
-func requestHTTPStatus(record whatttft.RequestRecord) string {
-	if record.HTTP.StatusCode == 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%d", record.HTTP.StatusCode)
-}
-
-func requestFinishReason(record whatttft.RequestRecord) string {
-	if record.Error != nil && record.Error.Category != "" {
-		return record.Error.Category
-	}
-	return ""
-}
-
-func requestCacheState(record whatttft.RequestRecord) string {
-	if record.Cache.PromptCachedTokens != nil {
-		if *record.Cache.PromptCachedTokens > 0 {
-			return "hit"
-		}
-		return "miss"
-	}
-	if record.Cache.Hit != nil {
-		if *record.Cache.Hit {
-			return "hit"
-		}
-		return "miss"
-	}
-	return "unknown"
-}
-
-func requestConnState(record whatttft.RequestRecord) string {
-	if !record.HTTP.GotConn {
-		return "unknown"
-	}
-	if record.HTTP.ConnReused {
-		return "reused"
-	}
-	return "new"
+	return renderRequestDetail(store, state, width, height, theme)
 }
 
 func formatIntPointer(value *int) string {

@@ -3,29 +3,32 @@ package tui
 import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Quit            key.Binding
-	Confirm         key.Binding
-	Cancel          key.Binding
-	Help            key.Binding
-	FocusNext       key.Binding
-	FocusPrev       key.Binding
-	TargetUp        key.Binding
-	TargetDown      key.Binding
-	ToggleTarget    key.Binding
-	ShowAllTargets  key.Binding
-	RequestExplorer key.Binding
-	ExplorerBack    key.Binding
-	FilterRequests  key.Binding
-	ClearFilter     key.Binding
-	PageUp          key.Binding
-	PageDown        key.Binding
-	Home            key.Binding
-	End             key.Binding
-	Enter           key.Binding
-	Summary         key.Binding
-	TTFT            key.Binding
-	E2E             key.Binding
-	Waterfall       key.Binding
+	Quit              key.Binding
+	Confirm           key.Binding
+	Cancel            key.Binding
+	Help              key.Binding
+	FocusNext         key.Binding
+	FocusPrev         key.Binding
+	TargetUp          key.Binding
+	TargetDown        key.Binding
+	ToggleTarget      key.Binding
+	ShowAllTargets    key.Binding
+	RequestExplorer   key.Binding
+	ExplorerBack      key.Binding
+	FilterRequests    key.Binding
+	ClearFilter       key.Binding
+	PageUp            key.Binding
+	PageDown          key.Binding
+	Home              key.Binding
+	End               key.Binding
+	DetailSectionPrev key.Binding
+	DetailSectionNext key.Binding
+	OutputSection     key.Binding
+	Enter             key.Binding
+	Summary           key.Binding
+	TTFT              key.Binding
+	E2E               key.Binding
+	Waterfall         key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -102,6 +105,18 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("end"),
 			key.WithHelp("end", "last"),
 		),
+		DetailSectionPrev: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "prev section"),
+		),
+		DetailSectionNext: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "next section"),
+		),
+		OutputSection: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "output"),
+		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "target detail"),
@@ -134,6 +149,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Summary, k.TTFT, k.E2E, k.Waterfall, k.RequestExplorer},
 		{k.FocusNext, k.FocusPrev, k.TargetUp, k.TargetDown},
 		{k.PageUp, k.PageDown, k.Home, k.End},
+		{k.DetailSectionPrev, k.DetailSectionNext, k.OutputSection},
 		{k.FilterRequests, k.ClearFilter, k.ToggleTarget, k.ShowAllTargets, k.Enter, k.ExplorerBack, k.Help, k.Quit},
 		{k.Confirm, k.Cancel},
 	}

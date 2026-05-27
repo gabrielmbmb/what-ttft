@@ -3831,7 +3831,7 @@ Definition of done:
 
 ---
 
-### [ ] 40. Implement request detail / zoom view
+### [x] 40. Implement request detail / zoom view
 
 Allow users to open one request from the list and inspect detailed diagnostics.
 
@@ -3858,6 +3858,16 @@ Implementation details:
   7. `output`: availability, preview, and full captured visible output when enabled.
 - Detail view should show both a human summary and raw field names for important metrics, e.g. `TTFT delta (ttft_delta_ms)` so users can map what they see back to JSON output.
 - Include links-by-path rather than terminal hyperlinks if referencing report files, e.g. `requests.jsonl line unavailable in live view` or `chunks.jsonl loaded`.
+
+Implemented details:
+
+- Added `internal/tui/request_detail.go` with explicit request detail sections: identity, outcome, latency, timeline, transport, usage/cache, and output.
+- Added detail section state and keyboard navigation with `[`/`]`, plus `o` to jump to output state.
+- Expanded detail rendering for request identity, target/model/provider/API/scenario, cache and connection modes, service tiers, success/error outcome, HTTP status/text, retryability, latency metrics, timeline offsets, waterfall chart, transport phases, connection reuse, TLS/compression metadata, token usage, cache metadata, and output availability.
+- Detail latency rendering distinguishes missing metrics (`-`) from observed zero values (`0.0`) and includes raw metric names such as `ttft_delta_ms` for mapping back to JSON.
+- Error body snippets and messages go through a defensive request-detail redaction helper before display.
+- Output section now explicitly explains that content inspection requires `--save-chunks`; full captured output remains task 42.
+- Added tests for successful request details, provider/non-200 errors, missing-vs-zero metrics, cache hit metadata, reused connection transport, warmup bench records, timeline/waterfall rendering, output-unavailable state, secret redaction, and detail section key navigation.
 
 Definition of done:
 
