@@ -2,6 +2,7 @@ package tui
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -150,19 +151,85 @@ func sortRequestRows(rows []requestRow, order requestSort) []requestRow {
 	sort.SliceStable(sorted, func(i int, j int) bool {
 		left := sorted[i]
 		right := sorted[j]
-		switch order {
-		case requestSortTargetOrder:
-			if left.TargetOrdinal != right.TargetOrdinal {
-				return left.TargetOrdinal < right.TargetOrdinal
+		if normalizedRequestSort(order) == requestSortCompletionOrder {
+			return requestRowCompletionLess(left, right)
+		}
+		switch normalizedRequestSort(order) {
+		case requestSortSlowestTTFT:
+			if less, ok := requestRowNumericSortLess(left.TTFTMS, right.TTFTMS, true); ok {
+				return less
+			}
+		case requestSortSlowestE2E:
+			if less, ok := requestRowNumericSortLess(left.E2EMS, right.E2EMS, true); ok {
+				return less
+			}
+		case requestSortSlowestStream:
+			if less, ok := requestRowNumericSortLess(left.StreamTotalMS, right.StreamTotalMS, true); ok {
+				return less
+			}
+		case requestSortHighestTPS:
+			if less, ok := requestRowNumericSortLess(left.E2EOutputTPS, right.E2EOutputTPS, true); ok {
+				return less
+			}
+		case requestSortLowestTPS:
+			if less, ok := requestRowNumericSortLess(left.E2EOutputTPS, right.E2EOutputTPS, false); ok {
+				return less
 			}
 		case requestSortErrorsFirst:
 			if left.Outcome != right.Outcome {
 				return left.Outcome == requestOutcomeError
 			}
+			if statusOrder := requestRowStatusSortValue(left) - requestRowStatusSortValue(right); statusOrder != 0 {
+				return statusOrder > 0
+			}
+		case requestSortTargetOrder:
+			if left.TargetOrdinal != right.TargetOrdinal {
+				return left.TargetOrdinal < right.TargetOrdinal
+			}
+			if left.Model != right.Model {
+				return left.Model < right.Model
+			}
 		}
-		return requestRowCompletionLess(left, right)
+		return requestRowTieBreakLess(left, right)
 	})
 	return sorted
+}
+
+func requestRowNumericSortLess(left *float64, right *float64, descending bool) (bool, bool) {
+	if left == nil && right == nil {
+		return false, false
+	}
+	if left == nil {
+		return false, true
+	}
+	if right == nil {
+		return true, true
+	}
+	if *left == *right {
+		return false, false
+	}
+	if descending {
+		return *left > *right, true
+	}
+	return *left < *right, true
+}
+
+func requestRowStatusSortValue(row requestRow) int {
+	status, err := strconv.Atoi(row.HTTPStatus)
+	if err != nil {
+		return 0
+	}
+	if status >= 400 {
+		return status
+	}
+	return 0
+}
+
+func requestRowTieBreakLess(left requestRow, right requestRow) bool {
+	if left.TargetOrdinal != right.TargetOrdinal {
+		return left.TargetOrdinal < right.TargetOrdinal
+	}
+	return requestRowCompletionLess(left, right)
 }
 
 func requestRowCompletionLess(left requestRow, right requestRow) bool {

@@ -24,6 +24,9 @@ type requestExplorerState struct {
 	PreviousPane    pane
 	FilterInput     string
 	CommittedFilter string
+	FilterError     string
+	Filters         requestFilters
+	Sort            requestSort
 }
 
 func (m *model) openRequestExplorer() {
@@ -67,11 +70,28 @@ func (m model) updateRequestExplorerKey(msg tea.KeyPressMsg) (model, bool) {
 		m.requestExplorer.FilterInput = m.requestExplorer.CommittedFilter
 		return m, true
 	case key.Matches(msg, m.keys.ClearFilter):
-		m.requestExplorer.FilterInput = ""
-		m.requestExplorer.CommittedFilter = ""
-		m.requestExplorer.Offset = 0
+		previousOrdinal := requestExplorerSelectedOrdinal(rows, m.requestExplorer.CursorRequestID)
+		m.requestExplorer.clearFilters()
 		rows, _, _ = requestExplorerRows(m.store, m.requestExplorer)
-		m.requestExplorer.ensureCursor(rows)
+		m.requestExplorer.ensureCursorNear(rows, previousOrdinal, pageSize)
+		return m, true
+	case key.Matches(msg, m.keys.SortRequests):
+		previousOrdinal := requestExplorerSelectedOrdinal(rows, m.requestExplorer.CursorRequestID)
+		m.requestExplorer.cycleSort()
+		rows, _, _ = requestExplorerRows(m.store, m.requestExplorer)
+		m.requestExplorer.ensureCursorNear(rows, previousOrdinal, pageSize)
+		return m, true
+	case key.Matches(msg, m.keys.ToggleErrors):
+		previousOrdinal := requestExplorerSelectedOrdinal(rows, m.requestExplorer.CursorRequestID)
+		m.requestExplorer.toggleErrorsOnly()
+		rows, _, _ = requestExplorerRows(m.store, m.requestExplorer)
+		m.requestExplorer.ensureCursorNear(rows, previousOrdinal, pageSize)
+		return m, true
+	case key.Matches(msg, m.keys.CycleRequestPhase):
+		previousOrdinal := requestExplorerSelectedOrdinal(rows, m.requestExplorer.CursorRequestID)
+		m.requestExplorer.cyclePhaseFilter()
+		rows, _, _ = requestExplorerRows(m.store, m.requestExplorer)
+		m.requestExplorer.ensureCursorNear(rows, previousOrdinal, pageSize)
 		return m, true
 	case key.Matches(msg, m.keys.TargetUp):
 		m.requestExplorer.move(rows, -1, pageSize)
@@ -105,13 +125,18 @@ func (m model) updateRequestExplorerKey(msg tea.KeyPressMsg) (model, bool) {
 func (m model) updateRequestExplorerFilterKey(msg tea.KeyPressMsg) model {
 	switch {
 	case key.Matches(msg, m.keys.Enter):
-		m.requestExplorer.CommittedFilter = strings.TrimSpace(m.requestExplorer.FilterInput)
+		previousRows, _, _ := requestExplorerRows(m.store, m.requestExplorer)
+		previousOrdinal := requestExplorerSelectedOrdinal(previousRows, m.requestExplorer.CursorRequestID)
+		if err := m.requestExplorer.applyFilterInput(); err != nil {
+			return m
+		}
 		m.requestExplorer.Mode = requestExplorerModeList
 		m.requestExplorer.Offset = 0
 		rows, _, _ := requestExplorerRows(m.store, m.requestExplorer)
-		m.requestExplorer.ensureCursor(rows)
+		m.requestExplorer.ensureCursorNear(rows, previousOrdinal, requestExplorerPageSize(m.height))
 	case key.Matches(msg, m.keys.ExplorerBack):
 		m.requestExplorer.FilterInput = m.requestExplorer.CommittedFilter
+		m.requestExplorer.FilterError = ""
 		m.requestExplorer.Mode = requestExplorerModeList
 	case key.Matches(msg, m.keys.ClearFilter):
 		m.requestExplorer.FilterInput = ""
@@ -121,6 +146,81 @@ func (m model) updateRequestExplorerFilterKey(msg tea.KeyPressMsg) model {
 		m.requestExplorer.FilterInput += tea.Key(msg).Text
 	}
 	return m
+}
+
+func (s *requestExplorerState) applyFilterInput() error {
+	filters, sortOrder, err := parseRequestFilterQuery(s.FilterInput)
+	if err != nil {
+		s.FilterError = err.Error()
+		return err
+	}
+	s.Filters = filters
+	s.Sort = sortOrder
+	s.CommittedFilter = strings.TrimSpace(s.FilterInput)
+	s.FilterError = ""
+	return nil
+}
+
+func (s *requestExplorerState) clearFilters() {
+	s.Filters = requestFilters{RespectChartVisibility: true}
+	s.Sort = requestSortCompletionOrder
+	s.CommittedFilter = ""
+	s.FilterInput = ""
+	s.FilterError = ""
+	s.Offset = 0
+}
+
+func (s *requestExplorerState) cycleSort() {
+	sorts := []requestSort{requestSortCompletionOrder, requestSortSlowestTTFT, requestSortSlowestE2E, requestSortErrorsFirst, requestSortTargetOrder}
+	current := normalizedRequestSort(s.Sort)
+	next := sorts[0]
+	for index, candidate := range sorts {
+		if candidate == current {
+			next = sorts[(index+1)%len(sorts)]
+			break
+		}
+	}
+	s.Sort = next
+	s.CommittedFilter = renderRequestFilterQuery(s.Filters.withDefaultVisibility(), s.Sort)
+	s.FilterInput = s.CommittedFilter
+	s.FilterError = ""
+	s.Offset = 0
+}
+
+func (s *requestExplorerState) toggleErrorsOnly() {
+	filters := s.Filters.withDefaultVisibility()
+	if len(filters.Outcomes) == 1 && filters.Outcomes[requestOutcomeError] {
+		filters.Outcomes = nil
+	} else {
+		filters.Outcomes = map[string]bool{requestOutcomeError: true}
+	}
+	s.Filters = filters
+	s.CommittedFilter = renderRequestFilterQuery(s.Filters, normalizedRequestSort(s.Sort))
+	s.FilterInput = s.CommittedFilter
+	s.FilterError = ""
+	s.Offset = 0
+}
+
+func (s *requestExplorerState) cyclePhaseFilter() {
+	filters := s.Filters.withDefaultVisibility()
+	next := requestPhaseMeasured
+	if len(filters.Phases) == 1 && filters.Phases[requestPhaseMeasured] {
+		next = requestPhaseWarmup
+	} else if len(filters.Phases) == 1 && filters.Phases[requestPhaseWarmup] {
+		filters.Phases = nil
+		s.Filters = filters
+		s.CommittedFilter = renderRequestFilterQuery(s.Filters, normalizedRequestSort(s.Sort))
+		s.FilterInput = s.CommittedFilter
+		s.FilterError = ""
+		s.Offset = 0
+		return
+	}
+	filters.Phases = map[string]bool{next: true}
+	s.Filters = filters
+	s.CommittedFilter = renderRequestFilterQuery(s.Filters, normalizedRequestSort(s.Sort))
+	s.FilterInput = s.CommittedFilter
+	s.FilterError = ""
+	s.Offset = 0
 }
 
 func (s requestExplorerState) previousPaneOrSummary() pane {
@@ -141,6 +241,47 @@ func (s *requestExplorerState) ensureCursor(rows []requestRow) {
 	}
 	s.CursorRequestID = rows[0].RequestID
 	s.Offset = 0
+}
+
+func (s *requestExplorerState) ensureCursorNear(rows []requestRow, previousOrdinal int, pageSize int) {
+	if len(rows) == 0 {
+		s.ensureCursor(rows)
+		return
+	}
+	if index := requestRowIndex(rows, s.CursorRequestID); index >= 0 {
+		s.Offset = requestExplorerOffsetForSelection(s.Offset, index, pageSize, len(rows))
+		return
+	}
+	if previousOrdinal < 0 {
+		s.ensureCursor(rows)
+		return
+	}
+	closest := 0
+	closestDistance := absInt(rows[0].Ordinal - previousOrdinal)
+	for index := 1; index < len(rows); index++ {
+		distance := absInt(rows[index].Ordinal - previousOrdinal)
+		if distance < closestDistance || distance == closestDistance && rows[index].Ordinal < rows[closest].Ordinal {
+			closest = index
+			closestDistance = distance
+		}
+	}
+	s.CursorRequestID = rows[closest].RequestID
+	s.Offset = requestExplorerOffsetForSelection(s.Offset, closest, pageSize, len(rows))
+}
+
+func requestExplorerSelectedOrdinal(rows []requestRow, requestID string) int {
+	index := requestRowIndex(rows, requestID)
+	if index < 0 {
+		return -1
+	}
+	return rows[index].Ordinal
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func (s *requestExplorerState) move(rows []requestRow, delta int, pageSize int) {
@@ -245,8 +386,9 @@ func renderRequestExplorerList(store liveStore, state requestExplorerState, widt
 	if strings.TrimSpace(filterLabel) == "" {
 		filterLabel = "none"
 	}
+	_, sortOrder := requestExplorerFiltersAndSort(state)
 	lines := []string{
-		renderRequestExplorerStatusLine(len(rows), totalRows, hiddenRows, selected, filterLabel),
+		renderRequestExplorerStatusLine(len(rows), totalRows, hiddenRows, selected, filterLabel, sortOrder),
 		requestExplorerHeader(requestExplorerLayout(store.IsBenchmark(), bodyWidth)),
 	}
 	layout := requestExplorerLayout(store.IsBenchmark(), bodyWidth)
@@ -254,9 +396,12 @@ func renderRequestExplorerList(store liveStore, state requestExplorerState, widt
 		lines = append(lines, requestExplorerRow(rows[index], index == selected, layout))
 	}
 	if state.Mode == requestExplorerModeFilter {
+		if state.FilterError != "" {
+			lines = append(lines, "filter error: "+requestFilterDisplay(state.FilterError))
+		}
 		lines = append(lines, "filter: enter apply  esc discard  ctrl+u clear")
 	} else {
-		lines = append(lines, "keys: ↑/↓ row  pgup/pgdn page  enter detail  / filter  esc overview")
+		lines = append(lines, "keys: ↑/↓ row  pgup/pgdn page  enter detail  / filter  s sort  e errors  w phase  esc overview")
 	}
 	return panel("Requests", fitToBox(strings.Join(lines, "\n"), bodyWidth, bodyHeight), width, height, theme, roleAccent)
 }
@@ -273,7 +418,8 @@ func requestExplorerRows(store liveStore, state requestExplorerState) ([]request
 	rows := store.requestRows()
 	totalRows := len(rows)
 	hiddenRows := 0
-	if store.IsBenchmark() {
+	filters, sortOrder := requestExplorerFiltersAndSort(state)
+	if store.IsBenchmark() && filters.RespectChartVisibility {
 		visible := make([]requestRow, 0, len(rows))
 		for _, row := range rows {
 			if row.TargetID != "" && !store.targetVisible(row.TargetID) {
@@ -283,49 +429,37 @@ func requestExplorerRows(store liveStore, state requestExplorerState) ([]request
 			visible = append(visible, row)
 		}
 		rows = visible
+	} else if store.IsBenchmark() {
+		for _, row := range rows {
+			if row.TargetID != "" && !store.targetVisible(row.TargetID) {
+				hiddenRows++
+			}
+		}
 	}
-	query := strings.TrimSpace(state.CommittedFilter)
-	if query != "" {
+	if strings.TrimSpace(state.CommittedFilter) != "" || !filters.isEmpty() {
 		filtered := make([]requestRow, 0, len(rows))
 		for _, row := range rows {
-			if requestRowMatchesText(row, query) {
+			if filters.matches(row) {
 				filtered = append(filtered, row)
 			}
 		}
 		rows = filtered
 	}
+	rows = sortRequestRows(rows, sortOrder)
 	return rows, totalRows, hiddenRows
 }
 
-func requestRowMatchesText(row requestRow, query string) bool {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return true
-	}
-	fields := []string{
-		row.RequestID,
-		row.TargetID,
-		row.TargetName,
-		row.Provider,
-		row.ProviderAPI,
-		row.Model,
-		row.ServiceTier,
-		row.Phase,
-		row.Outcome,
-		row.HTTPStatus,
-		row.ErrorCategory,
-		row.FinishReason,
-		row.CacheState,
-		row.Conn,
-		row.Protocol,
-		row.OutputState,
-	}
-	for _, field := range fields {
-		if strings.Contains(strings.ToLower(field), query) {
-			return true
+func requestExplorerFiltersAndSort(state requestExplorerState) (requestFilters, requestSort) {
+	filters := state.Filters.withDefaultVisibility()
+	sortOrder := normalizedRequestSort(state.Sort)
+	if strings.TrimSpace(state.CommittedFilter) != "" && filters.isEmpty() && sortOrder == requestSortCompletionOrder {
+		parsedFilters, parsedSort, err := parseRequestFilterQuery(state.CommittedFilter)
+		if err == nil {
+			filters = parsedFilters.withDefaultVisibility()
+			sortOrder = normalizedRequestSort(parsedSort)
 		}
 	}
-	return false
+	return filters, sortOrder
 }
 
 func renderRequestExplorerNoMatches(state requestExplorerState, totalRows int, hiddenRows int) string {
@@ -333,9 +467,11 @@ func renderRequestExplorerNoMatches(state requestExplorerState, totalRows int, h
 	if filterLabel == "" {
 		filterLabel = "none"
 	}
+	_, sortOrder := requestExplorerFiltersAndSort(state)
 	lines := []string{
 		fmt.Sprintf("no requests match current view  total=%d  hidden_by_chart=%d", totalRows, hiddenRows),
-		"filter=" + safeInline(filterLabel),
+		"filter=" + requestFilterDisplay(filterLabel),
+		"sort=" + string(sortOrder),
 	}
 	if hiddenRows > 0 {
 		lines = append(lines, "bench chart model visibility is hiding some requests; leave request pane and press a to show all models")
@@ -344,12 +480,12 @@ func renderRequestExplorerNoMatches(state requestExplorerState, totalRows int, h
 	return strings.Join(lines, "\n")
 }
 
-func renderRequestExplorerStatusLine(matchRows int, totalRows int, hiddenRows int, selected int, filterLabel string) string {
+func renderRequestExplorerStatusLine(matchRows int, totalRows int, hiddenRows int, selected int, filterLabel string, sortOrder requestSort) string {
 	parts := []string{
 		fmt.Sprintf("requests=%d/%d", matchRows, totalRows),
 		fmt.Sprintf("selected=%d/%d", selected+1, matchRows),
-		"filter=" + safeInline(filterLabel),
-		"sort=completion-order",
+		"filter=" + requestFilterDisplay(filterLabel),
+		"sort=" + string(normalizedRequestSort(sortOrder)),
 	}
 	if hiddenRows > 0 {
 		parts = append(parts, fmt.Sprintf("hidden_by_chart=%d", hiddenRows))

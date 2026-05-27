@@ -17,6 +17,9 @@ type keyMap struct {
 	ExplorerBack      key.Binding
 	FilterRequests    key.Binding
 	ClearFilter       key.Binding
+	SortRequests      key.Binding
+	ToggleErrors      key.Binding
+	CycleRequestPhase key.Binding
 	PageUp            key.Binding
 	PageDown          key.Binding
 	Home              key.Binding
@@ -89,6 +92,18 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("ctrl+u"),
 			key.WithHelp("ctrl+u", "clear filter"),
 		),
+		SortRequests: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "sort requests"),
+		),
+		ToggleErrors: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "errors only"),
+		),
+		CycleRequestPhase: key.NewBinding(
+			key.WithKeys("w"),
+			key.WithHelp("w", "phase filter"),
+		),
 		PageUp: key.NewBinding(
 			key.WithKeys("pgup"),
 			key.WithHelp("pgup", "page up"),
@@ -150,7 +165,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.FocusNext, k.FocusPrev, k.TargetUp, k.TargetDown},
 		{k.PageUp, k.PageDown, k.Home, k.End},
 		{k.DetailSectionPrev, k.DetailSectionNext, k.OutputSection},
-		{k.FilterRequests, k.ClearFilter, k.ToggleTarget, k.ShowAllTargets, k.Enter, k.ExplorerBack, k.Help, k.Quit},
+		{k.FilterRequests, k.ClearFilter, k.SortRequests, k.ToggleErrors, k.CycleRequestPhase},
+		{k.ToggleTarget, k.ShowAllTargets, k.Enter, k.ExplorerBack, k.Help, k.Quit},
 		{k.Confirm, k.Cancel},
 	}
 }

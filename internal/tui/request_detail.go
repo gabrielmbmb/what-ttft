@@ -236,7 +236,7 @@ func requestDetailRedacted(value string) string {
 		return "-"
 	}
 	lower := strings.ToLower(value)
-	for _, marker := range []string{"authorization", "bearer", "api_key", "apikey", "api key", "secret", "token", "cookie", "signed"} {
+	for _, marker := range []string{"authorization", "bearer", "api_key", "apikey", "api key", "secret", "token", "cookie", "signed", "sk-"} {
 		if strings.Contains(lower, marker) {
 			return "[redacted]"
 		}

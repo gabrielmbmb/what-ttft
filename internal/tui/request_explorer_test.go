@@ -116,6 +116,124 @@ func TestRequestExplorerFilterModeTransitions(t *testing.T) {
 	}
 }
 
+// TestRequestExplorerFilterApplyClearAndSelection verifies filter editing, invalid drafts, clearing, and nearest-selection behavior.
+func TestRequestExplorerFilterApplyClearAndSelection(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 120, Height: 30})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, TotalRequests: 3, MeasuredRequests: 3}})
+	records := []whatttft.RequestRecord{
+		tuiTestRecord("req-000000", "", 10, 100, nil),
+		tuiTestRecord("req-000001", "", 20, 200, &whatttft.ErrorRecord{Category: "provider"}),
+		tuiTestRecord("req-000002", "", 30, 300, nil),
+	}
+	records[0].Model = "alpha"
+	records[1].Model = "beta"
+	records[2].Model = "alpha"
+	for _, record := range records {
+		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	}
+	app = updateModel(t, app, keyPress("r"))
+	app = updateModel(t, app, keyPress("j"))
+	if app.requestExplorer.CursorRequestID != "req-000001" {
+		t.Fatalf("cursor before filtering = %q, want req-000001", app.requestExplorer.CursorRequestID)
+	}
+
+	app = updateModel(t, app, keyPress("/"))
+	app = typeFilterText(t, app, "model:beta")
+	app = updateModel(t, app, keyPress("enter"))
+	if app.requestExplorer.Mode != requestExplorerModeList || app.requestExplorer.CursorRequestID != "req-000001" {
+		t.Fatalf("after model:beta mode/cursor = %d/%q, want list/req-000001", app.requestExplorer.Mode, app.requestExplorer.CursorRequestID)
+	}
+	if content := app.View().Content; !strings.Contains(content, "requests=1/3") || !strings.Contains(content, "filter=model:beta") {
+		t.Fatalf("filtered model:beta view missing status:\n%s", content)
+	}
+
+	app = updateModel(t, app, keyPress("/"))
+	app = updateModel(t, app, keyPress("ctrl+u"))
+	app = typeFilterText(t, app, "model:alpha")
+	app = updateModel(t, app, keyPress("enter"))
+	if app.requestExplorer.CursorRequestID != "req-000000" {
+		t.Fatalf("cursor after filtering out selected row = %q, want nearest req-000000", app.requestExplorer.CursorRequestID)
+	}
+
+	app = updateModel(t, app, keyPress("ctrl+u"))
+	if app.requestExplorer.CommittedFilter != "" || app.requestExplorer.CursorRequestID != "req-000000" {
+		t.Fatalf("after clear filter/cursor = %q/%q, want empty/req-000000", app.requestExplorer.CommittedFilter, app.requestExplorer.CursorRequestID)
+	}
+	if content := app.View().Content; !strings.Contains(content, "requests=3/3") || !strings.Contains(content, "filter=none") {
+		t.Fatalf("cleared filter view missing status:\n%s", content)
+	}
+
+	app = updateModel(t, app, keyPress("/"))
+	app = typeFilterText(t, app, "status:nope")
+	app = updateModel(t, app, keyPress("enter"))
+	if app.requestExplorer.Mode != requestExplorerModeFilter || app.requestExplorer.CommittedFilter != "" || app.requestExplorer.FilterError == "" {
+		t.Fatalf("invalid draft mode/committed/error = %d/%q/%q, want filter/empty/error", app.requestExplorer.Mode, app.requestExplorer.CommittedFilter, app.requestExplorer.FilterError)
+	}
+	if content := app.View().Content; !strings.Contains(content, "filter error:") {
+		t.Fatalf("invalid draft did not render parse error:\n%s", content)
+	}
+}
+
+// TestRequestExplorerSortAndShortcutToggles verifies shortcut filters update active filter and sort state deterministically.
+func TestRequestExplorerSortAndShortcutToggles(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 120, Height: 30})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, TotalRequests: 2, MeasuredRequests: 1}})
+	ok := tuiTestRecord("req-ok", "", 10, 100, nil)
+	err := tuiTestRecord("req-error", "", 90, 500, &whatttft.ErrorRecord{Category: "provider"})
+	err.Warmup = true
+	for _, record := range []whatttft.RequestRecord{ok, err} {
+		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	}
+	app = updateModel(t, app, keyPress("r"))
+
+	app = updateModel(t, app, keyPress("s"))
+	if app.requestExplorer.Sort != requestSortSlowestTTFT {
+		t.Fatalf("sort after s = %q, want slowest-ttft", app.requestExplorer.Sort)
+	}
+	if content := app.View().Content; !strings.Contains(content, "sort=slowest-ttft") || app.requestExplorer.CursorRequestID != "req-ok" {
+		t.Fatalf("slowest sort did not update status while preserving cursor:\n%s", content)
+	}
+
+	app = updateModel(t, app, keyPress("e"))
+	if app.requestExplorer.CommittedFilter != "outcome:error sort:-ttft" || app.requestExplorer.CursorRequestID != "req-error" {
+		t.Fatalf("after e filter/cursor = %q/%q, want errors-only req-error", app.requestExplorer.CommittedFilter, app.requestExplorer.CursorRequestID)
+	}
+	app = updateModel(t, app, keyPress("w"))
+	if !strings.Contains(app.requestExplorer.CommittedFilter, "phase:measured") {
+		t.Fatalf("after first w filter = %q, want measured phase", app.requestExplorer.CommittedFilter)
+	}
+	app = updateModel(t, app, keyPress("w"))
+	if !strings.Contains(app.requestExplorer.CommittedFilter, "phase:warmup") {
+		t.Fatalf("after second w filter = %q, want warmup phase", app.requestExplorer.CommittedFilter)
+	}
+}
+
+// TestRequestExplorerFilterDisplayRedactsSecretLikeQueries verifies filter rendering does not echo API-key-like strings.
+func TestRequestExplorerFilterDisplayRedactsSecretLikeQueries(t *testing.T) {
+	app := newModel(nil)
+	record := tuiTestRecord("req-000000", "", 10, 100, nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 100, Height: 28})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, TotalRequests: 1, MeasuredRequests: 1}})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	app = updateModel(t, app, keyPress("r"))
+	filters, sortOrder, err := parseRequestFilterQuery("id:sk-secret-token")
+	if err != nil {
+		t.Fatalf("parse secret-like query: %v", err)
+	}
+	app.requestExplorer.Filters = filters
+	app.requestExplorer.Sort = sortOrder
+	app.requestExplorer.CommittedFilter = "id:sk-secret-token"
+	content := app.View().Content
+	if strings.Contains(content, "sk-secret-token") {
+		t.Fatalf("secret-like filter query rendered:\n%s", content)
+	}
+	if !strings.Contains(content, "[redacted]") {
+		t.Fatalf("redacted filter label missing:\n%s", content)
+	}
+}
+
 // TestRequestExplorerRunListRenderingUpdates verifies run request-list rendering updates as request_finished events arrive.
 func TestRequestExplorerRunListRenderingUpdates(t *testing.T) {
 	app := newModel(nil)
@@ -170,6 +288,18 @@ func TestRequestExplorerBenchWideListRenderingAndVisibility(t *testing.T) {
 	if strings.Contains(content, "target-b-req-000000") {
 		t.Fatalf("hidden target request still rendered:\n%s", content)
 	}
+
+	filters, sortOrder, err := parseRequestFilterQuery("hidden:all")
+	if err != nil {
+		t.Fatalf("parse hidden override: %v", err)
+	}
+	app.requestExplorer.Filters = filters
+	app.requestExplorer.Sort = sortOrder
+	app.requestExplorer.CommittedFilter = "hidden:all"
+	content = app.View().Content
+	if !strings.Contains(content, "requests=2/2") || !strings.Contains(content, "target-b-req-000000") {
+		t.Fatalf("hidden:all did not reveal hidden target requests:\n%s", content)
+	}
 }
 
 // TestRequestExplorerNarrowListRendering verifies narrow terminals use compact request columns.
@@ -189,6 +319,14 @@ func TestRequestExplorerNarrowListRendering(t *testing.T) {
 	if got := dashboardMaxLineWidth(content); got > 62 {
 		t.Fatalf("compact request explorer width = %d, want <= 62\n%s", got, content)
 	}
+}
+
+func typeFilterText(t *testing.T, app model, text string) model {
+	t.Helper()
+	for _, char := range text {
+		app = updateModel(t, app, keyPress(string(char)))
+	}
+	return app
 }
 
 // TestRequestExplorerNoMatchesState verifies active filters that match nothing render a useful empty state.

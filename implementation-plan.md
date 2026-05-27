@@ -3877,7 +3877,7 @@ Definition of done:
 
 ---
 
-### [ ] 41. Add request filtering and sorting
+### [x] 41. Add request filtering and sorting
 
 Support filtering the request list by common debugging dimensions.
 
@@ -3914,6 +3914,18 @@ Implementation details:
   - missing numeric metrics sort last for slowest/highest sorts and last for lowest sorts unless a missing-first sort is explicitly added;
   - tie-break by target order, completion order, then request ID for deterministic output.
 - Metric filters must use the documented metric names from `DerivedMetrics` where possible (`ttft_delta_ms`, `e2e_delta_ms`, `stream_total_ms`, `http_ttfb_ms`, `e2e_output_tps`, `generation_delta_output_tps`) and may support short aliases only if documented.
+
+Implemented details:
+
+- Added typed request filter parsing for target/model/provider API, phase/warmup, outcome, HTTP status/status class, error category, cache state, request ID, safe metadata substring search, and metric thresholds over documented metric names and documented aliases.
+- Added stable request sorts for completion order, slowest TTFT, slowest E2E, slowest stream total, highest/lowest output TPS, errors/status first, and target/model order.
+- Added request explorer state for committed filters, draft filters, parse errors, parsed filter predicates, and active sort order.
+- Added request explorer shortcuts: `s` cycles common sorts, `e` toggles errors-only, and `w` cycles measured/warmup/all phases.
+- Filter editor now keeps invalid drafts unapplied, shows parse errors inline, applies valid drafts on `enter`, discards drafts on `esc`, and uses `ctrl+u` as draft/committed clear depending on mode.
+- After filters or sorts change, the selected request is preserved when still visible; otherwise selection moves to the nearest matching completed-request ordinal.
+- Bench request lists still respect chart target visibility by default, while `hidden:all` can reveal hidden-target requests without mutating canonical records, summaries, or reports.
+- Active filters and sort order are shown in request explorer status/no-match states with defensive redaction of secret-like query text.
+- README documents request filter syntax, metric aliases, sorts, hidden-target override, detail sections, and output-content safety behavior.
 
 Definition of done:
 

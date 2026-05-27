@@ -237,11 +237,20 @@ Keyboard shortcuts:
 | `enter` | open selected-target detail in `bench --tui`; open selected request detail in the request explorer |
 | `/` | open request filter editor in the request explorer |
 | `ctrl+u` | clear the request filter draft/query |
+| `s` | cycle request explorer sort order |
+| `e` | toggle errors-only request filter |
+| `w` | cycle all/measured/warmup request phases |
+| `[` / `]` | move between selected-request detail sections |
+| `o` | jump to the selected-request output section |
 | `esc` | return from selected-target detail, request detail, filter editor, or close help |
 | `?` | toggle help |
 | `q` or `ctrl+c` | quit; while running, asks for cancellation confirmation |
 | `y` | confirm cancellation |
 | `n` | keep the run/benchmark running after a cancellation prompt |
+
+Request explorer filters are space-separated. Bare words search safe request metadata. Structured filters include `target:ID`, `model:NAME`, `api:responses|chat-completions`, `phase:measured|warmup`, `warmup:true|false`, `outcome:ok|error`, `status:429`, `status:5xx`, `error:CATEGORY`, `cache:hit|miss|unknown`, and `id:SUBSTRING`. Metric filters use documented names such as `ttft_delta_ms>500`, `e2e_delta_ms>=2000`, `stream_total_ms<3000`, `http_ttfb_ms<=100`, `e2e_output_tps>20`, `generation_delta_output_tps>=10`, and `completion_tokens>=64`; short aliases `ttft`, `e2e`, `stream`, `ttfb`, `tps`, and `tokens` are also accepted. Add `sort:completion`, `sort:-ttft`, `sort:-e2e`, `sort:-stream`, `sort:-tps`, `sort:+tps`, `sort:errors`, or `sort:target` to choose a stable sort. In `bench --tui`, the request list follows hidden/visible chart targets by default; `hidden:all` shows requests for hidden chart targets without changing summaries or report files.
+
+Request detail sections show identity, outcome, latency, timeline/waterfall, transport, usage/cache, and output availability. Generated text is not shown in request rows or details by default; output inspection requires the explicit content-capture path documented for `--save-chunks` in later versions.
 
 Cancellation is graceful. If a TUI or context cancellation happens after at least one request record exists, `what-ttft` writes partial reports using the normal filenames (`run.json`, `requests.jsonl`, `chunks.jsonl` when enabled, `summary.json`, and `summary.md`) and exits with code `130`. The terminal summary says that partial results were written. If cancellation happens before any request record is available, the command exits with code `130` without partial report files. Report-writing failures exit with code `1` and are shown in stderr and the live dashboard status.
 
