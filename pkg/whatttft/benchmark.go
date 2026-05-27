@@ -183,14 +183,17 @@ func (r *BenchmarkRunner) emitBenchmarkError(ctx context.Context, kind RunEventK
 func (r *BenchmarkRunner) baseBenchmarkEvent(kind RunEventKind, targets []normalizedBenchmarkTarget, result *BenchmarkResult) RunEvent {
 	totalWarmup := 0
 	totalMeasured := 0
+	saveChunks := false
 	for _, target := range targets {
 		totalWarmup += target.config.WarmupRequests
 		totalMeasured += target.config.MeasuredRequests
+		saveChunks = saveChunks || target.config.SaveChunks
 	}
 	event := RunEvent{
 		Kind:             kind,
 		BenchmarkName:    r.cfg.Name,
 		Targets:          benchmarkEventTargets(targets),
+		SaveChunks:       saveChunks,
 		TotalRequests:    totalWarmup + totalMeasured,
 		WarmupRequests:   totalWarmup,
 		MeasuredRequests: totalMeasured,
@@ -240,6 +243,7 @@ func benchmarkTargetEvent(kind RunEventKind, benchmarkName string, target normal
 		CacheMode:            target.config.CacheMode,
 		ConnectionMode:       target.config.ConnectionMode,
 		RequestedServiceTier: target.requestedServiceTier,
+		SaveChunks:           target.config.SaveChunks,
 		TotalRequests:        target.config.WarmupRequests + target.config.MeasuredRequests,
 		WarmupRequests:       target.config.WarmupRequests,
 		MeasuredRequests:     target.config.MeasuredRequests,

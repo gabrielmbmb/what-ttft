@@ -367,7 +367,7 @@ func writeCommandReports(
 	result *whatttft.RunResult,
 	observer whatttft.RunObserver,
 ) (string, error) {
-	emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteStarted, metadata, result, outputDir, nil)
+	emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteStarted, metadata, result, outputDir, saveChunks, nil)
 	writtenDir, err := report.WriteRun(report.WriteOptions{
 		OutputDir:  outputDir,
 		Overwrite:  overwrite,
@@ -376,11 +376,11 @@ func writeCommandReports(
 		Result:     result,
 	})
 	if err != nil {
-		emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteFailed, metadata, result, outputDir, err)
+		emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteFailed, metadata, result, outputDir, saveChunks, err)
 		return "", err
 	}
 
-	emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteFinished, metadata, result, writtenDir, nil)
+	emitReportWriteEvent(ctx, observer, whatttft.EventReportWriteFinished, metadata, result, writtenDir, saveChunks, nil)
 	return writtenDir, nil
 }
 
@@ -391,6 +391,7 @@ func emitReportWriteEvent(
 	metadata report.RunMetadata,
 	result *whatttft.RunResult,
 	outputDir string,
+	saveChunks bool,
 	err error,
 ) {
 	if observer == nil {
@@ -407,6 +408,7 @@ func emitReportWriteEvent(
 		ConnectionMode:       metadata.RunConfig.ConnectionMode,
 		RequestedServiceTier: metadata.RequestedServiceTier,
 		OutputDir:            outputDir,
+		SaveChunks:           saveChunks,
 		TotalRequests:        metadata.RunConfig.WarmupRequests + metadata.RunConfig.MeasuredRequests,
 		WarmupRequests:       metadata.RunConfig.WarmupRequests,
 		MeasuredRequests:     metadata.RunConfig.MeasuredRequests,

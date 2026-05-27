@@ -79,7 +79,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case runEventMsg:
 		m.applyRunEvent(msg.Event)
-		return m, waitForRunEvent(m.events)
+		return m, m.nextEventAndOutputLoadCmd(msg.Event)
+	case outputCaptureLoadedMsg:
+		m.store.applyOutputCaptureLoaded(msg)
+		return m, nil
 	case eventChannelClosedMsg:
 		m.channelClosed = true
 		return m, nil
@@ -96,6 +99,15 @@ func (m model) View() tea.View {
 	view.AltScreen = true
 	view.WindowTitle = m.windowTitle()
 	return view
+}
+
+func (m *model) nextEventAndOutputLoadCmd(event whatttft.RunEvent) tea.Cmd {
+	commands := []tea.Cmd{waitForRunEvent(m.events)}
+	if event.Kind == whatttft.EventReportWriteFinished && event.SaveChunks && strings.TrimSpace(event.OutputDir) != "" {
+		m.store.startOutputCaptureLoad()
+		commands = append(commands, loadOutputCapturesCmd(event.OutputDir))
+	}
+	return tea.Batch(commands...)
 }
 
 func (m *model) applyRunEvent(event whatttft.RunEvent) {

@@ -234,6 +234,43 @@ func TestRequestExplorerFilterDisplayRedactsSecretLikeQueries(t *testing.T) {
 	}
 }
 
+// TestRequestExplorerLoadsOutputAfterReports verifies report_write_finished asynchronously enables captured output detail.
+func TestRequestExplorerLoadsOutputAfterReports(t *testing.T) {
+	outputDir := t.TempDir()
+	writeTestChunks(t, outputDir, whatttft.ChunkRecord{RequestID: "req-output", Index: 0, Content: "generated text"})
+	app := newModel(nil)
+	record := tuiTestRecord("req-output", "", 10, 100, nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 120, Height: 30})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, SaveChunks: true, TotalRequests: 1, MeasuredRequests: 1}})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	app = updateModel(t, app, keyPress("r"))
+	app = updateModel(t, app, keyPress("enter"))
+	app = updateModel(t, app, keyPress("o"))
+	if content := app.View().Content; !strings.Contains(content, "output_state=pending") || strings.Contains(content, "generated text") {
+		t.Fatalf("pre-load output detail should be pending and content-free:\n%s", content)
+	}
+
+	updated, cmd := app.Update(runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventReportWriteFinished, SaveChunks: true, OutputDir: outputDir}})
+	app = assertModel(t, updated)
+	if app.store.outputCaptureStatus != outputCaptureStatusLoading {
+		t.Fatalf("output capture status after report event = %q, want loading", app.store.outputCaptureStatus)
+	}
+	if cmd == nil {
+		t.Fatal("report write finished did not return output load command")
+	}
+	msg, ok := cmd().(outputCaptureLoadedMsg)
+	if !ok {
+		t.Fatalf("output load command message = %#v, want outputCaptureLoadedMsg", msg)
+	}
+	app = updateModel(t, app, msg)
+	if app.store.outputCaptureStatus != outputCaptureStatusLoaded {
+		t.Fatalf("output capture status after load = %q, want loaded", app.store.outputCaptureStatus)
+	}
+	if content := app.View().Content; !strings.Contains(content, "output_state=available") || !strings.Contains(content, "generated text") {
+		t.Fatalf("loaded output detail missing generated text:\n%s", content)
+	}
+}
+
 // TestRequestExplorerRunListRenderingUpdates verifies run request-list rendering updates as request_finished events arrive.
 func TestRequestExplorerRunListRenderingUpdates(t *testing.T) {
 	app := newModel(nil)

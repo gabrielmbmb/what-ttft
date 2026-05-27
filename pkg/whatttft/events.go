@@ -228,6 +228,9 @@ type RunEvent struct {
 	// OutputDir is the filesystem directory for canonical report files; empty means unavailable and the path may reveal local names but must not contain secrets by construction.
 	OutputDir string `json:"output_dir,omitempty"`
 
+	// SaveChunks is true when the run explicitly opted in to writing generated output chunks to chunks.jsonl; false means generated content is not available through live events or report loading.
+	SaveChunks bool `json:"save_chunks,omitempty"`
+
 	// Message is optional bounded redacted human-readable event context; empty means no message was supplied.
 	Message string `json:"message,omitempty"`
 }

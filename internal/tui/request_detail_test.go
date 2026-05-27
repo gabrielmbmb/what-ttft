@@ -130,6 +130,50 @@ func TestRequestDetailTransportAndTimeline(t *testing.T) {
 	}
 }
 
+// TestRequestDetailOutputPendingWithCapture verifies save-chunks runs defer output inspection until chunks.jsonl is loaded.
+func TestRequestDetailOutputPendingWithCapture(t *testing.T) {
+	store := newLiveStore()
+	record := tuiTestRecord("req-pending-output", "", 10, 100, nil)
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRunStarted, Provider: "openai", Model: "gpt-output", SaveChunks: true, TotalRequests: 1, MeasuredRequests: 1})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+
+	content := renderRequestDetail(store, requestExplorerState{CursorRequestID: record.RequestID, DetailSection: requestDetailSectionOutput}, 120, 24, defaultTheme())
+	for _, want := range []string{"output_state=pending", "pending until reports are written"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("pending output detail missing %q:\n%s", want, content)
+		}
+	}
+}
+
+// TestRequestDetailOutputAvailableOnlyInOutputSection verifies loaded generated text is gated to request detail/output.
+func TestRequestDetailOutputAvailableOnlyInOutputSection(t *testing.T) {
+	store := newLiveStore()
+	record := tuiTestRecord("req-captured-output", "", 10, 100, nil)
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRunStarted, Provider: "openai", Model: "gpt-output", SaveChunks: true, TotalRequests: 1, MeasuredRequests: 1})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+	store.applyOutputCaptureLoaded(outputCaptureLoadedMsg{Captures: map[string]outputCapture{record.RequestID: {Content: "Hello\nworld", VisibleChunks: 2, RetainedBytes: len("Hello\nworld"), OriginalBytes: len("Hello\nworld")}}})
+
+	list := renderRequestExplorerList(store, requestExplorerState{CursorRequestID: record.RequestID}, 180, 24, defaultTheme())
+	if strings.Contains(list, "Hello") || strings.Contains(list, "world") {
+		t.Fatalf("request rows rendered captured output text:\n%s", list)
+	}
+	if !strings.Contains(list, requestOutputAvailable) {
+		t.Fatalf("request rows should show output availability without text:\n%s", list)
+	}
+
+	identity := renderRequestDetail(store, requestExplorerState{CursorRequestID: record.RequestID, DetailSection: requestDetailSectionIdentity}, 120, 24, defaultTheme())
+	if strings.Contains(identity, "Hello") || strings.Contains(identity, "world") {
+		t.Fatalf("non-output detail section rendered captured output text:\n%s", identity)
+	}
+
+	output := renderRequestDetail(store, requestExplorerState{CursorRequestID: record.RequestID, DetailSection: requestDetailSectionOutput}, 120, 24, defaultTheme())
+	for _, want := range []string{"output_state=available", "visible_chunks=2", "visible_output:", "Hello", "world"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("captured output detail missing %q:\n%s", want, output)
+		}
+	}
+}
+
 // TestRequestDetailOutputUnavailableWithoutCapture verifies output text is not shown unless capture is enabled.
 func TestRequestDetailOutputUnavailableWithoutCapture(t *testing.T) {
 	store := newLiveStore()

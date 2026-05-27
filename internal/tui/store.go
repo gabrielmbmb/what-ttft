@@ -35,6 +35,10 @@ type liveStore struct {
 	requestedServiceTier string
 	observedServiceTier  string
 	outputDir            string
+	saveChunks           bool
+	outputCaptureStatus  outputCaptureStatus
+	outputCaptureError   string
+	outputCaptures       map[string]outputCapture
 	status               string
 	reportStatus         string
 	lastError            string
@@ -61,10 +65,11 @@ type liveStore struct {
 
 func newLiveStore() liveStore {
 	return liveStore{
-		activeRequests: make(map[string]struct{}),
-		records:        make(map[string]whatttft.RequestRecord),
-		targets:        make(map[string]*targetState),
-		hiddenTargets:  make(map[string]bool),
+		activeRequests:      make(map[string]struct{}),
+		records:             make(map[string]whatttft.RequestRecord),
+		targets:             make(map[string]*targetState),
+		hiddenTargets:       make(map[string]bool),
+		outputCaptureStatus: outputCaptureStatusDisabled,
 	}
 }
 
@@ -257,6 +262,24 @@ func (s *liveStore) applyEventContext(event whatttft.RunEvent) {
 	}
 	if event.OutputDir != "" {
 		s.outputDir = event.OutputDir
+	}
+	s.applyOutputCaptureEvent(event)
+}
+
+func (s *liveStore) applyOutputCaptureEvent(event whatttft.RunEvent) {
+	switch event.Kind {
+	case whatttft.EventRunStarted, whatttft.EventBenchmarkStarted:
+		s.configureOutputCapture(event.SaveChunks)
+	case whatttft.EventTargetStarted:
+		if event.SaveChunks {
+			s.configureOutputCapture(true)
+		}
+	case whatttft.EventReportWriteStarted, whatttft.EventReportWriteFinished:
+		if event.SaveChunks {
+			s.configureOutputCapture(true)
+		} else if s.outputCaptureStatus == "" {
+			s.configureOutputCapture(false)
+		}
 	}
 }
 

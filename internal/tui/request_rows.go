@@ -24,9 +24,11 @@ const (
 	requestConnUnknown = "unknown"
 
 	requestOutputDisabled  = "disabled"
+	requestOutputPending   = "pending"
 	requestOutputEmpty     = "empty"
 	requestOutputAvailable = "available"
 	requestOutputTruncated = "truncated"
+	requestOutputError     = "error"
 )
 
 type requestSort string
@@ -133,7 +135,7 @@ func requestRowFromRecord(store liveStore, targetOrdinals map[string]int, ordina
 		CachedTokens:     requestRowCachedTokens(record),
 		Conn:             requestRowConn(record),
 		Protocol:         safeInline(firstNonEmpty(record.HTTP.Protocol, "-")),
-		OutputState:      requestRowOutputState(record),
+		OutputState:      store.requestOutputState(record),
 	}
 }
 
@@ -331,11 +333,28 @@ func requestRowConn(record whatttft.RequestRecord) string {
 	return requestConnNew
 }
 
-func requestRowOutputState(record whatttft.RequestRecord) string {
-	if record.OutputDeltaCount == 0 {
-		return requestOutputEmpty
+func (s liveStore) requestOutputState(record whatttft.RequestRecord) string {
+	if !s.saveChunks {
+		if record.OutputDeltaCount == 0 {
+			return requestOutputEmpty
+		}
+		return requestOutputDisabled
 	}
-	return requestOutputDisabled
+	switch s.outputCaptureStatus {
+	case outputCaptureStatusLoaded:
+		capture, ok := s.outputCaptureFor(record.RequestID)
+		if !ok || capture.VisibleChunks == 0 || capture.Content == "" {
+			return requestOutputEmpty
+		}
+		if capture.Truncated {
+			return requestOutputTruncated
+		}
+		return requestOutputAvailable
+	case outputCaptureStatusFailed:
+		return requestOutputError
+	default:
+		return requestOutputPending
+	}
 }
 
 func targetName(target *targetState) string {

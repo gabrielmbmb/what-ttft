@@ -3935,7 +3935,7 @@ Definition of done:
 
 ---
 
-### [ ] 42. Add opt-in generated-output inspection for request details
+### [x] 42. Add opt-in generated-output inspection for request details
 
 Make generated output available in the request detail view only when the user has explicitly chosen to capture content.
 
@@ -3966,6 +3966,17 @@ Implementation details:
   - cap per-request retained output in the TUI, for example first/last N KiB with an explicit truncation marker;
   - never infer tokenizer-level tokens from chunks in the output view.
 - If implementation diverges from the preferred `chunks.jsonl` loading path, document the final data path and its timing/privacy implications before marking the task complete.
+
+Implemented details:
+
+- Reused `--save-chunks` as the only generated-output opt-in; live events still do not carry generated text.
+- Added `RunEvent.SaveChunks` so the TUI can distinguish disabled capture from pending chunk-file loading without retaining content during the hot path.
+- Added asynchronous `chunks.jsonl` loading after `report_write_finished` when `SaveChunks` is true and `OutputDir` is available.
+- Added bounded TUI-only output captures keyed by `request_id`; visible `ChunkRecord.Content` values are concatenated in chunk index order and role-only, empty, usage-only, and terminal/finish-only chunks are ignored for visible output.
+- Added output states for disabled, pending, empty, available, truncated, and load error; rows show only the state, never generated text.
+- Added request-detail output rendering that shows generated text only in the explicit output section, with truncation metadata and a clear `--save-chunks` explanation when disabled.
+- Added defensive load-error redaction/status handling so chunk loading failures do not fail report writing or the benchmark.
+- Documented the final `--save-chunks`/`chunks.jsonl` loading path and privacy behavior in the README.
 
 Definition of done:
 

@@ -212,6 +212,7 @@ func (r *Runner) baseRunEvent(cfg RunConfig, kind RunEventKind) RunEvent {
 		ScenarioName:     cfg.Scenario.Name,
 		CacheMode:        cfg.CacheMode,
 		ConnectionMode:   cfg.ConnectionMode,
+		SaveChunks:       cfg.SaveChunks,
 		TotalRequests:    cfg.WarmupRequests + cfg.MeasuredRequests,
 		WarmupRequests:   cfg.WarmupRequests,
 		MeasuredRequests: cfg.MeasuredRequests,

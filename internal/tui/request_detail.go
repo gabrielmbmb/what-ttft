@@ -83,7 +83,7 @@ func renderRequestDetail(store liveStore, state requestExplorerState, width int,
 	lines := []string{
 		fmt.Sprintf("request=%s  row=%d/%d  section=%s %d/%d", row.RequestID, selected+1, len(rows), section.label(), int(section)+1, int(requestDetailSectionCount)),
 	}
-	lines = append(lines, requestDetailSectionLines(row, record, section, bodyWidth, bodyHeight-len(lines)-1, theme)...)
+	lines = append(lines, requestDetailSectionLines(store, row, record, section, bodyWidth, bodyHeight-len(lines)-1, theme)...)
 	lines = append(lines, "keys: esc request list  [/] section  ↑/↓ request  o output")
 	return panel("Request detail · "+section.label(), fitToBox(strings.Join(lines, "\n"), bodyWidth, bodyHeight), width, height, theme, roleAccent)
 }
@@ -97,7 +97,7 @@ func requestRecordByID(records []whatttft.RequestRecord, requestID string) (what
 	return whatttft.RequestRecord{}, false
 }
 
-func requestDetailSectionLines(row requestRow, record whatttft.RequestRecord, section requestDetailSection, width int, height int, theme tuiTheme) []string {
+func requestDetailSectionLines(store liveStore, row requestRow, record whatttft.RequestRecord, section requestDetailSection, width int, height int, theme tuiTheme) []string {
 	switch section.normalize() {
 	case requestDetailSectionOutcome:
 		return requestDetailOutcomeLines(row, record)
@@ -110,7 +110,7 @@ func requestDetailSectionLines(row requestRow, record whatttft.RequestRecord, se
 	case requestDetailSectionUsageCache:
 		return requestDetailUsageCacheLines(row, record)
 	case requestDetailSectionOutput:
-		return requestDetailOutputLines(row)
+		return requestDetailOutputLines(store, row)
 	default:
 		return requestDetailIdentityLines(row, record)
 	}
@@ -196,15 +196,27 @@ func requestDetailUsageCacheLines(row requestRow, record whatttft.RequestRecord)
 	}
 }
 
-func requestDetailOutputLines(row requestRow) []string {
+func requestDetailOutputLines(store liveStore, row requestRow) []string {
 	lines := []string{"output_state=" + row.OutputState}
 	switch row.OutputState {
 	case requestOutputDisabled:
 		lines = append(lines, "output_preview=unavailable; rerun with --save-chunks to write chunks.jsonl and enable request output inspection")
+	case requestOutputPending:
+		lines = append(lines, "output_preview=pending until reports are written and chunks.jsonl is loaded")
+	case requestOutputError:
+		lines = append(lines, "output_preview=unavailable; chunks.jsonl load failed: "+requestDetailRedacted(store.outputCaptureError))
 	case requestOutputEmpty:
 		lines = append(lines, "output_preview=empty or unavailable for this request")
+	case requestOutputTruncated, requestOutputAvailable:
+		capture, ok := store.outputCaptureFor(row.RequestID)
+		if !ok || capture.VisibleChunks == 0 || capture.Content == "" {
+			return append(lines, "output_preview=empty or unavailable for this request")
+		}
+		lines = append(lines, fmt.Sprintf("visible_chunks=%d  retained_bytes=%d  original_bytes=%d  truncated=%t", capture.VisibleChunks, capture.RetainedBytes, capture.OriginalBytes, capture.Truncated))
+		lines = append(lines, "visible_output:")
+		lines = append(lines, strings.Split(capture.Content, "\n")...)
 	default:
-		lines = append(lines, "output_preview=pending v0.4 chunks.jsonl loader")
+		lines = append(lines, "output_preview=unavailable")
 	}
 	return lines
 }
