@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -339,6 +340,94 @@ func TestRequestExplorerBenchWideListRenderingAndVisibility(t *testing.T) {
 	}
 }
 
+// TestRequestExplorerLargeRequestSetScrollingAndFiltering verifies large lists remain paged, bounded, and deterministic.
+func TestRequestExplorerLargeRequestSetScrollingAndFiltering(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 150, Height: 32})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, Provider: "openai", Model: "gpt-large", TotalRequests: 120, MeasuredRequests: 120}})
+	for index := range 120 {
+		requestID := fmt.Sprintf("req-%06d", index)
+		var err *whatttft.ErrorRecord
+		if index%10 == 0 {
+			err = &whatttft.ErrorRecord{Category: "provider"}
+		}
+		record := tuiTestRecord(requestID, "", float64(index), float64(index+100), err)
+		record.Model = "gpt-large"
+		if err != nil {
+			record.HTTP.StatusCode = 500
+		}
+		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	}
+
+	app = updateModel(t, app, keyPress("r"))
+	content := app.View().Content
+	if !strings.Contains(content, "requests=120/120") || requestExplorerRenderedRequestCount(content) > 25 {
+		t.Fatalf("large request list should render one bounded page:\n%s", content)
+	}
+	app = updateModel(t, app, keyPress("end"))
+	if app.requestExplorer.CursorRequestID != "req-000119" {
+		t.Fatalf("cursor after end = %q, want req-000119", app.requestExplorer.CursorRequestID)
+	}
+
+	app = updateModel(t, app, keyPress("/"))
+	app = typeFilterText(t, app, "status:5xx sort:-ttft")
+	app = updateModel(t, app, keyPress("enter"))
+	rows, totalRows, hiddenRows := requestExplorerRows(app.store, app.requestExplorer)
+	if totalRows != 120 || hiddenRows != 0 || len(rows) != 12 {
+		t.Fatalf("filtered large rows total/hidden/matches = %d/%d/%d, want 120/0/12", totalRows, hiddenRows, len(rows))
+	}
+	if rows[0].RequestID != "req-000110" || rows[len(rows)-1].RequestID != "req-000000" {
+		t.Fatalf("filtered sort order first/last = %q/%q, want req-000110/req-000000", rows[0].RequestID, rows[len(rows)-1].RequestID)
+	}
+	if content := app.View().Content; !strings.Contains(content, "requests=12/120") || !strings.Contains(content, "sort=slowest-ttft") || requestExplorerRenderedRequestCount(content) > 12 {
+		t.Fatalf("filtered large request view not bounded/deterministic:\n%s", content)
+	}
+}
+
+// TestRequestExplorerPrivacyRegression verifies rows, details, filters, and output states keep sensitive text gated or redacted.
+func TestRequestExplorerPrivacyRegression(t *testing.T) {
+	const generatedSecret = "PRIVATE_GENERATED_CONTENT"
+	app := newModel(nil)
+	record := tuiTestRecord("req-private", "", 10, 100, &whatttft.ErrorRecord{
+		Category:    "http_status",
+		Message:     "Authorization Bearer sk-private-token raw prompt",
+		StatusCode:  500,
+		BodySnippet: "api_key=sk-private-token raw prompt body",
+	})
+	record.HTTP.StatusCode = 500
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 180, Height: 32})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRunStarted, SaveChunks: true, TotalRequests: 1, MeasuredRequests: 1}})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record}})
+	app.store.applyOutputCaptureLoaded(outputCaptureLoadedMsg{Captures: map[string]outputCapture{record.RequestID: {Content: generatedSecret, VisibleChunks: 1, RetainedBytes: len(generatedSecret), OriginalBytes: len(generatedSecret)}}})
+	app = updateModel(t, app, keyPress("r"))
+
+	for name, content := range map[string]string{
+		"rows":     app.View().Content,
+		"identity": renderRequestDetail(app.store, requestExplorerState{CursorRequestID: record.RequestID, DetailSection: requestDetailSectionIdentity}, 140, 24, defaultTheme()),
+		"outcome":  renderRequestDetail(app.store, requestExplorerState{CursorRequestID: record.RequestID, DetailSection: requestDetailSectionOutcome}, 140, 24, defaultTheme()),
+	} {
+		if strings.Contains(content, generatedSecret) || strings.Contains(content, "sk-private-token") || strings.Contains(content, "raw prompt") {
+			t.Fatalf("%s view leaked sensitive text:\n%s", name, content)
+		}
+	}
+
+	filters, sortOrder, err := parseRequestFilterQuery("id:sk-private-token")
+	if err != nil {
+		t.Fatalf("parse secret-like filter: %v", err)
+	}
+	app.requestExplorer.Filters = filters
+	app.requestExplorer.Sort = sortOrder
+	app.requestExplorer.CommittedFilter = "id:sk-private-token"
+	if content := app.View().Content; strings.Contains(content, "sk-private-token") || !strings.Contains(content, "[redacted]") {
+		t.Fatalf("filter display did not redact secret-like text:\n%s", content)
+	}
+
+	output := renderRequestDetail(app.store, requestExplorerState{CursorRequestID: record.RequestID, DetailSection: requestDetailSectionOutput}, 140, 24, defaultTheme())
+	if !strings.Contains(output, generatedSecret) || !strings.Contains(output, "output_state=available") {
+		t.Fatalf("explicit output section should show captured generated output:\n%s", output)
+	}
+}
+
 // TestRequestExplorerNarrowListRendering verifies narrow terminals use compact request columns.
 func TestRequestExplorerNarrowListRendering(t *testing.T) {
 	app := newModel(nil)
@@ -356,6 +445,16 @@ func TestRequestExplorerNarrowListRendering(t *testing.T) {
 	if got := dashboardMaxLineWidth(content); got > 62 {
 		t.Fatalf("compact request explorer width = %d, want <= 62\n%s", got, content)
 	}
+}
+
+func requestExplorerRenderedRequestCount(content string) int {
+	count := 0
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "req-") {
+			count++
+		}
+	}
+	return count
 }
 
 func typeFilterText(t *testing.T, app model, text string) model {

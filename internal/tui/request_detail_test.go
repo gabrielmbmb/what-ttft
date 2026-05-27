@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -171,6 +172,23 @@ func TestRequestDetailOutputAvailableOnlyInOutputSection(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("captured output detail missing %q:\n%s", want, output)
 		}
+	}
+}
+
+// TestRequestDetailOutputLoadErrorRedactsStatus verifies chunk-loading errors are shown without secret-like path details.
+func TestRequestDetailOutputLoadErrorRedactsStatus(t *testing.T) {
+	store := newLiveStore()
+	record := tuiTestRecord("req-output-error", "", 10, 100, nil)
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRunStarted, Provider: "openai", Model: "gpt-output", SaveChunks: true, TotalRequests: 1, MeasuredRequests: 1})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+	store.applyOutputCaptureLoaded(outputCaptureLoadedMsg{Err: errors.New("open /tmp/sk-private-token/chunks.jsonl: permission denied")})
+
+	content := renderRequestDetail(store, requestExplorerState{CursorRequestID: record.RequestID, DetailSection: requestDetailSectionOutput}, 120, 24, defaultTheme())
+	if !strings.Contains(content, "output_state=error") || !strings.Contains(content, "[redacted]") {
+		t.Fatalf("output load error did not render redacted status:\n%s", content)
+	}
+	if strings.Contains(content, "sk-private-token") || strings.Contains(content, "/tmp/") {
+		t.Fatalf("output load error leaked secret-like path:\n%s", content)
 	}
 }
 

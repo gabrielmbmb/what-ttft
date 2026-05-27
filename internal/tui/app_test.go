@@ -237,6 +237,14 @@ func keyPress(value string) tea.KeyPressMsg {
 		return tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc})
 	case "space":
 		return tea.KeyPressMsg(tea.Key{Code: tea.KeySpace})
+	case "home":
+		return tea.KeyPressMsg(tea.Key{Code: tea.KeyHome})
+	case "end":
+		return tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd})
+	case "pgup":
+		return tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp})
+	case "pgdown":
+		return tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown})
 	}
 	if strings.HasPrefix(value, "ctrl+") && len(value) == len("ctrl+")+1 {
 		return tea.KeyPressMsg(tea.Key{Code: rune(value[len(value)-1]), Mod: tea.ModCtrl})

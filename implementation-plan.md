@@ -3987,7 +3987,7 @@ Definition of done:
 
 ---
 
-### [ ] 43. Document, test, and quality-gate the request explorer
+### [x] 43. Document, test, and quality-gate the request explorer
 
 Finish v0.4 with documentation and deterministic tests.
 
@@ -4002,6 +4002,14 @@ Implementation details:
   ```sh
   scripts/quality-gate.sh
   ```
+
+Implemented details:
+
+- Added README request explorer text examples for filtered list and output detail states, plus documented keybindings, filters, sorts, and `--save-chunks` output-content safety behavior.
+- Added deterministic TUI model coverage for a 120-request injected-event set to verify paging, end-key navigation, filtering, sorting, and bounded rendering.
+- Added privacy regression coverage for request rows, details, secret-like filter display, output states, output load errors, and explicit output-section-only generated content rendering.
+- Kept request explorer tests event/model based with no real terminal or external provider network.
+- Ran the full local quality gate through `scripts/quality-gate.sh`.
 
 Definition of done:
 

@@ -252,6 +252,24 @@ Request explorer filters are space-separated. Bare words search safe request met
 
 Request detail sections show identity, outcome, latency, timeline/waterfall, transport, usage/cache, and output availability. Generated text is not shown in request rows or non-output detail sections by default. If `--save-chunks` is enabled, the live dashboard waits until reports are written, loads `chunks.jsonl`, and then shows bounded visible-output text only in the selected request's explicit output section. Without `--save-chunks`, no generated text is retained solely for the TUI.
 
+Request explorer text examples:
+
+```text
+Requests
+requests=3/30  selected=1/3  filter=outcome:error status:5xx sort:-ttft  sort=slowest-ttft
+   #   request              target      model        phase out   http  err        ttft     e2e  stream    ttfb     tps tokens cache conn   output
+›  7   target-a-req-000006  target-a    gpt-5-mini   meas  err   500   provider   842.1  900.3   921.0   88.4       -      - unknown reused disabled
+keys: ↑/↓ row  pgup/pgdn page  enter detail  / filter  s sort  e errors  w phase  esc overview
+```
+
+```text
+Request detail · output
+request=target-a-req-000006  row=1/3  section=output 7/7
+output_state=disabled
+output_preview=unavailable; rerun with --save-chunks to write chunks.jsonl and enable request output inspection
+keys: esc request list  [/] section  ↑/↓ request  o output
+```
+
 Cancellation is graceful. If a TUI or context cancellation happens after at least one request record exists, `what-ttft` writes partial reports using the normal filenames (`run.json`, `requests.jsonl`, `chunks.jsonl` when enabled, `summary.json`, and `summary.md`) and exits with code `130`. The terminal summary says that partial results were written. If cancellation happens before any request record is available, the command exits with code `130` without partial report files. Report-writing failures exit with code `1` and are shown in stderr and the live dashboard status.
 
 The live dashboard is intentionally decoupled from benchmark execution and report writing. Live chart updates are best-effort event rendering; under extreme load, dropped UI events may make the display lag or skip intermediate states, but final report files remain authoritative.
