@@ -107,9 +107,10 @@ func defaultBenchTUILauncher(ctx context.Context, request benchTUILaunchRequest)
 	tuiSink := tui.NewEventSink(events)
 	bus := eventbus.New([]eventbus.Sink{tuiSink}, eventbus.Options{})
 	executionCh := make(chan commandExecution, 1)
+	busCloseCtx := context.WithoutCancel(benchCtx)
 	go func() {
 		execution := request.Execute(benchCtx, bus)
-		if closeErr := bus.Close(context.Background()); closeErr != nil && execution.ReportErr == nil {
+		if closeErr := bus.Close(busCloseCtx); closeErr != nil && execution.ReportErr == nil {
 			execution.ReportErr = fmt.Errorf("close event bus: %w", closeErr)
 		}
 		executionCh <- execution
