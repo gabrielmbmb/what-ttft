@@ -39,10 +39,15 @@ func renderDashboard(m model) string {
 	}
 
 	header := fitToBox(renderDashboardHeader(m, layout.Header.Width, layout.Header.Height, m.theme), layout.Header.Width, layout.Header.Height)
+	footer := fitToBox(renderShortcutFooter(m, layout.Footer.Width, layout.Footer.Height, m.theme), layout.Footer.Width, layout.Footer.Height)
+	if m.store.IsBenchmark() && m.pane == paneMetrics {
+		metricsHeight := layout.Charts.Height + layout.Metrics.Height
+		metrics := fitToBox(renderBenchMetricsPanel(m.store, layout.Root.Width, metricsHeight, dashboardStatusText(m), m.confirmingCancel, m.theme), layout.Root.Width, metricsHeight)
+		return joinVerticalToHeight([]string{header, metrics, footer}, layout.Root.Width, layout.Root.Height)
+	}
+
 	chartArea := fitToBox(renderChartArea(m.store, layout.Charts.Width, layout.Charts.Height, m.pane, m.requestExplorer, m.theme), layout.Charts.Width, layout.Charts.Height)
 	metrics := fitToBox(renderMetricsPanel(m.store, layout.Metrics.Width, layout.Metrics.Height, dashboardStatusText(m), m.confirmingCancel, m.theme), layout.Metrics.Width, layout.Metrics.Height)
-	footer := fitToBox(renderShortcutFooter(m, layout.Footer.Width, layout.Footer.Height, m.theme), layout.Footer.Width, layout.Footer.Height)
-
 	return joinVerticalToHeight([]string{header, chartArea, metrics, footer}, layout.Root.Width, layout.Root.Height)
 }
 

@@ -19,6 +19,7 @@ const (
 	paneTTFT
 	paneE2E
 	paneWaterfall
+	paneMetrics
 	paneRequests
 	paneCount
 )
@@ -201,6 +202,11 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.pane = paneE2E
 	case key.Matches(msg, m.keys.Waterfall):
 		m.pane = paneWaterfall
+	case key.Matches(msg, m.keys.Metrics):
+		if m.store.IsBenchmark() {
+			m.store.setTargetDetail(false)
+			m.pane = paneMetrics
+		}
 	}
 
 	return m, nil

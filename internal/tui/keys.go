@@ -32,6 +32,7 @@ type keyMap struct {
 	TTFT              key.Binding
 	E2E               key.Binding
 	Waterfall         key.Binding
+	Metrics           key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -152,6 +153,10 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("4"),
 			key.WithHelp("4", "waterfall"),
 		),
+		Metrics: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "model metrics"),
+		),
 	}
 }
 
@@ -161,7 +166,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Summary, k.TTFT, k.E2E, k.Waterfall, k.RequestExplorer},
+		{k.Summary, k.TTFT, k.E2E, k.Waterfall, k.Metrics, k.RequestExplorer},
 		{k.FocusNext, k.FocusPrev, k.TargetUp, k.TargetDown},
 		{k.PageUp, k.PageDown, k.Home, k.End},
 		{k.DetailSectionPrev, k.DetailSectionNext, k.OutputSection},

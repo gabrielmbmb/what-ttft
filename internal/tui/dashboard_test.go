@@ -191,6 +191,31 @@ func TestBenchmarkDashboardModelMetricsArePerTarget(t *testing.T) {
 	}
 }
 
+// TestBenchmarkDashboardCanFocusModelMetrics verifies the model comparison table can use the full dashboard middle area.
+func TestBenchmarkDashboardCanFocusModelMetrics(t *testing.T) {
+	app := benchmarkDashboardAppWithRecords(t)
+	app = updateModel(t, app, keyPress("m"))
+	content := app.View().Content
+
+	for _, want := range []string{"MODEL METRICS", "model/target", "ttft50", "e2e95", "tpsμ", "m metrics", "Shortcuts"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("focused model metrics view missing %q:\n%s", want, content)
+		}
+	}
+	for _, chartTitle := range []string{"TTFT trend ·", "E2E trend ·", "TTFT distribution ·", "Output TPS trend ·"} {
+		if strings.Contains(content, chartTitle) {
+			t.Fatalf("focused model metrics view still rendered chart %q:\n%s", chartTitle, content)
+		}
+	}
+	if strings.Count(content, "MODEL METRICS") != 1 {
+		t.Fatalf("focused model metrics view should render one expanded table:\n%s", content)
+	}
+	firstTenLines := strings.Join(strings.Split(content, "\n")[:10], "\n")
+	if !strings.Contains(firstTenLines, "MODEL METRICS") {
+		t.Fatalf("focused model metrics table did not expand into the chart area:\n%s", content)
+	}
+}
+
 // TestBenchmarkDashboardCanHideFinishedTargets verifies post-run target visibility filters chart series without changing reports.
 func TestBenchmarkDashboardCanHideFinishedTargets(t *testing.T) {
 	app := benchmarkDashboardAppWithRecords(t)

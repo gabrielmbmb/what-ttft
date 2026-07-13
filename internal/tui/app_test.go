@@ -185,6 +185,10 @@ func TestModelBenchmarkTargetNavigationKeys(t *testing.T) {
 	if app.store.targetDetail {
 		t.Fatal("target detail = true after esc, want false")
 	}
+	app = updateModel(t, app, keyPress("m"))
+	if app.pane != paneMetrics {
+		t.Fatalf("pane after m = %d, want paneMetrics", app.pane)
+	}
 	app = updateModel(t, app, keyPress("space"))
 	if !app.store.targetVisible("target-b") {
 		t.Fatal("target-b hidden while benchmark is still running; visibility toggles should be post-run only")

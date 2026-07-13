@@ -238,11 +238,11 @@ func renderBenchMetricsPanel(store liveStore, width int, height int, status stri
 	if height <= 0 || width <= 0 {
 		return ""
 	}
-	body := renderBenchMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), status, confirmingCancel)
+	body := renderBenchMetricsBody(store, panelInnerWidth(width), panelInnerHeight(height), status, confirmingCancel, theme)
 	return panel("MODEL METRICS", body, width, height, theme, roleAccent)
 }
 
-func renderBenchMetricsBody(store liveStore, width int, height int, status string, confirmingCancel bool) string {
+func renderBenchMetricsBody(store liveStore, width int, height int, status string, confirmingCancel bool, theme tuiTheme) string {
 	if height <= 0 || width <= 0 {
 		return ""
 	}
@@ -278,9 +278,10 @@ func renderBenchMetricsBody(store liveStore, width int, height int, status strin
 	if end > len(rows) {
 		end = len(rows)
 	}
+	best := bestBenchMetricValues(rows)
 	lines := append([]string(nil), headerLines...)
 	for index := offset; index < end; index++ {
-		lines = append(lines, benchMetricsTableLine(rows[index], index == selected, width))
+		lines = append(lines, benchMetricsTableLine(rows[index], index == selected, width, best, theme))
 	}
 	lines = append(lines, footerLines...)
 	return fitToBox(strings.Join(lines, "\n"), width, height)
@@ -366,7 +367,39 @@ func benchMetricsTableHeader(width int) string {
 	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4s %4s %8s %8s %8s %8s %8s %7s", "", "show", "model/target", "target", "done", "ok", "err", "ttft50", "ttft95", "e2e50", "e2e95", "tpsμ", "tokμ")
 }
 
-func benchMetricsTableLine(row benchModelMetricRow, selected bool, width int) string {
+type benchBestMetricValues struct {
+	TTFTP50 *float64
+	TTFTP95 *float64
+	E2EP50  *float64
+	E2EP95  *float64
+	TPSMean *float64
+}
+
+func bestBenchMetricValues(rows []benchModelMetricRow) benchBestMetricValues {
+	return benchBestMetricValues{
+		TTFTP50: bestBenchMetricValue(rows, func(row benchModelMetricRow) *float64 { return row.TTFT.P50 }, false),
+		TTFTP95: bestBenchMetricValue(rows, func(row benchModelMetricRow) *float64 { return row.TTFT.P95 }, false),
+		E2EP50:  bestBenchMetricValue(rows, func(row benchModelMetricRow) *float64 { return row.E2E.P50 }, false),
+		E2EP95:  bestBenchMetricValue(rows, func(row benchModelMetricRow) *float64 { return row.E2E.P95 }, false),
+		TPSMean: bestBenchMetricValue(rows, func(row benchModelMetricRow) *float64 { return row.TPS.Mean }, true),
+	}
+}
+
+func bestBenchMetricValue(rows []benchModelMetricRow, value func(benchModelMetricRow) *float64, higherIsBetter bool) *float64 {
+	var best *float64
+	for _, row := range rows {
+		candidate := value(row)
+		if candidate == nil {
+			continue
+		}
+		if best == nil || higherIsBetter && *candidate > *best || !higherIsBetter && *candidate < *best {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func benchMetricsTableLine(row benchModelMetricRow, selected bool, width int, best benchBestMetricValues, theme tuiTheme) string {
 	marker := " "
 	if selected {
 		marker = "›"
@@ -381,9 +414,28 @@ func benchMetricsTableLine(row benchModelMetricRow, selected bool, width int) st
 		done = fmt.Sprintf("%d/?", row.Target.Completed)
 	}
 	if width < 120 {
-		return fmt.Sprintf("%-2s %-4s %-20s %7s %4d %4d %7s %7s %7s %7s %7s", marker, visibility, truncateVisible(label, 20), done, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.TTFT.P95), formatMetricValue(row.E2E.P50), formatMetricValue(row.E2E.P95), formatMetricValue(row.TPS.Mean))
+		prefix := fmt.Sprintf("%-2s %-4s %-20s %7s %4d %4d", marker, visibility, truncateVisible(label, 20), done, row.Target.Successful, row.Target.Errors)
+		return prefix + " " + benchMetricValueCell(row.TTFT.P50, best.TTFTP50, 7, theme) +
+			" " + benchMetricValueCell(row.TTFT.P95, best.TTFTP95, 7, theme) +
+			" " + benchMetricValueCell(row.E2E.P50, best.E2EP50, 7, theme) +
+			" " + benchMetricValueCell(row.E2E.P95, best.E2EP95, 7, theme) +
+			" " + benchMetricValueCell(row.TPS.Mean, best.TPSMean, 7, theme)
 	}
-	return fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4d %4d %8s %8s %8s %8s %8s %7s", marker, visibility, truncateVisible(label, 28), truncateVisible(row.Target.ID, 16), done, row.Target.Successful, row.Target.Errors, formatMetricValue(row.TTFT.P50), formatMetricValue(row.TTFT.P95), formatMetricValue(row.E2E.P50), formatMetricValue(row.E2E.P95), formatMetricValue(row.TPS.Mean), formatMetricValue(row.CompletionTokenMean))
+	prefix := fmt.Sprintf("%-2s %-4s %-28s %-16s %7s %4d %4d", marker, visibility, truncateVisible(label, 28), truncateVisible(row.Target.ID, 16), done, row.Target.Successful, row.Target.Errors)
+	return prefix + " " + benchMetricValueCell(row.TTFT.P50, best.TTFTP50, 8, theme) +
+		" " + benchMetricValueCell(row.TTFT.P95, best.TTFTP95, 8, theme) +
+		" " + benchMetricValueCell(row.E2E.P50, best.E2EP50, 8, theme) +
+		" " + benchMetricValueCell(row.E2E.P95, best.E2EP95, 8, theme) +
+		" " + benchMetricValueCell(row.TPS.Mean, best.TPSMean, 8, theme) +
+		fmt.Sprintf(" %7s", formatMetricValue(row.CompletionTokenMean))
+}
+
+func benchMetricValueCell(value *float64, best *float64, width int, theme tuiTheme) string {
+	cell := fmt.Sprintf("%*s", width, formatMetricValue(value))
+	if value != nil && best != nil && *value == *best {
+		return theme.render(roleGood, cell)
+	}
+	return cell
 }
 
 func metricRowFromTargetRecords(name string, unit string, records []whatttft.RequestRecord) metricRow {

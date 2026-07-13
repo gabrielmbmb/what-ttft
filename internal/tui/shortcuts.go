@@ -29,7 +29,7 @@ func shortcutFooterLines(m model, width int, height int) []string {
 		return expandedShortcutLines(m, width, height)
 	}
 	if m.store.targetDetail {
-		return []string{shortcutLine(width, "target detail", "esc back", "↑/↓ target", "1-4 charts", "r requests", quitShortcut(m))}
+		return []string{shortcutLine(width, "target detail", "esc back", "↑/↓ target", "1-4 charts", "m metrics", "r requests", quitShortcut(m))}
 	}
 	if m.pane == paneRequests {
 		return requestShortcutLines(m.requestExplorer, width, height)
@@ -61,14 +61,14 @@ func runShortcutLine(m model, width int) string {
 
 func benchmarkShortcutLine(m model, width int) string {
 	if m.running {
-		return shortcutLine(width, "bench", "↑/↓ target", "enter detail", "space toggle after finish", "a show all", "1-4 charts", "5/r requests", "? all keys", quitShortcut(m))
+		return shortcutLine(width, "bench", "↑/↓ target", "enter detail", "m metrics", "space toggle after finish", "a show all", "1-4 charts", "5/r requests", "? all keys", quitShortcut(m))
 	}
-	return shortcutLine(width, "bench", "↑/↓ target", "enter detail", "space toggle model", "a show all", "1-4 charts", "5/r requests", "? all keys", quitShortcut(m))
+	return shortcutLine(width, "bench", "↑/↓ target", "enter detail", "m metrics", "space toggle model", "a show all", "1-4 charts", "5/r requests", "? all keys", quitShortcut(m))
 }
 
 func expandedShortcutLines(m model, width int, height int) []string {
 	lines := []string{
-		shortcutLine(width, "global", "1 overview", "2 TTFT", "3 E2E/TPS", "4 waterfall", "5/r requests", "? less", quitShortcut(m)),
+		shortcutLine(width, "global", "1 overview", "2 TTFT", "3 E2E/TPS", "4 waterfall", "m model metrics", "5/r requests", "? less", quitShortcut(m)),
 		shortcutLine(width, "requests", "↑/↓ row", "enter detail", "/ filter", "s sort", "e errors", "w phase", "pgup/pgdn", "home/end", "esc back"),
 		shortcutLine(width, "detail/filter", "[/] section", "o output", "enter apply filter", "ctrl+u clear", "esc discard/back"),
 	}
