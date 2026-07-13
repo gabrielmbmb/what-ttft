@@ -223,7 +223,7 @@ The dashboard uses the full terminal, including an alternate screen when support
 
 A context-aware `Shortcuts` footer is pinned at the bottom of the dashboard and request explorer. Press `?` to expand the footer into a fuller guide for chart, request-list, request-detail, filter, and benchmark-target actions.
 
-In `bench --tui`, the bottom panel is a `MODEL METRICS` matrix instead of an aggregate metrics table. It follows the selected benchmark target and shows per-model/per-target request counts, errors, distinct TTFT p50 and p95 columns, distinct E2E p50 and p95 columns, mean output TPS, and average completion tokens so model comparisons do not hide behind all-target aggregation.
+In `bench --tui`, the bottom panel is a `MODEL METRICS` matrix instead of an aggregate metrics table. It follows the selected benchmark target and shows per-model/per-target request counts, errors, distinct TTFT p50 and p95 columns, distinct E2E p50 and p95 columns, mean output TPS, and average completion tokens so model comparisons do not hide behind all-target aggregation. The best latency minima and throughput maximum are emphasized; press `m` to expand the matrix across the dashboard's chart area.
 
 Keyboard shortcuts:
 
@@ -233,6 +233,7 @@ Keyboard shortcuts:
 | `2` | TTFT-focused view |
 | `3` | E2E/TPS-focused view |
 | `4` | slowest-request waterfall |
+| `m` | expand the benchmark Model Metrics table |
 | `5` or `r` | request explorer list for completed requests |
 | `↑`/`↓` or `k`/`j` | select a benchmark target in chart views; select a request row in the request explorer |
 | `pgup`/`pgdn`, `home`/`end` | page or jump in the request explorer |
