@@ -215,6 +215,28 @@ func TestBenchmarkDashboardCanHideFinishedTargets(t *testing.T) {
 	}
 }
 
+// TestDashboardFatalErrorShowsDialog verifies failures that stop execution are immediately visible instead of looking stalled.
+func TestDashboardFatalErrorShowsDialog(t *testing.T) {
+	app := newModel(nil)
+	app = updateModel(t, app, tea.WindowSizeMsg{Width: 100, Height: 30})
+	app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{
+		Kind:          whatttft.EventBenchmarkFailed,
+		BenchmarkName: "model-compare",
+		Targets:       []whatttft.RunEventTarget{{TargetID: "gpt-5.5"}},
+		Error: &whatttft.RunEventError{
+			Category: "validation",
+			Message:  "target gpt-5.5 API key environment variable OPENAI_API_KEY is empty",
+		},
+	}})
+	content := app.View().Content
+
+	for _, want := range []string{"Benchmark failed", "could not start or continue", "OPENAI_API_KEY is empty", "Press enter, q, or esc to exit"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("failure dialog missing %q:\n%s", want, content)
+		}
+	}
+}
+
 // TestRequestExplorerRowsDoNotRenderSecretMetadata verifies request rows omit prompt/API/chunk-like sensitive fields.
 func TestRequestExplorerRowsDoNotRenderSecretMetadata(t *testing.T) {
 	app := newModel(nil)

@@ -123,6 +123,19 @@ func TestModelQuitConfirmation(t *testing.T) {
 	}
 }
 
+// TestModelFailureDialogKeysExitImmediately verifies fatal-error dialog shortcuts do not ask for cancellation confirmation.
+func TestModelFailureDialogKeysExitImmediately(t *testing.T) {
+	for _, keyName := range []string{"enter", "q", "esc"} {
+		app := newModel(nil)
+		app = updateModel(t, app, runEventMsg{Event: whatttft.RunEvent{Kind: whatttft.EventBenchmarkFailed, Error: &whatttft.RunEventError{Message: "preflight failed"}}})
+		updated, cmd := app.Update(keyPress(keyName))
+		app = assertModel(t, updated)
+		if app.confirmingCancel || cmd == nil {
+			t.Fatalf("key %q after failure confirming/cmd = %t/%v, want false/non-nil", keyName, app.confirmingCancel, cmd)
+		}
+	}
+}
+
 // TestModelQuitAfterCompletionDoesNotConfirm verifies q exits immediately after completion.
 func TestModelQuitAfterCompletionDoesNotConfirm(t *testing.T) {
 	app := newModel(nil)

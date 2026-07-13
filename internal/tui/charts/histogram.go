@@ -113,7 +113,8 @@ func RenderMultiHistogramChart(series []NamedSeries, opts HistogramOptions, them
 		return renderCompactMultiHistogram(series, opts, title)
 	}
 
-	chartHeight := opts.Height - 3
+	legend := multiHistogramLegendLines(series, opts.Width, theme)
+	chartHeight := opts.Height - 2 - len(legend)
 	if chartHeight < 3 {
 		return renderCompactMultiHistogram(series, opts, title)
 	}
@@ -136,13 +137,13 @@ func RenderMultiHistogramChart(series []NamedSeries, opts HistogramOptions, them
 	chart.SetHorizontal(true)
 	chart.Draw()
 
-	content := strings.Join([]string{
+	lines := []string{
 		title + fmt.Sprintf("  bins=%d  n=%d  series=%d", bins, len(values), len(series)),
 		chart.View(),
 		histogramXAxis(maxCount, opts.Width, histogramMaxLabelWidth(barData)),
-		multiHistogramLegendLine(series, opts.Width, theme),
-	}, "\n")
-	return fitChartText(content, opts.Width, opts.Height)
+	}
+	lines = append(lines, legend...)
+	return fitChartText(strings.Join(lines, "\n"), opts.Width, opts.Height)
 }
 
 // Histogram renders a deterministic histogram for finite millisecond values.
@@ -234,15 +235,14 @@ func multiHistogramBarData(series []NamedSeries, bins int, theme Theme) ([]barch
 	return data, maxCount
 }
 
-func multiHistogramLegendLine(series []NamedSeries, width int, theme Theme) string {
-	parts := []string{"x=request count"}
-	labelWidth := legendLabelWidth(width, len(series), 5)
+func multiHistogramLegendLines(series []NamedSeries, width int, theme Theme) []string {
+	items := []string{"x=request count"}
 	for index, item := range series {
 		styleIndex := resolvedSeriesStyleIndex(item, index)
 		marker := theme.seriesStyle(styleIndex).Render(string(seriesMarker(styleIndex)))
-		parts = append(parts, fmt.Sprintf("%s %s n=%d", marker, truncateChartLabel(item.Label, labelWidth), len(item.Values)))
+		items = append(items, fmt.Sprintf("%s %s n=%d", marker, item.Label, len(item.Values)))
 	}
-	return "legend: " + strings.Join(parts, "  |  ")
+	return wrapLegendItems(items, width)
 }
 
 func histogramLegendLine() string {

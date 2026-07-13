@@ -37,6 +37,27 @@ func TestRenderMultiHistogramChartIncludesSeriesLabels(t *testing.T) {
 	}
 }
 
+// TestRenderMultiHistogramChartWrapsCompleteLegend verifies many long model labels wrap without being truncated or omitted.
+func TestRenderMultiHistogramChartWrapsCompleteLegend(t *testing.T) {
+	series := []NamedSeries{
+		{Label: "GPT-5.5", Values: []float64{10, 11}},
+		{Label: "GPT-5.5 priority", Values: []float64{12, 13}},
+		{Label: "GPT-5.6 Sol", Values: []float64{14, 15}},
+		{Label: "GPT-5.6 Sol priority", Values: []float64{16, 17}},
+		{Label: "GPT-5.6 Terra", Values: []float64{18, 19}},
+		{Label: "GPT-5.6 Terra priority", Values: []float64{20, 21}},
+	}
+	got := RenderMultiHistogramChart(series, HistogramOptions{Width: 80, Height: 14, Bins: 4, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())
+	for _, item := range series {
+		if !strings.Contains(got, item.Label+" n=2") {
+			t.Fatalf("wrapped histogram legend missing complete label %q:\n%s", item.Label, got)
+		}
+	}
+	if strings.Count(got, " n=2") != len(series) {
+		t.Fatalf("wrapped histogram legend omitted or duplicated entries:\n%s", got)
+	}
+}
+
 // TestRenderHistogramChartSkipsNonFinite verifies the ntcharts adapter does not show NaN or Inf.
 func TestRenderHistogramChartSkipsNonFinite(t *testing.T) {
 	got := RenderHistogramChart([]float64{10, math.NaN(), math.Inf(1), 20}, HistogramOptions{Width: 48, Height: 8, Bins: 2, Title: "TTFT distribution", Unit: "ms"}, PlainTheme())

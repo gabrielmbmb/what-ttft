@@ -34,12 +34,66 @@ type dashboardLayout struct {
 
 func renderDashboard(m model) string {
 	layout := calculateDashboardLayout(m.width, m.height, m.help.ShowAll)
+	if m.failed {
+		return renderFailureDialog(m, layout)
+	}
+
 	header := fitToBox(renderDashboardHeader(m, layout.Header.Width, layout.Header.Height, m.theme), layout.Header.Width, layout.Header.Height)
 	chartArea := fitToBox(renderChartArea(m.store, layout.Charts.Width, layout.Charts.Height, m.pane, m.requestExplorer, m.theme), layout.Charts.Width, layout.Charts.Height)
 	metrics := fitToBox(renderMetricsPanel(m.store, layout.Metrics.Width, layout.Metrics.Height, dashboardStatusText(m), m.confirmingCancel, m.theme), layout.Metrics.Width, layout.Metrics.Height)
 	footer := fitToBox(renderShortcutFooter(m, layout.Footer.Width, layout.Footer.Height, m.theme), layout.Footer.Width, layout.Footer.Height)
 
 	return joinVerticalToHeight([]string{header, chartArea, metrics, footer}, layout.Root.Width, layout.Root.Height)
+}
+
+func renderFailureDialog(m model, layout dashboardLayout) string {
+	dialogWidth := min(84, layout.Root.Width-4)
+	if dialogWidth < 20 || layout.Root.Height < 5 {
+		return fitToBox("ERROR: "+safeInline(m.store.lastError), layout.Root.Width, layout.Root.Height)
+	}
+
+	message := safeInline(m.store.lastError)
+	if message == "" {
+		message = "The benchmark stopped before it could complete."
+	}
+	bodyLines := wrapVisibleWords(message, dialogWidth-8)
+	bodyLines = append([]string{m.theme.render(roleBad, "The benchmark could not start or continue.")}, bodyLines...)
+	bodyLines = append(bodyLines, "", "Press enter, q, or esc to exit.")
+	dialogHeight := min(layout.Root.Height-2, len(bodyLines)+2)
+	title := "Benchmark failed"
+	if !m.store.IsBenchmark() {
+		title = "Run failed"
+	}
+	dialog := panel(title, strings.Join(bodyLines, "\n"), dialogWidth, dialogHeight, m.theme, roleBad)
+	return lipgloss.Place(layout.Root.Width, layout.Root.Height, lipgloss.Center, lipgloss.Center, dialog)
+}
+
+func wrapVisibleWords(value string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	words := strings.Fields(value)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	lines := make([]string, 0, len(words))
+	line := ""
+	for _, word := range words {
+		candidate := word
+		if line != "" {
+			candidate = line + " " + word
+		}
+		if lipgloss.Width(candidate) <= width {
+			line = candidate
+			continue
+		}
+		if line != "" {
+			lines = append(lines, line)
+		}
+		line = truncateVisible(word, width)
+	}
+	return append(lines, line)
 }
 
 func calculateDashboardLayout(width int, height int, helpVisible bool) dashboardLayout {

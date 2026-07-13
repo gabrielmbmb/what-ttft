@@ -129,6 +129,9 @@ func (m *model) applyRunEvent(event whatttft.RunEvent) {
 }
 
 func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.failed && (key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.Enter) || key.Matches(msg, m.keys.Cancel)) {
+		return m, tea.Quit
+	}
 	if m.confirmingCancel {
 		switch {
 		case key.Matches(msg, m.keys.Confirm):

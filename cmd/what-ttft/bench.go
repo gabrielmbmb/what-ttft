@@ -174,6 +174,7 @@ func executeBench(ctx context.Context, plan *configfile.Config, cliCfg benchCLIC
 	start := time.Now()
 	benchmarkConfig, err := buildBenchmarkConfig(plan)
 	if err != nil {
+		emitBenchmarkPreflightFailure(ctx, observer, plan, err)
 		end := time.Now()
 		metadata := benchOutputMetadata(plan, cliCfg, args, start.UnixNano(), end.UnixNano())
 		metadata.RunConfig.OutputDir = cliCfg.outputDir
@@ -346,6 +347,40 @@ func buildBenchmarkConfig(plan *configfile.Config) (whatttft.BenchmarkConfig, er
 	}
 
 	return whatttft.BenchmarkConfig{Name: plan.Name, Targets: targets}, nil
+}
+
+func emitBenchmarkPreflightFailure(ctx context.Context, observer whatttft.RunObserver, plan *configfile.Config, err error) {
+	if observer == nil || err == nil {
+		return
+	}
+
+	targets := make([]whatttft.RunEventTarget, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		targets = append(targets, whatttft.RunEventTarget{
+			TargetID:             target.ID,
+			TargetName:           target.Name,
+			Provider:             target.Provider,
+			ProviderAPI:          string(target.OpenAI.API),
+			RequestedServiceTier: string(target.OpenAI.ServiceTier),
+			Model:                target.OpenAI.Model,
+			ScenarioName:         plan.Scenario.Name,
+			CacheMode:            plan.Run.CacheMode,
+			ConnectionMode:       plan.Run.ConnectionMode,
+			TotalRequests:        plan.Run.Warmup + plan.Run.Samples,
+			WarmupRequests:       plan.Run.Warmup,
+			MeasuredRequests:     plan.Run.Samples,
+			Concurrency:          plan.Run.Concurrency,
+		})
+	}
+	observer.OnRunEvent(ctx, whatttft.RunEvent{
+		Kind:          whatttft.EventBenchmarkFailed,
+		BenchmarkName: plan.Name,
+		Targets:       targets,
+		Error: &whatttft.RunEventError{
+			Category: "validation",
+			Message:  err.Error(),
+		},
+	})
 }
 
 func validateBenchmarkAPIKeyEnvs(plan *configfile.Config) error {

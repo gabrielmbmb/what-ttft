@@ -116,7 +116,8 @@ func RenderMultiSeriesChart(series []NamedSeries, opts SeriesChartOptions, theme
 		return renderCompactMultiSeriesChart(series, opts, title)
 	}
 
-	chartHeight := opts.Height - 4
+	legend := multiSeriesLegendLines(series, opts.Unit, opts.Width, theme)
+	chartHeight := opts.Height - 2 - len(legend)
 	if chartHeight < 3 {
 		return renderCompactMultiSeriesChart(series, opts, title)
 	}
@@ -157,10 +158,11 @@ func RenderMultiSeriesChart(series []NamedSeries, opts SeriesChartOptions, theme
 		chart.DrawRuneWithStyle(canvas.Float64Point{X: float64(len(item.Values)), Y: item.Values[len(item.Values)-1]}, marker, style)
 	}
 
-	legend := multiSeriesLegendLine(series, opts.Unit, opts.Width, theme)
 	footer := fmt.Sprintf("x=request order per target  y=%s  series=%d", unitOrValue(opts.Unit), len(series))
-	content := strings.Join([]string{title, chart.View(), legend, footer}, "\n")
-	return fitChartText(content, opts.Width, opts.Height)
+	lines := []string{title, chart.View()}
+	lines = append(lines, legend...)
+	lines = append(lines, footer)
+	return fitChartText(strings.Join(lines, "\n"), opts.Width, opts.Height)
 }
 
 func renderCompactSeriesChart(values []float64, opts SeriesChartOptions, title string) string {
@@ -266,33 +268,49 @@ func resolvedSeriesStyleIndex(item NamedSeries, fallback int) int {
 	return fallback
 }
 
-func multiSeriesLegendLine(series []NamedSeries, unit string, width int, theme Theme) string {
-	parts := make([]string, 0, len(series))
+func multiSeriesLegendLines(series []NamedSeries, unit string, width int, theme Theme) []string {
+	items := make([]string, 0, len(series))
 	unitSuffix := unitSuffix(unit)
-	labelWidth := legendLabelWidth(width, len(series), 18+len(unitSuffix))
 	for index, item := range series {
 		styleIndex := resolvedSeriesStyleIndex(item, index)
 		latest := item.Values[len(item.Values)-1]
 		marker := theme.seriesStyle(styleIndex).Render(string(seriesMarker(styleIndex)))
-		parts = append(parts, fmt.Sprintf("%s %s latest=%.1f%s", marker, truncateChartLabel(item.Label, labelWidth), latest, unitSuffix))
+		items = append(items, fmt.Sprintf("%s %s latest=%.1f%s", marker, item.Label, latest, unitSuffix))
 	}
-	return "legend: " + strings.Join(parts, "  |  ")
+	return wrapLegendItems(items, width)
 }
 
-func legendLabelWidth(width int, seriesCount int, valueWidth int) int {
-	if seriesCount <= 0 {
-		return 12
+func wrapLegendItems(items []string, width int) []string {
+	if len(items) == 0 || width <= 0 {
+		return nil
 	}
-	separatorWidth := 5 * (seriesCount - 1)
-	available := width - len("legend: ") - separatorWidth - seriesCount*(2+valueWidth)
-	labelWidth := available / seriesCount
-	if labelWidth < 8 {
-		return 8
+
+	const prefix = "legend: "
+	const separator = "  |  "
+	continuation := strings.Repeat(" ", lipgloss.Width(prefix))
+	lines := make([]string, 0, len(items))
+	line := prefix
+	for _, item := range items {
+		candidate := line + item
+		if line != prefix && line != continuation {
+			candidate = line + separator + item
+		}
+		if lipgloss.Width(candidate) <= width {
+			line = candidate
+			continue
+		}
+		if line != prefix && line != continuation {
+			lines = append(lines, line)
+			line = continuation + item
+		} else {
+			line = candidate
+		}
+		if lipgloss.Width(line) > width {
+			line = truncateChartLine(line, width)
+		}
 	}
-	if labelWidth > 32 {
-		return 32
-	}
-	return labelWidth
+	lines = append(lines, line)
+	return lines
 }
 
 func unitSuffix(unit string) string {

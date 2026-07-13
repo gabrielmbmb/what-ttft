@@ -86,6 +86,44 @@ func TestBenchCommandTUILauncherIsInjectable(t *testing.T) {
 	}
 }
 
+// TestBenchCommandTUIEmitsPreflightFailure verifies missing credentials reach the dashboard event stream.
+func TestBenchCommandTUIEmitsPreflightFailure(t *testing.T) {
+	oldLauncher := benchTUILauncher
+	defer func() { benchTUILauncher = oldLauncher }()
+
+	t.Setenv("WHAT_TTFT_BENCH_KEY", "")
+	configPath := writeBenchConfig(t, benchYAML("http://127.0.0.1:1", "WHAT_TTFT_BENCH_KEY", "default"))
+	var failure *whatttft.RunEvent
+	benchTUILauncher = func(ctx context.Context, request benchTUILaunchRequest) int {
+		execution := request.Execute(ctx, whatttft.RunObserverFunc(func(_ context.Context, event whatttft.RunEvent) {
+			if event.Kind == whatttft.EventBenchmarkFailed {
+				cloned := event.Clone()
+				failure = &cloned
+			}
+		}))
+		if execution.Err == nil {
+			t.Fatal("benchmark execution succeeded without API key")
+		}
+		return 1
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", filepath.Join(t.TempDir(), "reports"), "--tui"}, &stdout, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+	if failure == nil || failure.Error == nil {
+		t.Fatal("benchmark_failed event was not emitted")
+	}
+	if failure.Error.Category != "validation" || !strings.Contains(failure.Error.Message, "WHAT_TTFT_BENCH_KEY is empty") {
+		t.Fatalf("benchmark_failed error = %#v", failure.Error)
+	}
+	if failure.BenchmarkName != "bench-test" || len(failure.Targets) != 2 {
+		t.Fatalf("benchmark_failed context = name %q targets %#v", failure.BenchmarkName, failure.Targets)
+	}
+}
+
 // TestBenchCommandTUIPathExecutesBenchmarkAndWritesReports verifies the --tui path uses the shared execution callback and report writer.
 func TestBenchCommandTUIPathExecutesBenchmarkAndWritesReports(t *testing.T) {
 	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
