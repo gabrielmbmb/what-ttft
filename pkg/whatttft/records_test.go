@@ -13,6 +13,8 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	providerProcessingMS := 42.0
 	ttfbMS := 123.45
 	generationTPS := 456.7
+	queueTimeMS := 0.63
+	completionTimeMS := 14.4
 
 	rec := RequestRecord{
 		RequestID:            "req-001",
@@ -39,6 +41,10 @@ func TestRequestRecordJSONShape(t *testing.T) {
 			Status:               "200 OK",
 			Protocol:             "HTTP/2.0",
 			ProviderProcessingMS: &providerProcessingMS,
+			ServerTiming: &ServerTiming{
+				QueueTimeMS:      &queueTimeMS,
+				CompletionTimeMS: &completionTimeMS,
+			},
 			RequestedServiceTier: "priority",
 			ObservedServiceTier:  "priority",
 			GotConn:              true,
@@ -104,6 +110,18 @@ func TestRequestRecordJSONShape(t *testing.T) {
 	}
 	if got.HTTP.ProviderProcessingMS == nil || *got.HTTP.ProviderProcessingMS != providerProcessingMS {
 		t.Fatalf("provider_processing_ms = %v, want %v", got.HTTP.ProviderProcessingMS, providerProcessingMS)
+	}
+	if got.HTTP.ServerTiming == nil {
+		t.Fatal("server_timing should be preserved")
+	}
+	if got.HTTP.ServerTiming.QueueTimeMS == nil || *got.HTTP.ServerTiming.QueueTimeMS != queueTimeMS {
+		t.Fatalf("server_timing.queue_time_ms = %v, want %v", got.HTTP.ServerTiming.QueueTimeMS, queueTimeMS)
+	}
+	if got.HTTP.ServerTiming.CompletionTimeMS == nil || *got.HTTP.ServerTiming.CompletionTimeMS != completionTimeMS {
+		t.Fatalf("server_timing.completion_time_ms = %v, want %v", got.HTTP.ServerTiming.CompletionTimeMS, completionTimeMS)
+	}
+	if got.HTTP.ServerTiming.PromptTimeMS != nil {
+		t.Fatalf("server_timing.prompt_time_ms = %v, want nil", got.HTTP.ServerTiming.PromptTimeMS)
 	}
 }
 

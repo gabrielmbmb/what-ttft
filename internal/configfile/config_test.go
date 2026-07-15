@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
@@ -62,25 +64,25 @@ func TestLoadValidMinimalAppliesDefaults(t *testing.T) {
 	if target.Provider != "openai" {
 		t.Fatalf("provider = %q, want openai", target.Provider)
 	}
-	if target.OpenAI.API != openai.ResponsesAPI {
-		t.Fatalf("api = %q, want responses default", target.OpenAI.API)
+	if target.Settings.API != openai.ResponsesAPI {
+		t.Fatalf("api = %q, want responses default", target.Settings.API)
 	}
-	if target.OpenAI.BaseURL != openai.DefaultBaseURL {
-		t.Fatalf("base URL = %q, want default %q", target.OpenAI.BaseURL, openai.DefaultBaseURL)
+	if target.Settings.BaseURL != openai.DefaultBaseURL {
+		t.Fatalf("base URL = %q, want default %q", target.Settings.BaseURL, openai.DefaultBaseURL)
 	}
-	if target.OpenAI.APIKeyEnv != "OPENAI_API_KEY" {
-		t.Fatalf("api key env = %q, want OPENAI_API_KEY", target.OpenAI.APIKeyEnv)
+	if target.Settings.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("api key env = %q, want OPENAI_API_KEY", target.Settings.APIKeyEnv)
 	}
-	if target.OpenAI.Model != "gpt-5.5" {
-		t.Fatalf("model = %q, want gpt-5.5", target.OpenAI.Model)
+	if target.Settings.Model != "gpt-5.5" {
+		t.Fatalf("model = %q, want gpt-5.5", target.Settings.Model)
 	}
-	if target.OpenAI.ServiceTier != "" {
-		t.Fatalf("service tier = %q, want empty", target.OpenAI.ServiceTier)
+	if target.Settings.ServiceTier != "" {
+		t.Fatalf("service tier = %q, want empty", target.Settings.ServiceTier)
 	}
-	if !target.OpenAI.IncludeUsage {
+	if !target.Settings.IncludeUsage {
 		t.Fatal("include usage = false, want true default")
 	}
-	if target.OpenAI.LegacyMaxTokens {
+	if target.Settings.LegacyMaxTokens {
 		t.Fatal("legacy max tokens = true, want false default")
 	}
 }
@@ -108,27 +110,27 @@ func TestLoadValidTwoModelsInheritsAndOverrides(t *testing.T) {
 	if first.ID != "gpt-5.5" || first.Name != "GPT 5.5" {
 		t.Fatalf("first target id/name = %q/%q", first.ID, first.Name)
 	}
-	if first.OpenAI.ServiceTier != openai.ServiceTierDefault {
-		t.Fatalf("first service tier = %q, want default", first.OpenAI.ServiceTier)
+	if first.Settings.ServiceTier != openai.ServiceTierDefault {
+		t.Fatalf("first service tier = %q, want default", first.Settings.ServiceTier)
 	}
-	if first.OpenAI.API != openai.ResponsesAPI {
-		t.Fatalf("first API = %q, want responses", first.OpenAI.API)
+	if first.Settings.API != openai.ResponsesAPI {
+		t.Fatalf("first API = %q, want responses", first.Settings.API)
 	}
-	if first.OpenAI.Model != "gpt-5.5" {
-		t.Fatalf("first model = %q, want gpt-5.5", first.OpenAI.Model)
+	if first.Settings.Model != "gpt-5.5" {
+		t.Fatalf("first model = %q, want gpt-5.5", first.Settings.Model)
 	}
 
 	second := cfg.Targets[1]
 	if second.ID != "gpt-5.2" || second.Name != "GPT 5.2 priority" {
 		t.Fatalf("second target id/name = %q/%q", second.ID, second.Name)
 	}
-	if second.OpenAI.ServiceTier != openai.ServiceTierPriority {
-		t.Fatalf("second service tier = %q, want priority override", second.OpenAI.ServiceTier)
+	if second.Settings.ServiceTier != openai.ServiceTierPriority {
+		t.Fatalf("second service tier = %q, want priority override", second.Settings.ServiceTier)
 	}
-	if second.OpenAI.BaseURL != first.OpenAI.BaseURL {
-		t.Fatalf("second base URL = %q, want inherited %q", second.OpenAI.BaseURL, first.OpenAI.BaseURL)
+	if second.Settings.BaseURL != first.Settings.BaseURL {
+		t.Fatalf("second base URL = %q, want inherited %q", second.Settings.BaseURL, first.Settings.BaseURL)
 	}
-	redacted := second.OpenAI.RedactedBaseURL()
+	redacted := second.Settings.RedactedBaseURL()
 	if strings.Contains(redacted, "user:") || strings.Contains(redacted, "api_key=secret") {
 		t.Fatalf("redacted base URL still contains credentials: %q", redacted)
 	}
@@ -286,14 +288,255 @@ targets:
 		t.Fatalf("load chat completions config: %v", err)
 	}
 	target := cfg.Targets[0]
-	if target.OpenAI.API != openai.ChatCompletionsAPI {
-		t.Fatalf("api = %q, want chat-completions", target.OpenAI.API)
+	if target.Settings.API != openai.ChatCompletionsAPI {
+		t.Fatalf("api = %q, want chat-completions", target.Settings.API)
 	}
-	if target.OpenAI.IncludeUsage {
+	if target.Settings.IncludeUsage {
 		t.Fatal("include usage = true, want explicit false")
 	}
-	if !target.OpenAI.LegacyMaxTokens {
+	if !target.Settings.LegacyMaxTokens {
 		t.Fatal("legacy max tokens = false, want explicit true")
+	}
+}
+
+// TestLoadAcceptsCerebrasTargetWithProviderDefaults verifies cerebras targets default to the Cerebras base URL and omit the OpenAI API field.
+func TestLoadAcceptsCerebrasTargetWithProviderDefaults(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+defaults:
+  provider: cerebras
+  api_key_env: CEREBRAS_API_KEY
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - model: gpt-oss-120b
+    service_tier: priority
+`))
+	if err != nil {
+		t.Fatalf("load cerebras config: %v", err)
+	}
+	target := cfg.Targets[0]
+	if target.Provider != "cerebras" {
+		t.Fatalf("provider = %q, want cerebras", target.Provider)
+	}
+	if target.Settings.BaseURL != cerebras.DefaultBaseURL {
+		t.Fatalf("base URL = %q, want cerebras default %q", target.Settings.BaseURL, cerebras.DefaultBaseURL)
+	}
+	if target.Settings.API != "" {
+		t.Fatalf("api = %q, want empty for cerebras", target.Settings.API)
+	}
+	if target.Settings.ServiceTier != openai.ServiceTier(cerebras.ServiceTierPriority) {
+		t.Fatalf("service tier = %q, want priority", target.Settings.ServiceTier)
+	}
+	if target.ID != "cerebras-gpt-oss-120b-001" {
+		t.Fatalf("target ID = %q, want cerebras-gpt-oss-120b-001", target.ID)
+	}
+}
+
+// TestLoadCerebrasRejectsUnsupportedServiceTier verifies Cerebras rejects the OpenAI-only scale tier.
+func TestLoadCerebrasRejectsUnsupportedServiceTier(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+schema_version: 1
+defaults:
+  provider: cerebras
+  api_key_env: CEREBRAS_API_KEY
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - model: gpt-oss-120b
+    service_tier: scale
+`))
+	if err == nil {
+		t.Fatal("expected a service tier validation error")
+	}
+	if !strings.Contains(err.Error(), "service_tier \"scale\" is invalid") {
+		t.Fatalf("error = %q, want cerebras service tier rejection", err.Error())
+	}
+}
+
+// TestLoadMixedProvidersIsolatesProviderDefaults verifies a cerebras target does not inherit the OpenAI defaults block's base URL.
+func TestLoadMixedProvidersIsolatesProviderDefaults(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+defaults:
+  provider: openai
+  api: chat-completions
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - id: gpt
+    model: gpt-5.5
+  - id: cerebras-oss
+    provider: cerebras
+    api_key_env: CEREBRAS_API_KEY
+    model: gpt-oss-120b
+`))
+	if err != nil {
+		t.Fatalf("load mixed config: %v", err)
+	}
+	if len(cfg.Targets) != 2 {
+		t.Fatalf("targets = %d, want 2", len(cfg.Targets))
+	}
+
+	openAITarget := cfg.Targets[0]
+	if openAITarget.Provider != "openai" || openAITarget.Settings.BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("openai target = provider %q base %q, want inherited openai defaults", openAITarget.Provider, openAITarget.Settings.BaseURL)
+	}
+	if openAITarget.Settings.API != openai.ChatCompletionsAPI {
+		t.Fatalf("openai target api = %q, want inherited chat-completions", openAITarget.Settings.API)
+	}
+
+	cerebrasTarget := cfg.Targets[1]
+	if cerebrasTarget.Provider != "cerebras" {
+		t.Fatalf("cerebras target provider = %q, want cerebras", cerebrasTarget.Provider)
+	}
+	if cerebrasTarget.Settings.BaseURL != cerebras.DefaultBaseURL {
+		t.Fatalf("cerebras target base URL = %q, want cerebras default (not inherited OpenAI URL)", cerebrasTarget.Settings.BaseURL)
+	}
+	if cerebrasTarget.Settings.APIKeyEnv != "CEREBRAS_API_KEY" {
+		t.Fatalf("cerebras target api_key_env = %q, want CEREBRAS_API_KEY", cerebrasTarget.Settings.APIKeyEnv)
+	}
+	if cerebrasTarget.Settings.API != "" {
+		t.Fatalf("cerebras target api = %q, want empty (OpenAI api not inherited)", cerebrasTarget.Settings.API)
+	}
+}
+
+// TestLoadPerTargetScenarioOverride verifies targets inherit the shared scenario and can override individual fields.
+func TestLoadPerTargetScenarioOverride(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+  reasoning_effort: none
+targets:
+  - id: nano
+    provider: openai
+    api: chat-completions
+    api_key_env: OPENAI_API_KEY
+    model: gpt-x
+  - id: oss
+    provider: cerebras
+    api_key_env: CEREBRAS_API_KEY
+    model: gpt-oss-120b
+    scenario:
+      reasoning_effort: low
+      max_output_tokens: 64
+`))
+	if err != nil {
+		t.Fatalf("load per-target scenario config: %v", err)
+	}
+
+	if cfg.Scenario.ReasoningEffort != "none" || cfg.Scenario.MaxOutputTokens != 16 {
+		t.Fatalf("base scenario mutated: effort=%q max=%d", cfg.Scenario.ReasoningEffort, cfg.Scenario.MaxOutputTokens)
+	}
+
+	nano := cfg.Targets[0]
+	if nano.Scenario.ReasoningEffort != "none" || nano.Scenario.MaxOutputTokens != 16 {
+		t.Fatalf("nano did not inherit shared scenario: effort=%q max=%d", nano.Scenario.ReasoningEffort, nano.Scenario.MaxOutputTokens)
+	}
+
+	oss := cfg.Targets[1]
+	if oss.Scenario.ReasoningEffort != "low" {
+		t.Fatalf("oss reasoning_effort = %q, want low override", oss.Scenario.ReasoningEffort)
+	}
+	if oss.Scenario.MaxOutputTokens != 64 {
+		t.Fatalf("oss max_output_tokens = %d, want 64 override", oss.Scenario.MaxOutputTokens)
+	}
+	if oss.Scenario.Prompt != "hello" {
+		t.Fatalf("oss prompt = %q, want inherited hello", oss.Scenario.Prompt)
+	}
+
+	if got := cfg.RunConfigForTarget(oss).Scenario.ReasoningEffort; got != "low" {
+		t.Fatalf("RunConfigForTarget scenario effort = %q, want low", got)
+	}
+}
+
+// TestLoadPerTargetScenarioOverrideValidatesFields verifies invalid per-target scenario overrides are rejected with a target path.
+func TestLoadPerTargetScenarioOverrideValidatesFields(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - id: bad
+    provider: openai
+    api: chat-completions
+    api_key_env: OPENAI_API_KEY
+    model: gpt-x
+    scenario:
+      reasoning_effort: turbo
+`))
+	if err == nil {
+		t.Fatal("expected a per-target scenario validation error")
+	}
+	if !strings.Contains(err.Error(), "targets[0].scenario.reasoning_effort \"turbo\" is invalid") {
+		t.Fatalf("error = %q, want targeted reasoning_effort rejection", err.Error())
+	}
+}
+
+// TestLoadAcceptsTogetherTargetWithProviderDefaults verifies together targets default to the Together base URL and omit the OpenAI API field.
+func TestLoadAcceptsTogetherTargetWithProviderDefaults(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: together
+    api_key_env: TOGETHER_API_KEY
+    model: meta-llama/Llama-3.3-70B-Instruct-Turbo
+`))
+	if err != nil {
+		t.Fatalf("load together config: %v", err)
+	}
+	target := cfg.Targets[0]
+	if target.Provider != "together" {
+		t.Fatalf("provider = %q, want together", target.Provider)
+	}
+	if target.Settings.BaseURL != together.DefaultBaseURL {
+		t.Fatalf("base URL = %q, want together default %q", target.Settings.BaseURL, together.DefaultBaseURL)
+	}
+	if target.Settings.API != "" {
+		t.Fatalf("api = %q, want empty for together", target.Settings.API)
+	}
+}
+
+// TestLoadTogetherRejectsServiceTier verifies Together targets cannot set a service tier.
+func TestLoadTogetherRejectsServiceTier(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: together
+    api_key_env: TOGETHER_API_KEY
+    model: some-model
+    service_tier: priority
+`))
+	if err == nil || !strings.Contains(err.Error(), "service_tier \"priority\" is not supported for the together provider") {
+		t.Fatalf("error = %v, want together service tier rejection", err)
 	}
 }
 

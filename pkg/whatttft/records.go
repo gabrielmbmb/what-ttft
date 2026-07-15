@@ -137,6 +137,9 @@ type HTTPRecord struct {
 	// ProviderProcessingMS is the provider-reported server-side request processing duration parsed from response metadata such as openai-processing-ms; units are milliseconds, nil means unavailable or unparseable, and values are provider-reported rather than client-observed.
 	ProviderProcessingMS *float64 `json:"provider_processing_ms,omitempty"`
 
+	// ServerTiming is the provider-reported server-side latency breakdown parsed from the streaming response body, such as Cerebras time_info; nil means the provider did not report it and all durations are provider-reported rather than client-observed.
+	ServerTiming *ServerTiming `json:"server_timing,omitempty"`
+
 	// RequestedServiceTier is the provider service tier requested for this HTTP request; empty means unset, values are provider labels such as OpenAI default or priority, and no redaction is required.
 	RequestedServiceTier string `json:"requested_service_tier,omitempty"`
 
@@ -181,6 +184,21 @@ type HTTPRecord struct {
 
 	// CompressionDisabled is true when the benchmark transport disabled automatic response compression; false means compression may be enabled or unknown.
 	CompressionDisabled bool `json:"compression_disabled"`
+}
+
+// ServerTiming is a provider-reported server-side latency breakdown for one provider request, such as the Cerebras time_info block; all durations are provider-reported milliseconds converted from the provider's reported seconds, and nil fields mean the provider omitted that phase.
+type ServerTiming struct {
+	// QueueTimeMS is the provider-reported time the request waited in the provider queue before processing began, or nil when omitted; units are milliseconds and the value is provider-reported rather than client-observed.
+	QueueTimeMS *float64 `json:"queue_time_ms,omitempty"`
+
+	// PromptTimeMS is the provider-reported time spent processing prompt/input tokens (prefill), or nil when omitted; units are milliseconds and the value is provider-reported rather than client-observed.
+	PromptTimeMS *float64 `json:"prompt_time_ms,omitempty"`
+
+	// CompletionTimeMS is the provider-reported time spent generating completion/output tokens (decode), or nil when omitted; units are milliseconds and the value is provider-reported rather than client-observed.
+	CompletionTimeMS *float64 `json:"completion_time_ms,omitempty"`
+
+	// TotalTimeMS is the provider-reported total server-side request time from submission to completion, or nil when omitted; units are milliseconds, the value is provider-reported rather than client-observed, and it may include provider-side network and buffering not captured by the phase fields.
+	TotalTimeMS *float64 `json:"total_time_ms,omitempty"`
 }
 
 // ProviderUsage is normalized token-usage metadata reported by a provider or estimated by a tokenizer fallback.

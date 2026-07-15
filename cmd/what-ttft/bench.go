@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -16,7 +17,9 @@ import (
 	"github.com/gabrielmbmb/what-ttft/internal/httptracecap"
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/internal/tui"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
@@ -287,7 +290,7 @@ func applyBenchOverrides(plan *configfile.Config, cliCfg benchCLIConfig) error {
 			return fmt.Errorf("unsupported service tier override %q", cliCfg.serviceTier.value)
 		}
 		for index := range plan.Targets {
-			plan.Targets[index].OpenAI.ServiceTier = tier
+			plan.Targets[index].Settings.ServiceTier = tier
 		}
 	}
 
@@ -317,36 +320,75 @@ func validateBenchPlan(plan *configfile.Config) error {
 func buildBenchmarkConfig(plan *configfile.Config) (whatttft.BenchmarkConfig, error) {
 	targets := make([]whatttft.BenchmarkTarget, 0, len(plan.Targets))
 	for _, target := range plan.Targets {
-		apiKey := os.Getenv(target.OpenAI.APIKeyEnv)
+		apiKey := os.Getenv(target.Settings.APIKeyEnv)
 		if apiKey == "" {
-			return whatttft.BenchmarkConfig{}, fmt.Errorf("target %s API key environment variable %s is empty", target.ID, target.OpenAI.APIKeyEnv)
+			return whatttft.BenchmarkConfig{}, fmt.Errorf("target %s API key environment variable %s is empty", target.ID, target.Settings.APIKeyEnv)
 		}
 
 		client := httptracecap.NewHTTPClient(httptracecap.TransportConfig{
 			ConnectionMode: plan.Run.ConnectionMode,
 			Timeout:        plan.Run.Timeout,
 		})
-		provider := openai.New(openai.Config{
-			API:                target.OpenAI.API,
-			BaseURL:            target.OpenAI.BaseURL,
-			APIKey:             apiKey,
-			Model:              target.OpenAI.Model,
-			ServiceTier:        target.OpenAI.ServiceTier,
-			UseLegacyMaxTokens: target.OpenAI.LegacyMaxTokens,
-			IncludeUsage:       target.OpenAI.IncludeUsage,
-			HTTPClient:         client,
-		})
+		provider, providerAPI, err := buildTargetProvider(target, apiKey, client)
+		if err != nil {
+			return whatttft.BenchmarkConfig{}, fmt.Errorf("target %s: %w", target.ID, err)
+		}
 		targets = append(targets, whatttft.BenchmarkTarget{
 			ID:                   target.ID,
 			Name:                 target.Name,
 			Provider:             provider,
-			ProviderAPI:          string(target.OpenAI.API),
-			RequestedServiceTier: string(target.OpenAI.ServiceTier),
+			ProviderAPI:          providerAPI,
+			RequestedServiceTier: string(target.Settings.ServiceTier),
 			Config:               plan.RunConfigForTarget(target),
 		})
 	}
 
 	return whatttft.BenchmarkConfig{Name: plan.Name, Targets: targets}, nil
+}
+
+// buildTargetProvider constructs the benchmark provider for one target based on its provider name,
+// returning the provider and the provider API label recorded in benchmark metadata.
+func buildTargetProvider(target configfile.Target, apiKey string, client *http.Client) (whatttft.Provider, string, error) {
+	switch target.Provider {
+	case providerCerebras:
+		provider := cerebras.New(cerebras.Config{
+			BaseURL:            target.Settings.BaseURL,
+			APIKey:             apiKey,
+			Model:              target.Settings.Model,
+			ServiceTier:        cerebras.ServiceTier(target.Settings.ServiceTier),
+			UseLegacyMaxTokens: target.Settings.LegacyMaxTokens,
+			IncludeUsage:       target.Settings.IncludeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, cerebrasProviderAPI, nil
+	case providerTogether:
+		provider := together.New(together.Config{
+			BaseURL:            target.Settings.BaseURL,
+			APIKey:             apiKey,
+			Model:              target.Settings.Model,
+			UseLegacyMaxTokens: target.Settings.LegacyMaxTokens,
+			IncludeUsage:       target.Settings.IncludeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, togetherProviderAPI, nil
+	case providerOpenAI:
+		provider := openai.New(openai.Config{
+			API:                target.Settings.API,
+			BaseURL:            target.Settings.BaseURL,
+			APIKey:             apiKey,
+			Model:              target.Settings.Model,
+			ServiceTier:        target.Settings.ServiceTier,
+			UseLegacyMaxTokens: target.Settings.LegacyMaxTokens,
+			IncludeUsage:       target.Settings.IncludeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, string(target.Settings.API), nil
+	default:
+		return nil, "", fmt.Errorf("unsupported provider %q", target.Provider)
+	}
 }
 
 func emitBenchmarkPreflightFailure(ctx context.Context, observer whatttft.RunObserver, plan *configfile.Config, err error) {
@@ -360,9 +402,9 @@ func emitBenchmarkPreflightFailure(ctx context.Context, observer whatttft.RunObs
 			TargetID:             target.ID,
 			TargetName:           target.Name,
 			Provider:             target.Provider,
-			ProviderAPI:          string(target.OpenAI.API),
-			RequestedServiceTier: string(target.OpenAI.ServiceTier),
-			Model:                target.OpenAI.Model,
+			ProviderAPI:          targetProviderAPILabel(target),
+			RequestedServiceTier: string(target.Settings.ServiceTier),
+			Model:                target.Settings.Model,
 			ScenarioName:         plan.Scenario.Name,
 			CacheMode:            plan.Run.CacheMode,
 			ConnectionMode:       plan.Run.ConnectionMode,
@@ -385,8 +427,8 @@ func emitBenchmarkPreflightFailure(ctx context.Context, observer whatttft.RunObs
 
 func validateBenchmarkAPIKeyEnvs(plan *configfile.Config) error {
 	for _, target := range plan.Targets {
-		if os.Getenv(target.OpenAI.APIKeyEnv) == "" {
-			return fmt.Errorf("target %s API key environment variable %s is empty", target.ID, target.OpenAI.APIKeyEnv)
+		if os.Getenv(target.Settings.APIKeyEnv) == "" {
+			return fmt.Errorf("target %s API key environment variable %s is empty", target.ID, target.Settings.APIKeyEnv)
 		}
 	}
 
@@ -441,21 +483,61 @@ func benchConfigSHA256(path string) string {
 func benchTargetMetadata(plan *configfile.Config) []report.RunTargetMetadata {
 	targets := make([]report.RunTargetMetadata, 0, len(plan.Targets))
 	for _, target := range plan.Targets {
-		targets = append(targets, report.RunTargetMetadata{
+		metadata := report.RunTargetMetadata{
 			TargetID:             target.ID,
 			TargetName:           target.Name,
 			Provider:             target.Provider,
-			ProviderAPI:          string(target.OpenAI.API),
-			RequestedServiceTier: string(target.OpenAI.ServiceTier),
-			Model:                target.OpenAI.Model,
-			BaseURL:              target.OpenAI.BaseURL,
-			APIKeyEnv:            target.OpenAI.APIKeyEnv,
-			IncludeUsage:         target.OpenAI.IncludeUsage,
-			LegacyMaxTokens:      target.OpenAI.LegacyMaxTokens,
-		})
+			ProviderAPI:          targetProviderAPILabel(target),
+			RequestedServiceTier: string(target.Settings.ServiceTier),
+			Model:                target.Settings.Model,
+			BaseURL:              target.Settings.BaseURL,
+			APIKeyEnv:            target.Settings.APIKeyEnv,
+			IncludeUsage:         target.Settings.IncludeUsage,
+			LegacyMaxTokens:      target.Settings.LegacyMaxTokens,
+		}
+		if overrides := scenarioOverrides(plan.Scenario, target.Scenario); len(overrides) > 0 {
+			metadata.Extra = map[string]any{"scenario_overrides": overrides}
+		}
+		targets = append(targets, metadata)
 	}
 
 	return targets
+}
+
+// scenarioOverrides returns the effective scenario fields that differ from the shared base scenario,
+// so per-target request-parameter overrides are recorded in run metadata for reproducibility.
+func scenarioOverrides(base whatttft.Scenario, effective whatttft.Scenario) map[string]any {
+	overrides := map[string]any{}
+	if effective.SystemPrompt != base.SystemPrompt {
+		overrides["system_prompt"] = effective.SystemPrompt
+	}
+	if effective.Prompt != base.Prompt {
+		// Prompt text may be sensitive, so record only that it was overridden, not the text itself.
+		overrides["prompt_overridden"] = true
+	}
+	if effective.MaxOutputTokens != base.MaxOutputTokens {
+		overrides["max_output_tokens"] = effective.MaxOutputTokens
+	}
+	if !equalFloatPtr(effective.Temperature, base.Temperature) {
+		overrides["temperature"] = effective.Temperature
+	}
+	if !equalFloatPtr(effective.TopP, base.TopP) {
+		overrides["top_p"] = effective.TopP
+	}
+	if effective.ReasoningEffort != base.ReasoningEffort {
+		overrides["reasoning_effort"] = effective.ReasoningEffort
+	}
+
+	return overrides
+}
+
+// equalFloatPtr reports whether two optional float pointers represent the same value or are both unset.
+func equalFloatPtr(a *float64, b *float64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+
+	return *a == *b
 }
 
 func commonTargetProvider(plan *configfile.Config) string {
@@ -475,7 +557,7 @@ func commonTargetProvider(plan *configfile.Config) string {
 
 func commonTargetModel(plan *configfile.Config) string {
 	if len(plan.Targets) == 1 {
-		return plan.Targets[0].OpenAI.Model
+		return plan.Targets[0].Settings.Model
 	}
 	if strings.TrimSpace(plan.Name) != "" {
 		return plan.Name
@@ -489,9 +571,9 @@ func commonTargetBaseURL(plan *configfile.Config) string {
 		return ""
 	}
 
-	baseURL := plan.Targets[0].OpenAI.BaseURL
+	baseURL := plan.Targets[0].Settings.BaseURL
 	for _, target := range plan.Targets[1:] {
-		if target.OpenAI.BaseURL != baseURL {
+		if target.Settings.BaseURL != baseURL {
 			return ""
 		}
 	}
@@ -499,19 +581,32 @@ func commonTargetBaseURL(plan *configfile.Config) string {
 	return baseURL
 }
 
+// targetProviderAPILabel returns the provider API label recorded for a target; Cerebras only
+// exposes Chat Completions, so its label is fixed rather than read from the OpenAI-only API field.
+func targetProviderAPILabel(target configfile.Target) string {
+	switch target.Provider {
+	case providerCerebras:
+		return cerebrasProviderAPI
+	case providerTogether:
+		return togetherProviderAPI
+	default:
+		return string(target.Settings.API)
+	}
+}
+
 func commonTargetAPI(plan *configfile.Config) string {
 	if len(plan.Targets) == 0 {
 		return ""
 	}
 
-	api := plan.Targets[0].OpenAI.API
+	api := targetProviderAPILabel(plan.Targets[0])
 	for _, target := range plan.Targets[1:] {
-		if target.OpenAI.API != api {
+		if targetProviderAPILabel(target) != api {
 			return "mixed"
 		}
 	}
 
-	return string(api)
+	return api
 }
 
 func commonTargetServiceTier(plan *configfile.Config) string {
@@ -519,9 +614,9 @@ func commonTargetServiceTier(plan *configfile.Config) string {
 		return ""
 	}
 
-	tier := plan.Targets[0].OpenAI.ServiceTier
+	tier := plan.Targets[0].Settings.ServiceTier
 	for _, target := range plan.Targets[1:] {
-		if target.OpenAI.ServiceTier != tier {
+		if target.Settings.ServiceTier != tier {
 			return "mixed"
 		}
 	}
@@ -545,20 +640,33 @@ func printBenchDryRun(output io.Writer, plan *configfile.Config, outputDir strin
 		plan.Run.SaveChunks,
 		outputDir,
 	)
-	writeLine(output, "target              api               tier       model               base_url                           api_key_env")
+	writeFormatted(output, benchDryRunRowFormat, "target", "provider", "api", "tier", "model", "base_url", "api_key_env")
 	for _, target := range plan.Targets {
 		writeFormatted(
 			output,
-			"%-19s %-17s %-10s %-19s %-34s %s\n",
+			benchDryRunRowFormat,
 			target.ID,
-			target.OpenAI.API,
-			firstNonEmptyString(string(target.OpenAI.ServiceTier), "unset"),
-			target.OpenAI.Model,
-			target.OpenAI.RedactedBaseURL(),
-			target.OpenAI.APIKeyEnv,
+			target.Provider,
+			targetProviderAPILabel(target),
+			firstNonEmptyString(string(target.Settings.ServiceTier), "unset"),
+			target.Settings.Model,
+			target.Settings.RedactedBaseURL(),
+			target.Settings.APIKeyEnv,
 		)
 	}
 }
+
+// benchDryRunRowFormat is the shared column layout for the dry-run header and target rows.
+const benchDryRunRowFormat = "%-19s %-10s %-17s %-10s %-19s %-34s %s\n"
+
+// benchSummaryHeaderFormat is the string-only column layout for the summary header row.
+const benchSummaryHeaderFormat = "%-19s %-10s %-17s %-10s %-19s %-4s %-4s %-24s %-24s %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n"
+
+// benchSummaryRowFormat is the column layout for summary rows that have measured results.
+const benchSummaryRowFormat = "%-19s %-10s %-17s %-10s %-19s %-4d %-4d %-24d %-24s %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n"
+
+// benchSummaryEmptyRowFormat is the column layout for summary rows that produced no successful requests.
+const benchSummaryEmptyRowFormat = "%-19s %-10s %-17s %-10s %-19s %-4d %-4d %-24s %-24s %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n"
 
 func printBenchSummary(output io.Writer, plan *configfile.Config, result *whatttft.BenchmarkResult) {
 	writeFormatted(
@@ -575,18 +683,25 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 		result.Summary.SuccessfulRequests,
 		result.Summary.ErrorRequests,
 	)
-	writeLine(output, "target              api               tier       model               ok   err  completion_tokens_total  completion_token_records  ttft_p50  ttft_p95  e2e_p50   e2e_p95   e2e_output_tps_mean  generation_delta_output_tps_mean  generation_delta_output_tps_count  system_tps  rps")
+	writeFormatted(
+		output,
+		benchSummaryHeaderFormat,
+		"target", "provider", "api", "tier", "model", "ok", "err", "completion_tokens_total", "completion_token_records",
+		"ttft_p50", "ttft_p95", "e2e_p50", "e2e_p95", "e2e_output_tps_mean",
+		"generation_delta_output_tps_mean", "generation_delta_output_tps_count", "system_tps", "rps",
+	)
 	groups := benchGroupsByTargetID(result.Summary.Groups)
 	for _, target := range plan.Targets {
 		group := groups[target.ID]
 		if group == nil {
 			writeFormatted(
 				output,
-				"%-19s %-17s %-10s %-19s %-4d %-4d %-24s %-24s %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
+				benchSummaryEmptyRowFormat,
 				target.ID,
-				target.OpenAI.API,
-				firstNonEmptyString(string(target.OpenAI.ServiceTier), "unset"),
-				target.OpenAI.Model,
+				target.Provider,
+				targetProviderAPILabel(target),
+				firstNonEmptyString(string(target.Settings.ServiceTier), "unset"),
+				target.Settings.Model,
 				0,
 				0,
 				"-",
@@ -606,11 +721,12 @@ func printBenchSummary(output io.Writer, plan *configfile.Config, result *whattt
 
 		writeFormatted(
 			output,
-			"%-19s %-17s %-10s %-19s %-4d %-4d %-24d %-24s %-9s %-9s %-9s %-9s %-21s %-34s %-34s %-11s %s\n",
+			benchSummaryRowFormat,
 			target.ID,
-			target.OpenAI.API,
-			firstNonEmptyString(string(target.OpenAI.ServiceTier), "unset"),
-			target.OpenAI.Model,
+			target.Provider,
+			targetProviderAPILabel(target),
+			firstNonEmptyString(string(target.Settings.ServiceTier), "unset"),
+			target.Settings.Model,
 			group.SuccessfulRequests,
 			group.ErrorRequests,
 			group.TotalCompletionTokens,

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gabrielmbmb/what-ttft/internal/report"
@@ -484,6 +487,191 @@ targets:
   - id: target-b
     name: Target B
     model: gpt-b
+`
+}
+
+// TestBenchCommandCerebrasTarget verifies a cerebras target runs through the bench pipeline,
+// hits /chat/completions, records provider=cerebras, and captures time_info server timing.
+func TestBenchCommandCerebrasTarget(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "bench-cerebras-key"
+	t.Setenv("WHAT_TTFT_CEREBRAS_KEY", placeholderAPIKey)
+
+	var sawChatPath atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat/completions" {
+			sawChatPath.Store(true)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer is not a flusher")
+		}
+		writeChunk := func(data string) {
+			if _, err := w.Write([]byte("data: " + data + "\n\n")); err != nil {
+				t.Errorf("write chunk: %v", err)
+			}
+			flusher.Flush()
+		}
+		writeChunk(`{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
+		writeChunk(`{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":0}},"time_info":{"queue_time":0.001,"prompt_time":0.006,"completion_time":0.014,"total_time":0.09}}`)
+		writeChunk("[DONE]")
+	}))
+	defer server.Close()
+
+	configPath := writeBenchConfig(t, cerebrasBenchYAML(server.URL, "WHAT_TTFT_CEREBRAS_KEY"))
+	outputDir := filepath.Join(t.TempDir(), "reports")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", outputDir}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !sawChatPath.Load() {
+		t.Fatal("cerebras bench did not hit /chat/completions")
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "provider") || !strings.Contains(stdout.String(), "cerebras") {
+		t.Fatalf("summary missing provider column with cerebras value:\n%s", stdout.String())
+	}
+
+	var metadata report.RunMetadata
+	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
+	if metadata.Provider != "cerebras" {
+		t.Fatalf("metadata provider = %q, want cerebras", metadata.Provider)
+	}
+	if metadata.ProviderAPI != "chat-completions" {
+		t.Fatalf("provider API = %q, want chat-completions", metadata.ProviderAPI)
+	}
+
+	//nolint:gosec // Test-controlled output directory path.
+	requests, err := os.ReadFile(filepath.Join(outputDir, "requests.jsonl"))
+	if err != nil {
+		t.Fatalf("read requests.jsonl: %v", err)
+	}
+	if !strings.Contains(string(requests), "server_timing") || !strings.Contains(string(requests), "completion_time_ms") {
+		t.Fatalf("requests.jsonl missing captured server timing:\n%s", requests)
+	}
+}
+
+// TestBenchCommandTogetherTarget verifies a together target runs through the bench pipeline,
+// hits /chat/completions, records provider=together, and keeps reasoning deltas out of TTFT.
+func TestBenchCommandTogetherTarget(t *testing.T) {
+	const placeholderAPIKey = "bench-together-key"
+	t.Setenv("WHAT_TTFT_TOGETHER_KEY", placeholderAPIKey)
+
+	var sawChatPath atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat/completions" {
+			sawChatPath.Store(true)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer is not a flusher")
+		}
+		writeChunk := func(data string) {
+			if _, err := w.Write([]byte("data: " + data + "\n\n")); err != nil {
+				t.Errorf("write chunk: %v", err)
+			}
+			flusher.Flush()
+		}
+		writeChunk(`{"choices":[{"index":0,"delta":{"reasoning":"thinking"}}]}`)
+		writeChunk(`{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
+		writeChunk(`{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`)
+		writeChunk("[DONE]")
+	}))
+	defer server.Close()
+
+	configPath := writeBenchConfig(t, togetherBenchYAML(server.URL, "WHAT_TTFT_TOGETHER_KEY"))
+	outputDir := filepath.Join(t.TempDir(), "reports")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", outputDir}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !sawChatPath.Load() {
+		t.Fatal("together bench did not hit /chat/completions")
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "together") {
+		t.Fatalf("summary missing together provider column:\n%s", stdout.String())
+	}
+
+	var metadata report.RunMetadata
+	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
+	if metadata.Provider != "together" {
+		t.Fatalf("metadata provider = %q, want together", metadata.Provider)
+	}
+	if metadata.ProviderAPI != "chat-completions" {
+		t.Fatalf("provider API = %q, want chat-completions", metadata.ProviderAPI)
+	}
+}
+
+func togetherBenchYAML(baseURL string, apiKeyEnv string) string {
+	return `schema_version: 1
+name: together-bench-test
+
+defaults:
+  provider: together
+  base_url: ` + baseURL + `
+  api_key_env: ` + apiKeyEnv + `
+
+run:
+  samples: 1
+  warmup: 0
+  concurrency: 1
+  cache_mode: cache-reuse
+  connection_mode: warm
+  timeout: 10s
+  save_chunks: false
+
+scenario:
+  name: together-short
+  prompt: Say hello.
+  max_output_tokens: 16
+
+targets:
+  - id: together-llama
+    name: Together Llama
+    model: meta-llama/Llama-3.3-70B-Instruct-Turbo
+`
+}
+
+func cerebrasBenchYAML(baseURL string, apiKeyEnv string) string {
+	return `schema_version: 1
+name: cerebras-bench-test
+
+defaults:
+  provider: cerebras
+  base_url: ` + baseURL + `
+  api_key_env: ` + apiKeyEnv + `
+
+run:
+  samples: 1
+  warmup: 0
+  concurrency: 1
+  cache_mode: cache-reuse
+  connection_mode: warm
+  timeout: 10s
+  save_chunks: false
+
+scenario:
+  name: cerebras-short
+  prompt: Say hello.
+  max_output_tokens: 16
+
+targets:
+  - id: cerebras-oss
+    name: Cerebras GPT-OSS
+    model: gpt-oss-120b
 `
 }
 

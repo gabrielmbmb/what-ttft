@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -17,13 +18,30 @@ import (
 	"github.com/gabrielmbmb/what-ttft/internal/httptracecap"
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/internal/tui"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
 const (
 	adHocScenarioName   = "ad-hoc"
 	interruptedExitCode = 130
+
+	// providerOpenAI is the --provider value selecting the OpenAI-compatible adapter.
+	providerOpenAI = "openai"
+
+	// providerCerebras is the --provider value selecting the Cerebras adapter.
+	providerCerebras = "cerebras"
+
+	// providerTogether is the --provider value selecting the Together AI adapter.
+	providerTogether = "together"
+
+	// cerebrasProviderAPI is the provider API label recorded for Cerebras runs; Cerebras only exposes Chat Completions.
+	cerebrasProviderAPI = "chat-completions"
+
+	// togetherProviderAPI is the provider API label recorded for Together runs; Together only exposes Chat Completions.
+	togetherProviderAPI = "chat-completions"
 )
 
 type commandExecution struct {
@@ -215,9 +233,9 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet := newFlagSet("what-ttft run", stderr)
 	flagSet.Usage = func() { printRunUsage(flagSet.Output()) }
 
-	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark (openai for v0.1)")
-	flagSet.StringVar(&cfg.openAIAPI, "openai-api", string(openai.ResponsesAPI), "OpenAI API surface: responses|chat-completions")
-	flagSet.StringVar(&cfg.baseURL, "base-url", openai.DefaultBaseURL, "provider API base URL")
+	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark: openai|cerebras|together")
+	flagSet.StringVar(&cfg.openAIAPI, "openai-api", string(openai.ResponsesAPI), "OpenAI API surface: responses|chat-completions (ignored for cerebras)")
+	flagSet.StringVar(&cfg.baseURL, "base-url", "", "provider API base URL; empty uses the selected provider default")
 	flagSet.StringVar(&cfg.apiKeyEnv, "api-key-env", "OPENAI_API_KEY", "environment variable containing the API key")
 	flagSet.StringVar(&cfg.apiKey, "api-key", "", "API key for local testing; never printed")
 	flagSet.StringVar(&cfg.model, "model", "", "model identifier")
@@ -260,7 +278,7 @@ func printRunUsage(output io.Writer) {
   what-ttft run [flags]
 
 Required flags:
-  --provider openai
+  --provider openai|cerebras|together
   --model MODEL
   --prompt PROMPT
 
@@ -325,17 +343,7 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string, observer w
 		ConnectionMode: connectionMode,
 		Timeout:        cfg.timeout,
 	})
-	provider := openai.New(openai.Config{
-		API:                openai.API(cfg.openAIAPI),
-		BaseURL:            cfg.baseURL,
-		APIKey:             apiKey,
-		APIKeyEnv:          "",
-		Model:              cfg.model,
-		ServiceTier:        openai.ServiceTier(cfg.serviceTier),
-		UseLegacyMaxTokens: cfg.legacyMaxTokens,
-		IncludeUsage:       cfg.includeUsage,
-		HTTPClient:         client,
-	})
+	provider, baseURL, providerAPI := buildRunProvider(cfg, apiKey, client)
 
 	start := time.Now()
 	result, err := whatttft.NewRunnerWithOptions(provider, runConfig, whatttft.RunnerOptions{Observer: observer}).Run(ctx)
@@ -343,8 +351,8 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string, observer w
 	metadata := report.RunMetadata{
 		Provider:             provider.Name(),
 		Model:                provider.Model(),
-		BaseURL:              cfg.baseURL,
-		ProviderAPI:          cfg.openAIAPI,
+		BaseURL:              baseURL,
+		ProviderAPI:          providerAPI,
 		RequestedServiceTier: cfg.serviceTier,
 		Scenario:             scenario,
 		RunConfig:            runConfig,
@@ -357,6 +365,62 @@ func executeRun(ctx context.Context, cfg runCLIConfig, args []string, observer w
 	}
 
 	return result, metadata, nil
+}
+
+// buildRunProvider constructs the benchmark provider for the selected --provider,
+// returning the resolved base URL and provider API label for run metadata.
+func buildRunProvider(cfg runCLIConfig, apiKey string, client *http.Client) (whatttft.Provider, string, string) {
+	switch cfg.provider {
+	case providerCerebras:
+		baseURL := cfg.baseURL
+		if baseURL == "" {
+			baseURL = cerebras.DefaultBaseURL
+		}
+		provider := cerebras.New(cerebras.Config{
+			BaseURL:            baseURL,
+			APIKey:             apiKey,
+			Model:              cfg.model,
+			ServiceTier:        cerebras.ServiceTier(cfg.serviceTier),
+			UseLegacyMaxTokens: cfg.legacyMaxTokens,
+			IncludeUsage:       cfg.includeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, baseURL, cerebrasProviderAPI
+	case providerTogether:
+		baseURL := cfg.baseURL
+		if baseURL == "" {
+			baseURL = together.DefaultBaseURL
+		}
+		provider := together.New(together.Config{
+			BaseURL:            baseURL,
+			APIKey:             apiKey,
+			Model:              cfg.model,
+			UseLegacyMaxTokens: cfg.legacyMaxTokens,
+			IncludeUsage:       cfg.includeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, baseURL, togetherProviderAPI
+	default:
+		baseURL := cfg.baseURL
+		if baseURL == "" {
+			baseURL = openai.DefaultBaseURL
+		}
+		provider := openai.New(openai.Config{
+			API:                openai.API(cfg.openAIAPI),
+			BaseURL:            baseURL,
+			APIKey:             apiKey,
+			APIKeyEnv:          "",
+			Model:              cfg.model,
+			ServiceTier:        openai.ServiceTier(cfg.serviceTier),
+			UseLegacyMaxTokens: cfg.legacyMaxTokens,
+			IncludeUsage:       cfg.includeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, baseURL, cfg.openAIAPI
+	}
 }
 
 func writeCommandReports(
@@ -448,7 +512,7 @@ func outputDirMetadata(cfg runCLIConfig) report.RunMetadata {
 	return report.RunMetadata{
 		Provider:             cfg.provider,
 		Model:                cfg.model,
-		ProviderAPI:          cfg.openAIAPI,
+		ProviderAPI:          cfg.providerAPILabel(),
 		RequestedServiceTier: cfg.serviceTier,
 		Scenario:             scenario,
 		RunConfig: whatttft.RunConfig{
@@ -464,7 +528,7 @@ func printRunSummary(output io.Writer, cfg runCLIConfig, result *whatttft.RunRes
 		output,
 		"provider=%s api=%s model=%s scenario=%s samples=%d warmup=%d concurrency=%d cache=%s connection=%s service_tier=%s successful=%d errors=%d\n\n",
 		cfg.provider,
-		cfg.openAIAPI,
+		cfg.providerAPILabel(),
 		cfg.model,
 		adHocScenarioName,
 		cfg.samples,
@@ -588,7 +652,7 @@ type runCLIConfig struct {
 }
 
 func (c runCLIConfig) validate() error {
-	if c.provider != "openai" {
+	if c.provider != providerOpenAI && c.provider != providerCerebras && c.provider != providerTogether {
 		return fmt.Errorf("unsupported provider %q", c.provider)
 	}
 	if c.model == "" {
@@ -627,6 +691,42 @@ func (c runCLIConfig) validate() error {
 	if !validReasoningEffort(c.reasoningEffort) {
 		return fmt.Errorf("unsupported reasoning effort %q", c.reasoningEffort)
 	}
+	if err := c.validateProviderOptions(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// providerAPILabel returns the provider API surface label for reports and summaries.
+// Cerebras only exposes Chat Completions, so the OpenAI --openai-api flag does not apply.
+func (c runCLIConfig) providerAPILabel() string {
+	switch c.provider {
+	case providerCerebras:
+		return cerebrasProviderAPI
+	case providerTogether:
+		return togetherProviderAPI
+	default:
+		return c.openAIAPI
+	}
+}
+
+func (c runCLIConfig) validateProviderOptions() error {
+	if c.provider == providerCerebras {
+		if !cerebras.ValidServiceTier(cerebras.ServiceTier(c.serviceTier)) {
+			return fmt.Errorf("unsupported cerebras service tier %q; expected auto, default, flex, priority, or empty", c.serviceTier)
+		}
+
+		return nil
+	}
+	if c.provider == providerTogether {
+		if c.serviceTier != "" {
+			return fmt.Errorf("service tier %q is not supported for the together provider", c.serviceTier)
+		}
+
+		return nil
+	}
+
 	if !validOpenAIAPI(openai.API(c.openAIAPI)) {
 		return fmt.Errorf("unsupported OpenAI API %q", c.openAIAPI)
 	}

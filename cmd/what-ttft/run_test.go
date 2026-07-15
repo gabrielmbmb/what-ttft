@@ -608,6 +608,70 @@ func TestRunCommandRejectsInvalidProvider(t *testing.T) {
 	}
 }
 
+// TestRunCommandCerebrasProviderStreamsAndCapturesTimeInfo verifies the --provider cerebras path
+// routes to /chat/completions, records provider=cerebras, and surfaces time_info server timing.
+func TestRunCommandCerebrasProviderStreamsAndCapturesTimeInfo(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "cli-cerebras-key"
+
+	var sawChatPath atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat/completions" {
+			sawChatPath.Store(true)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeCLISSEData(t, w, `{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
+		writeCLISSEData(t, w, `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":0}},"time_info":{"queue_time":0.001,"prompt_time":0.006,"completion_time":0.014,"total_time":0.09}}`)
+		writeCLISSEData(t, w, "[DONE]")
+	}))
+	defer server.Close()
+
+	outputDir := filepath.Join(t.TempDir(), "reports")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{
+		"run",
+		"--provider", "cerebras",
+		"--base-url", server.URL,
+		"--api-key", placeholderAPIKey,
+		"--api-key-env", "",
+		"--model", "gpt-oss-120b",
+		"--prompt", "Say hello.",
+		"--samples", "1",
+		"--warmup", "0",
+		"--cache-mode", "cache-reuse",
+		"--max-output-tokens", "16",
+		"--out", outputDir,
+	}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !sawChatPath.Load() {
+		t.Fatal("cerebras run did not hit /chat/completions")
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+
+	//nolint:gosec // Test-controlled output directory path.
+	runJSON, err := os.ReadFile(filepath.Join(outputDir, "run.json"))
+	if err != nil {
+		t.Fatalf("read run.json: %v", err)
+	}
+	if !strings.Contains(string(runJSON), `"cerebras"`) {
+		t.Fatalf("run.json missing cerebras provider:\n%s", runJSON)
+	}
+
+	//nolint:gosec // Test-controlled output directory path.
+	requests, err := os.ReadFile(filepath.Join(outputDir, "requests.jsonl"))
+	if err != nil {
+		t.Fatalf("read requests.jsonl: %v", err)
+	}
+	if !strings.Contains(string(requests), "server_timing") || !strings.Contains(string(requests), "completion_time_ms") {
+		t.Fatalf("requests.jsonl missing captured server timing:\n%s", requests)
+	}
+}
+
 func writeCLISSEEvent(t *testing.T, w http.ResponseWriter, event string, data string) {
 	t.Helper()
 

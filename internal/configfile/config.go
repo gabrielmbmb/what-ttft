@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/gabrielmbmb/what-ttft/internal/report"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 	"go.yaml.in/yaml/v3"
 )
@@ -21,6 +23,15 @@ import (
 const (
 	defaultBenchmarkConcurrency = 1
 	defaultBenchmarkTimeout     = 120 * time.Second
+
+	// providerOpenAI is the config provider value selecting the OpenAI-compatible adapter.
+	providerOpenAI = "openai"
+
+	// providerCerebras is the config provider value selecting the Cerebras adapter.
+	providerCerebras = "cerebras"
+
+	// providerTogether is the config provider value selecting the Together AI adapter.
+	providerTogether = "together"
 )
 
 // Config is a validated, normalized YAML benchmark configuration.
@@ -73,17 +84,20 @@ type Target struct {
 	// Name is an optional human-readable target label preserved from YAML; empty means no separate label was supplied and it must not contain secrets.
 	Name string `json:"name,omitempty"`
 
-	// Provider is the normalized provider name; v0.2 accepts only openai and the value contains no secrets.
+	// Provider is the normalized provider name; accepted values are openai and cerebras, and the value contains no secrets.
 	Provider string `json:"provider"`
 
-	// OpenAI contains normalized OpenAI provider settings for this target; zero values are invalid after successful validation except optional fields documented on OpenAISettings.
-	OpenAI OpenAISettings `json:"openai"`
+	// Settings contains normalized per-target provider settings shared across providers; zero values are invalid after successful validation except optional fields documented on ProviderSettings.
+	Settings ProviderSettings `json:"settings"`
+
+	// Scenario is the effective scenario for this target after applying any per-target scenario overrides onto the shared top-level scenario; prompt fields may contain sensitive data and belong only in run metadata, not request records.
+	Scenario whatttft.Scenario `json:"scenario"`
 }
 
-// OpenAISettings contains normalized OpenAI provider settings for one YAML target.
-type OpenAISettings struct {
-	// API is the OpenAI API surface requested for the target; empty is invalid after loading because omitted YAML values normalize to responses.
-	API openai.API `json:"api"`
+// ProviderSettings contains normalized per-target provider settings shared across supported providers.
+type ProviderSettings struct {
+	// API is the OpenAI API surface requested for the target; it applies only when Provider is openai and is empty for providers that expose a single API surface such as cerebras.
+	API openai.API `json:"api,omitempty"`
 
 	// BaseURL is the provider API base URL without endpoint suffix; credentials must not be present and report metadata should use RedactedBaseURL.
 	BaseURL string `json:"base_url"`
@@ -94,10 +108,10 @@ type OpenAISettings struct {
 	// Model is the provider model identifier for this target; it contains no secrets unless a deployment naming convention embeds them.
 	Model string `json:"model"`
 
-	// ServiceTier is the optional OpenAI service_tier request value; empty means omit the request field and allow provider default behavior.
+	// ServiceTier is the optional provider service_tier request value; empty means omit the request field and allow provider default behavior, and accepted values depend on Provider.
 	ServiceTier openai.ServiceTier `json:"service_tier,omitempty"`
 
-	// IncludeUsage requests Chat Completions stream usage chunks when true; Responses usage comes from terminal response events and this flag is ignored there.
+	// IncludeUsage requests Chat Completions stream usage chunks when true; OpenAI Responses usage comes from terminal response events and this flag is ignored there.
 	IncludeUsage bool `json:"include_usage"`
 
 	// LegacyMaxTokens requests the Chat Completions legacy max_tokens field when true; Responses targets ignore this compatibility setting.
@@ -105,14 +119,14 @@ type OpenAISettings struct {
 }
 
 // RedactedBaseURL returns the target base URL with credentials and secret-looking query values removed for metadata output.
-func (s OpenAISettings) RedactedBaseURL() string {
+func (s ProviderSettings) RedactedBaseURL() string {
 	return report.RedactURL(s.BaseURL)
 }
 
 // RunConfigForTarget builds a single-target runner config with target identity and deterministic request ID prefixes populated.
 func (c Config) RunConfigForTarget(target Target) whatttft.RunConfig {
 	return whatttft.RunConfig{
-		Scenario:         c.Scenario,
+		Scenario:         target.Scenario,
 		WarmupRequests:   c.Run.Warmup,
 		MeasuredRequests: c.Run.Samples,
 		Concurrency:      c.Run.Concurrency,
@@ -251,6 +265,30 @@ type rawTarget struct {
 
 	// Model overrides defaults.model for this target; empty inherits and is invalid if no inherited model exists.
 	Model string `yaml:"model,omitempty" json:"model,omitempty"`
+
+	// Scenario optionally overrides individual top-level scenario fields for this target; nil means the target uses the shared scenario unchanged.
+	Scenario *rawScenarioOverride `yaml:"scenario,omitempty" json:"scenario,omitempty"`
+}
+
+// rawScenarioOverride carries optional per-target overrides of top-level scenario fields; nil pointer fields inherit the shared scenario value.
+type rawScenarioOverride struct {
+	// SystemPrompt overrides scenario.system_prompt for this target; nil inherits and a non-nil empty string clears the system prompt.
+	SystemPrompt *string `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
+
+	// Prompt overrides scenario.prompt for this target; nil inherits and the effective prompt must be non-empty after inheritance.
+	Prompt *string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+
+	// MaxOutputTokens overrides scenario.max_output_tokens for this target; nil inherits and units are tokens.
+	MaxOutputTokens *int `yaml:"max_output_tokens,omitempty" json:"max_output_tokens,omitempty"`
+
+	// Temperature overrides scenario.temperature for this target; nil inherits while a pointer to zero sets an explicit zero.
+	Temperature *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
+
+	// TopP overrides scenario.top_p for this target; nil inherits while a pointer to zero sets an explicit zero.
+	TopP *float64 `yaml:"top_p,omitempty" json:"top_p,omitempty"`
+
+	// ReasoningEffort overrides scenario.reasoning_effort for this target; nil inherits and the effective value must be a supported reasoning effort label.
+	ReasoningEffort *string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
 }
 
 type rawRunSettings struct {
@@ -457,32 +495,38 @@ func normalizeTargets(defaults rawTargetDefaults, raws []rawTarget, scenario wha
 			errs.addf("%s.api_key is not supported; use %s.api_key_env", path, path)
 		}
 
-		provider := firstNonEmptyTrimmed(raw.Provider, defaults.Provider, "openai")
-		api := openai.API(firstNonEmptyTrimmed(raw.API, defaults.API, string(openai.ResponsesAPI)))
-		baseURL := firstNonEmptyTrimmed(raw.BaseURL, defaults.BaseURL, openai.DefaultBaseURL)
-		apiKeyEnv := firstNonEmptyTrimmed(raw.APIKeyEnv, defaults.APIKeyEnv)
-		model := firstNonEmptyTrimmed(raw.Model, defaults.Model)
-		serviceTier := openai.ServiceTier(firstNonEmptyTrimmed(raw.ServiceTier, defaults.ServiceTier))
-		includeUsage := boolWithDefault(raw.IncludeUsage, defaults.IncludeUsage, true)
-		legacyMaxTokens := boolWithDefault(raw.LegacyMaxTokens, defaults.LegacyMaxTokens, false)
+		// Provider-specific defaults (base URL, API key env, service tier, API, usage/token flags,
+		// and even the model) only flow from the defaults block when a target keeps the default
+		// provider. Switching a target's provider opts it out of those inherited values so a
+		// Cerebras target never inherits an OpenAI base URL or API key env in a mixed benchmark.
+		defaultProvider := firstNonEmptyTrimmed(defaults.Provider, providerOpenAI)
+		provider := firstNonEmptyTrimmed(raw.Provider, defaults.Provider, providerOpenAI)
+		sameProvider := provider == defaultProvider
 
-		if provider != "openai" {
-			errs.addf("%s.provider %q is invalid after inheritance; v0.2 supports only openai", path, provider)
+		api := normalizeProviderAPI(provider, sameProvider, raw.API, defaults.API)
+		baseURL := inheritIfSameProvider(sameProvider, raw.BaseURL, defaults.BaseURL)
+		if baseURL == "" {
+			baseURL = defaultBaseURLForProvider(provider)
 		}
-		if !validOpenAIAPI(api) {
-			errs.addf("%s.api %q is invalid after inheritance; expected responses or chat-completions", path, api)
+		apiKeyEnv := inheritIfSameProvider(sameProvider, raw.APIKeyEnv, defaults.APIKeyEnv)
+		model := inheritIfSameProvider(sameProvider, raw.Model, defaults.Model)
+		serviceTier := openai.ServiceTier(inheritIfSameProvider(sameProvider, raw.ServiceTier, defaults.ServiceTier))
+		includeUsage := boolWithDefault(raw.IncludeUsage, inheritedBool(sameProvider, defaults.IncludeUsage), true)
+		legacyMaxTokens := boolWithDefault(raw.LegacyMaxTokens, inheritedBool(sameProvider, defaults.LegacyMaxTokens), false)
+
+		targetScenario := applyScenarioOverride(scenario, raw.Scenario)
+		validateTargetScenario(targetScenario, path, errs)
+
+		if !validProvider(provider) {
+			errs.addf("%s.provider %q is invalid after inheritance; supported providers are openai and cerebras", path, provider)
+		} else {
+			validateProviderTargetOptions(provider, api, serviceTier, targetScenario, path, errs)
 		}
 		if apiKeyEnv == "" {
 			errs.addf("%s.api_key_env is required after inheritance", path)
 		}
 		if model == "" {
 			errs.addf("%s.model is required after inheritance", path)
-		}
-		if !validServiceTier(serviceTier) {
-			errs.addf("%s.service_tier %q is invalid after inheritance; expected auto, default, flex, scale, priority, or empty", path, serviceTier)
-		}
-		if api == openai.ResponsesAPI && scenario.MaxOutputTokens > 0 && scenario.MaxOutputTokens < 16 {
-			errs.addf("scenario.max_output_tokens must be at least 16 when %s.api is responses", path)
 		}
 
 		id := normalizeTargetID(raw.ID, provider, model, index)
@@ -499,7 +543,7 @@ func normalizeTargets(defaults rawTargetDefaults, raws []rawTarget, scenario wha
 			ID:       id,
 			Name:     strings.TrimSpace(raw.Name),
 			Provider: provider,
-			OpenAI: OpenAISettings{
+			Settings: ProviderSettings{
 				API:             api,
 				BaseURL:         baseURL,
 				APIKeyEnv:       apiKeyEnv,
@@ -508,10 +552,61 @@ func normalizeTargets(defaults rawTargetDefaults, raws []rawTarget, scenario wha
 				IncludeUsage:    includeUsage,
 				LegacyMaxTokens: legacyMaxTokens,
 			},
+			Scenario: targetScenario,
 		})
 	}
 
 	return targets
+}
+
+// applyScenarioOverride returns the base scenario with any non-nil per-target override fields applied.
+func applyScenarioOverride(base whatttft.Scenario, override *rawScenarioOverride) whatttft.Scenario {
+	if override == nil {
+		return base
+	}
+
+	result := base
+	if override.SystemPrompt != nil {
+		result.SystemPrompt = *override.SystemPrompt
+	}
+	if override.Prompt != nil {
+		result.Prompt = *override.Prompt
+	}
+	if override.MaxOutputTokens != nil {
+		result.MaxOutputTokens = *override.MaxOutputTokens
+	}
+	if override.Temperature != nil {
+		value := *override.Temperature
+		result.Temperature = &value
+	}
+	if override.TopP != nil {
+		value := *override.TopP
+		result.TopP = &value
+	}
+	if override.ReasoningEffort != nil {
+		result.ReasoningEffort = strings.TrimSpace(*override.ReasoningEffort)
+	}
+
+	return result
+}
+
+// validateTargetScenario validates the effective per-target scenario after overrides are applied.
+func validateTargetScenario(scenario whatttft.Scenario, path string, errs *validationErrors) {
+	if strings.TrimSpace(scenario.Prompt) == "" {
+		errs.addf("%s.scenario.prompt is required after inheritance", path)
+	}
+	if scenario.MaxOutputTokens < 0 {
+		errs.addf("%s.scenario.max_output_tokens must be non-negative", path)
+	}
+	if scenario.Temperature != nil && !finiteFloat(*scenario.Temperature) {
+		errs.addf("%s.scenario.temperature must be finite", path)
+	}
+	if scenario.TopP != nil && !finiteFloat(*scenario.TopP) {
+		errs.addf("%s.scenario.top_p must be finite", path)
+	}
+	if !validReasoningEffort(scenario.ReasoningEffort) {
+		errs.addf("%s.scenario.reasoning_effort %q is invalid; expected none, minimal, low, medium, high, xhigh, or empty", path, scenario.ReasoningEffort)
+	}
 }
 
 func normalizeTargetID(rawID string, provider string, model string, index int) string {
@@ -594,6 +689,87 @@ func validConnectionMode(mode whatttft.ConnectionMode) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// validProvider reports whether provider is a supported benchmark provider.
+func validProvider(provider string) bool {
+	switch provider {
+	case providerOpenAI, providerCerebras, providerTogether:
+		return true
+	default:
+		return false
+	}
+}
+
+// defaultBaseURLForProvider returns the public API base URL used when a target does not set one.
+func defaultBaseURLForProvider(provider string) string {
+	switch provider {
+	case providerCerebras:
+		return cerebras.DefaultBaseURL
+	case providerTogether:
+		return together.DefaultBaseURL
+	default:
+		return openai.DefaultBaseURL
+	}
+}
+
+// normalizeProviderAPI resolves the OpenAI API surface for a target; it is empty for providers
+// that expose a single API surface such as cerebras, and inherits defaults.api only when the
+// target keeps the default provider.
+func normalizeProviderAPI(provider string, inheritDefault bool, rawAPI string, defaultAPI string) openai.API {
+	if provider != providerOpenAI {
+		return ""
+	}
+
+	inherited := ""
+	if inheritDefault {
+		inherited = defaultAPI
+	}
+
+	return openai.API(firstNonEmptyTrimmed(rawAPI, inherited, string(openai.ResponsesAPI)))
+}
+
+// inheritIfSameProvider returns the trimmed target value, falling back to the default only when
+// the target keeps the default provider so provider-specific settings never cross provider boundaries.
+func inheritIfSameProvider(sameProvider bool, targetValue string, defaultValue string) string {
+	if sameProvider {
+		return firstNonEmptyTrimmed(targetValue, defaultValue)
+	}
+
+	return strings.TrimSpace(targetValue)
+}
+
+// inheritedBool returns the inherited default boolean only when the target keeps the default provider.
+func inheritedBool(sameProvider bool, defaultValue *bool) *bool {
+	if sameProvider {
+		return defaultValue
+	}
+
+	return nil
+}
+
+// validateProviderTargetOptions validates provider-specific target fields after inheritance.
+func validateProviderTargetOptions(provider string, api openai.API, serviceTier openai.ServiceTier, scenario whatttft.Scenario, path string, errs *validationErrors) {
+	switch provider {
+	case providerCerebras:
+		if !cerebras.ValidServiceTier(cerebras.ServiceTier(serviceTier)) {
+			errs.addf("%s.service_tier %q is invalid after inheritance; expected auto, default, flex, priority, or empty", path, serviceTier)
+		}
+	case providerTogether:
+		if serviceTier != "" {
+			errs.addf("%s.service_tier %q is not supported for the together provider", path, serviceTier)
+		}
+	case providerOpenAI:
+		if !validOpenAIAPI(api) {
+			errs.addf("%s.api %q is invalid after inheritance; expected responses or chat-completions", path, api)
+		}
+		if !validServiceTier(serviceTier) {
+			errs.addf("%s.service_tier %q is invalid after inheritance; expected auto, default, flex, scale, priority, or empty", path, serviceTier)
+		}
+		if api == openai.ResponsesAPI && scenario.MaxOutputTokens > 0 && scenario.MaxOutputTokens < 16 {
+			errs.addf("scenario.max_output_tokens must be at least 16 when %s.api is responses", path)
+		}
 	}
 }
 
