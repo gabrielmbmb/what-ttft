@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -537,6 +538,135 @@ targets:
 `))
 	if err == nil || !strings.Contains(err.Error(), "service_tier \"priority\" is not supported for the together provider") {
 		t.Fatalf("error = %v, want together service tier rejection", err)
+	}
+}
+
+// TestLoadAcceptsHuggingFaceTargetWithProviderDefaults verifies huggingface targets default to the router base URL and omit the OpenAI API field.
+func TestLoadAcceptsHuggingFaceTargetWithProviderDefaults(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: huggingface
+    api_key_env: HF_TOKEN
+    model: openai/gpt-oss-120b:cerebras
+`))
+	if err != nil {
+		t.Fatalf("load huggingface config: %v", err)
+	}
+	target := cfg.Targets[0]
+	if target.Provider != "huggingface" {
+		t.Fatalf("provider = %q, want huggingface", target.Provider)
+	}
+	if target.Settings.BaseURL != huggingface.DefaultBaseURL {
+		t.Fatalf("base URL = %q, want router default %q", target.Settings.BaseURL, huggingface.DefaultBaseURL)
+	}
+	if target.Settings.API != "" {
+		t.Fatalf("api = %q, want empty for huggingface", target.Settings.API)
+	}
+	if target.Settings.Model != "openai/gpt-oss-120b:cerebras" {
+		t.Fatalf("model = %q, want the routed model string", target.Settings.Model)
+	}
+}
+
+// TestLoadHuggingFaceRejectsServiceTier verifies Hugging Face targets cannot set a service tier.
+func TestLoadHuggingFaceRejectsServiceTier(t *testing.T) {
+	_, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: huggingface
+    api_key_env: HF_TOKEN
+    model: some/model
+    service_tier: priority
+`))
+	if err == nil || !strings.Contains(err.Error(), "service_tier \"priority\" is not supported for the huggingface provider") {
+		t.Fatalf("error = %v, want huggingface service tier rejection", err)
+	}
+}
+
+// TestLoadPerTargetSamplingOverride verifies extended sampling params parse and override per target.
+func TestLoadPerTargetSamplingOverride(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - id: qwen
+    provider: together
+    api_key_env: TOGETHER_API_KEY
+    model: Qwen/Qwen3.5-9B
+    scenario:
+      temperature: 0.7
+      top_p: 0.8
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 1.5
+      repetition_penalty: 1.0
+      reasoning_effort: ""
+`))
+	if err != nil {
+		t.Fatalf("load sampling override config: %v", err)
+	}
+	s := cfg.Targets[0].Scenario
+	if s.TopK == nil || *s.TopK != 20 {
+		t.Fatalf("top_k = %v, want 20", s.TopK)
+	}
+	if s.MinP == nil || *s.MinP != 0.0 {
+		t.Fatalf("min_p = %v, want explicit 0", s.MinP)
+	}
+	if s.PresencePenalty == nil || *s.PresencePenalty != 1.5 {
+		t.Fatalf("presence_penalty = %v, want 1.5", s.PresencePenalty)
+	}
+	if s.RepetitionPenalty == nil || *s.RepetitionPenalty != 1.0 {
+		t.Fatalf("repetition_penalty = %v, want 1.0", s.RepetitionPenalty)
+	}
+	if s.Temperature == nil || *s.Temperature != 0.7 || s.TopP == nil || *s.TopP != 0.8 {
+		t.Fatalf("temperature/top_p = %v/%v, want 0.7/0.8", s.Temperature, s.TopP)
+	}
+	if s.ReasoningEffort != "" {
+		t.Fatalf("reasoning_effort = %q, want empty override", s.ReasoningEffort)
+	}
+}
+
+// TestLoadPerTargetChatTemplateKwargs verifies chat_template_kwargs parses per target for thinking control.
+func TestLoadPerTargetChatTemplateKwargs(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - id: qwen
+    provider: together
+    api_key_env: TOGETHER_API_KEY
+    model: Qwen/Qwen3.5-9B
+    scenario:
+      chat_template_kwargs:
+        enable_thinking: false
+`))
+	if err != nil {
+		t.Fatalf("load chat_template_kwargs config: %v", err)
+	}
+	kwargs := cfg.Targets[0].Scenario.ChatTemplateKwargs
+	if kwargs == nil {
+		t.Fatal("chat_template_kwargs should be populated")
+	}
+	if kwargs["enable_thinking"] != false {
+		t.Fatalf("chat_template_kwargs = %v, want enable_thinking=false", kwargs)
 	}
 }
 

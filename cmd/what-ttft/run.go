@@ -19,6 +19,7 @@ import (
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/internal/tui"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -37,11 +38,17 @@ const (
 	// providerTogether is the --provider value selecting the Together AI adapter.
 	providerTogether = "together"
 
+	// providerHuggingFace is the --provider value selecting the Hugging Face Inference Providers router adapter.
+	providerHuggingFace = "huggingface"
+
 	// cerebrasProviderAPI is the provider API label recorded for Cerebras runs; Cerebras only exposes Chat Completions.
 	cerebrasProviderAPI = "chat-completions"
 
 	// togetherProviderAPI is the provider API label recorded for Together runs; Together only exposes Chat Completions.
 	togetherProviderAPI = "chat-completions"
+
+	// huggingFaceProviderAPI is the provider API label recorded for Hugging Face runs; the router only exposes Chat Completions.
+	huggingFaceProviderAPI = "chat-completions"
 )
 
 type commandExecution struct {
@@ -233,7 +240,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet := newFlagSet("what-ttft run", stderr)
 	flagSet.Usage = func() { printRunUsage(flagSet.Output()) }
 
-	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark: openai|cerebras|together")
+	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark: openai|cerebras|together|huggingface")
 	flagSet.StringVar(&cfg.openAIAPI, "openai-api", string(openai.ResponsesAPI), "OpenAI API surface: responses|chat-completions (ignored for cerebras)")
 	flagSet.StringVar(&cfg.baseURL, "base-url", "", "provider API base URL; empty uses the selected provider default")
 	flagSet.StringVar(&cfg.apiKeyEnv, "api-key-env", "OPENAI_API_KEY", "environment variable containing the API key")
@@ -278,7 +285,7 @@ func printRunUsage(output io.Writer) {
   what-ttft run [flags]
 
 Required flags:
-  --provider openai|cerebras|together
+  --provider openai|cerebras|together|huggingface
   --model MODEL
   --prompt PROMPT
 
@@ -402,6 +409,21 @@ func buildRunProvider(cfg runCLIConfig, apiKey string, client *http.Client) (wha
 		})
 
 		return provider, baseURL, togetherProviderAPI
+	case providerHuggingFace:
+		baseURL := cfg.baseURL
+		if baseURL == "" {
+			baseURL = huggingface.DefaultBaseURL
+		}
+		provider := huggingface.New(huggingface.Config{
+			BaseURL:            baseURL,
+			APIKey:             apiKey,
+			Model:              cfg.model,
+			UseLegacyMaxTokens: cfg.legacyMaxTokens,
+			IncludeUsage:       cfg.includeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, baseURL, huggingFaceProviderAPI
 	default:
 		baseURL := cfg.baseURL
 		if baseURL == "" {
@@ -652,7 +674,7 @@ type runCLIConfig struct {
 }
 
 func (c runCLIConfig) validate() error {
-	if c.provider != providerOpenAI && c.provider != providerCerebras && c.provider != providerTogether {
+	if c.provider != providerOpenAI && c.provider != providerCerebras && c.provider != providerTogether && c.provider != providerHuggingFace {
 		return fmt.Errorf("unsupported provider %q", c.provider)
 	}
 	if c.model == "" {
@@ -706,6 +728,8 @@ func (c runCLIConfig) providerAPILabel() string {
 		return cerebrasProviderAPI
 	case providerTogether:
 		return togetherProviderAPI
+	case providerHuggingFace:
+		return huggingFaceProviderAPI
 	default:
 		return c.openAIAPI
 	}
@@ -719,9 +743,9 @@ func (c runCLIConfig) validateProviderOptions() error {
 
 		return nil
 	}
-	if c.provider == providerTogether {
+	if c.provider == providerTogether || c.provider == providerHuggingFace {
 		if c.serviceTier != "" {
-			return fmt.Errorf("service tier %q is not supported for the together provider", c.serviceTier)
+			return fmt.Errorf("service tier %q is not supported for the %s provider", c.serviceTier, c.provider)
 		}
 
 		return nil

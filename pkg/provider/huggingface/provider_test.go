@@ -1,4 +1,4 @@
-package together
+package huggingface
 
 import (
 	"context"
@@ -14,9 +14,9 @@ import (
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
 )
 
-// TestProviderStreamChatParsesStreamingEvents verifies the happy-path Together stream.
+// TestProviderStreamChatParsesStreamingEvents verifies the happy-path router stream.
 func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
-	const apiKey = "test-secret"
+	const apiKey = "hf_test-secret"
 
 	requestCh := make(chan chatCompletionRequest, 1)
 	handlerErrors := make(chan string, 8)
@@ -43,45 +43,27 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 		requestCh <- reqBody
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		writeRaw(t, w, ": together heartbeat\n\n")
-		writeSSE(t, w, "")
 		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"role":"assistant"}}]}`)
-		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"reasoning":"let me think"}}]}`)
-		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"content":"Hello"}}]}`)
-		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}`)
-		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":41,"completion_tokens":2,"total_tokens":43}}`)
+		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"reasoning":"analyzing"}}]}`)
+		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"content":"Hi"}}]}`)
+		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"content":" there"},"finish_reason":"stop"}]}`)
+		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":30,"completion_tokens":2,"total_tokens":32}}`)
 		writeSSE(t, w, "[DONE]")
 	}))
 	defer server.Close()
 
-	temperature := 0.7
-	topP := 0.8
-	topK := 20
-	minP := 0.0
-	presencePenalty := 1.5
-	repetitionPenalty := 1.0
 	provider := New(Config{
 		BaseURL:      server.URL,
 		APIKey:       apiKey,
-		Model:        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+		Model:        "openai/gpt-oss-120b:cerebras",
 		IncludeUsage: true,
 	})
 	obs := newTestObserver()
 
 	err := provider.StreamChat(context.Background(), whatttft.ProviderRequest{
 		RequestID: "req-1",
-		Scenario: whatttft.Scenario{
-			SystemPrompt:       "You are concise.",
-			MaxOutputTokens:    64,
-			Temperature:        &temperature,
-			TopP:               &topP,
-			TopK:               &topK,
-			MinP:               &minP,
-			PresencePenalty:    &presencePenalty,
-			RepetitionPenalty:  &repetitionPenalty,
-			ChatTemplateKwargs: map[string]any{"enable_thinking": false},
-		},
-		Prompt: "Say hello.",
+		Scenario:  whatttft.Scenario{MaxOutputTokens: 32},
+		Prompt:    "Say hi.",
 	}, obs)
 	if err != nil {
 		t.Fatalf("stream chat: %v", err)
@@ -95,88 +77,36 @@ func TestProviderStreamChatParsesStreamingEvents(t *testing.T) {
 	if !requestBody.Stream {
 		t.Fatal("stream should be true")
 	}
-	if requestBody.MaxCompletionTokens == nil || *requestBody.MaxCompletionTokens != 64 {
-		t.Fatalf("max_completion_tokens = %v, want 64", requestBody.MaxCompletionTokens)
+	if requestBody.Model != "openai/gpt-oss-120b:cerebras" {
+		t.Fatalf("model = %q, want the routed model string", requestBody.Model)
 	}
 	if requestBody.StreamOptions == nil || !requestBody.StreamOptions.IncludeUsage {
 		t.Fatalf("stream_options.include_usage should be true, got %+v", requestBody.StreamOptions)
 	}
-	if requestBody.TopK == nil || *requestBody.TopK != 20 {
-		t.Fatalf("top_k = %v, want 20", requestBody.TopK)
-	}
-	if requestBody.MinP == nil || *requestBody.MinP != 0.0 {
-		t.Fatalf("min_p = %v, want explicit 0", requestBody.MinP)
-	}
-	if requestBody.PresencePenalty == nil || *requestBody.PresencePenalty != 1.5 {
-		t.Fatalf("presence_penalty = %v, want 1.5", requestBody.PresencePenalty)
-	}
-	if requestBody.RepetitionPenalty == nil || *requestBody.RepetitionPenalty != 1.0 {
-		t.Fatalf("repetition_penalty = %v, want 1.0", requestBody.RepetitionPenalty)
-	}
-	if requestBody.TopP == nil || *requestBody.TopP != 0.8 {
-		t.Fatalf("top_p = %v, want 0.8", requestBody.TopP)
-	}
-	if requestBody.ChatTemplateKwargs["enable_thinking"] != false {
-		t.Fatalf("chat_template_kwargs = %v, want enable_thinking=false", requestBody.ChatTemplateKwargs)
-	}
 
 	visible := obs.visibleOutput()
-	if len(visible) != 2 || visible[0].Text != "Hello" || visible[1].Text != " world" {
-		t.Fatalf("visible output = %+v, want Hello/ world", visible)
+	if len(visible) != 2 || visible[0].Text != "Hi" || visible[1].Text != " there" {
+		t.Fatalf("visible output = %+v, want Hi/ there", visible)
 	}
-	if obs.eventCount(whatttft.EventFirstOutputDelta) != 1 {
-		t.Fatalf("first output delta marks = %d, want 1", obs.eventCount(whatttft.EventFirstOutputDelta))
+	if obs.eventCount(whatttft.EventFirstOutputDelta) != 1 || obs.eventCount(whatttft.EventBodyEOF) != 1 {
+		t.Fatalf("timeline marks unexpected: first=%d eof=%d", obs.eventCount(whatttft.EventFirstOutputDelta), obs.eventCount(whatttft.EventBodyEOF))
 	}
-	if obs.eventCount(whatttft.EventBodyEOF) != 1 {
-		t.Fatalf("body eof marks = %d, want 1", obs.eventCount(whatttft.EventBodyEOF))
+	if reasoning := obs.reasoningOutput(); len(reasoning) != 1 || reasoning[0].Text != "analyzing" || reasoning[0].Visible {
+		t.Fatalf("reasoning output = %+v, want one non-visible 'analyzing'", reasoning)
 	}
-
-	reasoning := obs.reasoningOutput()
-	if len(reasoning) != 1 || reasoning[0].Text != "let me think" || reasoning[0].Visible {
-		t.Fatalf("reasoning output = %+v, want one non-visible 'let me think'", reasoning)
-	}
-
 	usages := obs.usages()
-	if len(usages) != 1 || usages[0].CompletionTokens == nil || *usages[0].CompletionTokens != 2 {
-		t.Fatalf("usage = %+v, want completion_tokens 2", usages)
+	if len(usages) != 1 || usages[0].TotalTokens == nil || *usages[0].TotalTokens != 32 {
+		t.Fatalf("usage = %+v, want total_tokens 32", usages)
 	}
 }
 
-// TestProviderStreamChatCapturesUsageWithoutIncludeUsage verifies usage is parsed even when include_usage is off.
-func TestProviderStreamChatCapturesUsageWithoutIncludeUsage(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var reqBody chatCompletionRequest
-		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-			t.Errorf("decode request body: %v", err)
-		}
-		if reqBody.StreamOptions != nil {
-			t.Errorf("stream_options should be omitted, got %+v", reqBody.StreamOptions)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}`)
-		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`)
-		writeSSE(t, w, "[DONE]")
-	}))
-	defer server.Close()
-
-	provider := New(Config{BaseURL: server.URL, APIKey: "k", Model: "m"})
-	obs := newTestObserver()
-	if err := provider.StreamChat(context.Background(), whatttft.ProviderRequest{RequestID: "req-1", Prompt: "hi"}, obs); err != nil {
-		t.Fatalf("stream chat: %v", err)
-	}
-	usages := obs.usages()
-	if len(usages) != 1 || usages[0].TotalTokens == nil || *usages[0].TotalTokens != 6 {
-		t.Fatalf("usage = %+v, want total_tokens 6 without include_usage", usages)
-	}
-}
-
-// TestProviderStreamChatRedactsNon200Body verifies error bodies never leak the API key.
+// TestProviderStreamChatRedactsNon200Body verifies error bodies never leak the token.
 func TestProviderStreamChatRedactsNon200Body(t *testing.T) {
-	const apiKey = "super-secret-key"
+	const apiKey = "hf_super-secret"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		if _, err := fmt.Fprintf(w, "invalid key %s", apiKey); err != nil {
+		if _, err := fmt.Fprintf(w, "invalid token %s", apiKey); err != nil {
 			t.Errorf("write error body: %v", err)
 		}
 	}))
@@ -189,7 +119,7 @@ func TestProviderStreamChatRedactsNon200Body(t *testing.T) {
 		t.Fatal("expected an error for non-200 response")
 	}
 	if strings.Contains(err.Error(), apiKey) {
-		t.Fatalf("error leaked API key: %v", err)
+		t.Fatalf("error leaked token: %v", err)
 	}
 	if !strings.Contains(err.Error(), "[REDACTED]") {
 		t.Fatalf("error missing redaction marker: %v", err)
@@ -217,15 +147,15 @@ func TestProviderStreamChatRejectsMalformedJSON(t *testing.T) {
 
 // TestProviderCapabilitiesAndValidation verifies capabilities and required-input validation.
 func TestProviderCapabilitiesAndValidation(t *testing.T) {
-	caps := New(Config{Model: "m"}).Capabilities()
+	caps := New(Config{Model: "m", IncludeUsage: true}).Capabilities()
 	if caps.StreamingProtocol != streamProtocolSSE || !caps.SupportsChat || !caps.SupportsUsageInStream {
 		t.Fatalf("capabilities = %+v, unexpected", caps)
 	}
 	if caps.SupportsPromptCache {
-		t.Fatal("together does not expose prompt cache")
+		t.Fatal("huggingface router does not expose prompt cache")
 	}
 	if New(Config{Model: "m"}).Name() != providerName {
-		t.Fatal("name should be together")
+		t.Fatal("name should be huggingface")
 	}
 
 	if err := New(Config{APIKey: "k"}).StreamChat(context.Background(), whatttft.ProviderRequest{}, newTestObserver()); err == nil || !strings.Contains(err.Error(), "model is required") {
@@ -241,13 +171,8 @@ func TestProviderCapabilitiesAndValidation(t *testing.T) {
 
 func writeSSE(t *testing.T, w http.ResponseWriter, data string) {
 	t.Helper()
-	writeRaw(t, w, "data: "+data+"\n\n")
-}
 
-func writeRaw(t *testing.T, w http.ResponseWriter, data string) {
-	t.Helper()
-
-	if _, err := w.Write([]byte(data)); err != nil {
+	if _, err := w.Write([]byte("data: " + data + "\n\n")); err != nil {
 		t.Errorf("write stream data: %v", err)
 	}
 	if flusher, ok := w.(http.Flusher); ok {

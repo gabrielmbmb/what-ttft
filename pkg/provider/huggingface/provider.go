@@ -1,4 +1,4 @@
-package together
+package huggingface
 
 import (
 	"bytes"
@@ -20,7 +20,7 @@ const (
 	maxErrorBodyBytes = 64 * 1024
 
 	// providerName is the normalized provider identifier emitted in request records.
-	providerName = "together"
+	providerName = "huggingface"
 
 	// streamProtocolSSE identifies data-only Server-Sent Events streams.
 	streamProtocolSSE = "sse"
@@ -32,7 +32,7 @@ const (
 	reasoningModality = "reasoning"
 )
 
-// Provider streams Together AI Chat Completions requests over direct HTTP.
+// Provider streams Hugging Face Inference Providers Chat Completions requests over direct HTTP.
 type Provider struct {
 	cfg                 Config
 	client              *http.Client
@@ -54,16 +54,16 @@ type APIError struct {
 // Error returns a redacted human-readable provider error string.
 func (e *APIError) Error() string {
 	if e == nil {
-		return "together API error"
+		return "huggingface API error"
 	}
 	if e.BodySnippet == "" {
-		return fmt.Sprintf("together request failed: %s", e.Status)
+		return fmt.Sprintf("huggingface request failed: %s", e.Status)
 	}
 
-	return fmt.Sprintf("together request failed: %s: %s", e.Status, e.BodySnippet)
+	return fmt.Sprintf("huggingface request failed: %s: %s", e.Status, e.BodySnippet)
 }
 
-// New creates a Together AI Chat Completions streaming provider.
+// New creates a Hugging Face Inference Providers Chat Completions streaming provider.
 func New(cfg Config) *Provider {
 	client := cfg.HTTPClient
 	compressionDisabled := transportDisablesCompression(client)
@@ -79,7 +79,7 @@ func New(cfg Config) *Provider {
 	}
 }
 
-// Name returns the normalized Together provider name.
+// Name returns the normalized Hugging Face provider name.
 func (p *Provider) Name() string {
 	return providerName
 }
@@ -89,13 +89,12 @@ func (p *Provider) Model() string {
 	return p.cfg.Model
 }
 
-// Capabilities returns Together streaming capabilities exposed by this adapter.
+// Capabilities returns Hugging Face router streaming capabilities exposed by this adapter.
 func (p *Provider) Capabilities() whatttft.ProviderCapabilities {
 	return whatttft.ProviderCapabilities{
-		StreamingProtocol: streamProtocolSSE,
-		SupportsChat:      true,
-		// Together streams a usage chunk near the end of the stream by default.
-		SupportsUsageInStream: true,
+		StreamingProtocol:     streamProtocolSSE,
+		SupportsChat:          true,
+		SupportsUsageInStream: p.cfg.IncludeUsage,
 		SupportsPromptCache:   false,
 		SupportsExplicitCache: false,
 		SupportsTokenEvents:   false,
@@ -135,15 +134,15 @@ func (p *Provider) StreamChat(ctx context.Context, req whatttft.ProviderRequest,
 
 func (p *Provider) validateInputs(obs whatttft.ProviderObserver) (string, error) {
 	if obs == nil {
-		return "", errors.New("together provider observer is nil")
+		return "", errors.New("huggingface provider observer is nil")
 	}
 	if p.cfg.Model == "" {
-		return "", errors.New("together model is required")
+		return "", errors.New("huggingface model is required")
 	}
 
 	apiKey := p.cfg.apiKey()
 	if apiKey == "" {
-		return "", errors.New("together API key is required")
+		return "", errors.New("huggingface API key is required")
 	}
 
 	return apiKey, nil
@@ -154,7 +153,7 @@ func (p *Provider) doStreamingRequest(ctx context.Context, endpoint string, body
 	tracedCtx := httptracecap.WithTrace(ctx, obs, capture)
 	httpReq, err := http.NewRequestWithContext(tracedCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, capture, fmt.Errorf("create together request: %w", err)
+		return nil, capture, fmt.Errorf("create huggingface request: %w", err)
 	}
 	p.setHeaders(httpReq, apiKey)
 
@@ -162,7 +161,7 @@ func (p *Provider) doStreamingRequest(ctx context.Context, endpoint string, body
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
 		p.observeHTTP(obs, capture)
-		return nil, capture, fmt.Errorf("send together request: %w", err)
+		return nil, capture, fmt.Errorf("send huggingface request: %w", err)
 	}
 
 	obs.Mark(whatttft.EventHeadersReceived)

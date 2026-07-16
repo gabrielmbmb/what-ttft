@@ -14,6 +14,7 @@ import (
 
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -32,6 +33,9 @@ const (
 
 	// providerTogether is the config provider value selecting the Together AI adapter.
 	providerTogether = "together"
+
+	// providerHuggingFace is the config provider value selecting the Hugging Face Inference Providers router adapter.
+	providerHuggingFace = "huggingface"
 )
 
 // Config is a validated, normalized YAML benchmark configuration.
@@ -287,8 +291,26 @@ type rawScenarioOverride struct {
 	// TopP overrides scenario.top_p for this target; nil inherits while a pointer to zero sets an explicit zero.
 	TopP *float64 `yaml:"top_p,omitempty" json:"top_p,omitempty"`
 
+	// TopK overrides scenario.top_k for this target; nil inherits.
+	TopK *int `yaml:"top_k,omitempty" json:"top_k,omitempty"`
+
+	// MinP overrides scenario.min_p for this target; nil inherits while a pointer to zero sets an explicit zero.
+	MinP *float64 `yaml:"min_p,omitempty" json:"min_p,omitempty"`
+
+	// FrequencyPenalty overrides scenario.frequency_penalty for this target; nil inherits while a pointer to zero sets an explicit zero.
+	FrequencyPenalty *float64 `yaml:"frequency_penalty,omitempty" json:"frequency_penalty,omitempty"`
+
+	// PresencePenalty overrides scenario.presence_penalty for this target; nil inherits while a pointer to zero sets an explicit zero.
+	PresencePenalty *float64 `yaml:"presence_penalty,omitempty" json:"presence_penalty,omitempty"`
+
+	// RepetitionPenalty overrides scenario.repetition_penalty for this target; nil inherits.
+	RepetitionPenalty *float64 `yaml:"repetition_penalty,omitempty" json:"repetition_penalty,omitempty"`
+
 	// ReasoningEffort overrides scenario.reasoning_effort for this target; nil inherits and the effective value must be a supported reasoning effort label.
 	ReasoningEffort *string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+
+	// ChatTemplateKwargs overrides scenario.chat_template_kwargs for this target; nil inherits and a non-nil map replaces the inherited value entirely.
+	ChatTemplateKwargs map[string]any `yaml:"chat_template_kwargs,omitempty" json:"chat_template_kwargs,omitempty"`
 }
 
 type rawRunSettings struct {
@@ -333,8 +355,26 @@ type rawScenario struct {
 	// TopP is the optional nucleus-sampling probability; nil means omitted while a pointer to zero means explicitly configured zero.
 	TopP *float64 `yaml:"top_p,omitempty" json:"top_p,omitempty"`
 
+	// TopK is the optional top-k sampling cutoff; nil means omitted and only Together/Hugging Face targets emit it.
+	TopK *int `yaml:"top_k,omitempty" json:"top_k,omitempty"`
+
+	// MinP is the optional minimum-probability sampling cutoff; nil means omitted while a pointer to zero means explicitly configured zero.
+	MinP *float64 `yaml:"min_p,omitempty" json:"min_p,omitempty"`
+
+	// FrequencyPenalty is the optional frequency penalty; nil means omitted while a pointer to zero means explicitly configured zero.
+	FrequencyPenalty *float64 `yaml:"frequency_penalty,omitempty" json:"frequency_penalty,omitempty"`
+
+	// PresencePenalty is the optional presence penalty; nil means omitted while a pointer to zero means explicitly configured zero.
+	PresencePenalty *float64 `yaml:"presence_penalty,omitempty" json:"presence_penalty,omitempty"`
+
+	// RepetitionPenalty is the optional repetition penalty; nil means omitted and only Together/Hugging Face targets emit it.
+	RepetitionPenalty *float64 `yaml:"repetition_penalty,omitempty" json:"repetition_penalty,omitempty"`
+
 	// ReasoningEffort is the optional reasoning/thinking effort label; empty means provider default.
 	ReasoningEffort string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+
+	// ChatTemplateKwargs is an optional map forwarded as the request chat_template_kwargs field on Together/Hugging Face targets, such as {enable_thinking: false}; nil omits the field.
+	ChatTemplateKwargs map[string]any `yaml:"chat_template_kwargs,omitempty" json:"chat_template_kwargs,omitempty"`
 }
 
 type rawDuration struct {
@@ -459,30 +499,57 @@ func normalizeRun(raw rawRunSettings, errs *validationErrors) RunSettings {
 }
 
 func normalizeScenario(raw rawScenario, errs *validationErrors) whatttft.Scenario {
+	scenario := whatttft.Scenario{
+		Name:               strings.TrimSpace(raw.Name),
+		Prompt:             raw.Prompt,
+		SystemPrompt:       raw.SystemPrompt,
+		MaxOutputTokens:    raw.MaxOutputTokens,
+		Temperature:        raw.Temperature,
+		TopP:               raw.TopP,
+		TopK:               raw.TopK,
+		MinP:               raw.MinP,
+		FrequencyPenalty:   raw.FrequencyPenalty,
+		PresencePenalty:    raw.PresencePenalty,
+		RepetitionPenalty:  raw.RepetitionPenalty,
+		ReasoningEffort:    strings.TrimSpace(raw.ReasoningEffort),
+		ChatTemplateKwargs: raw.ChatTemplateKwargs,
+	}
+
 	if strings.TrimSpace(raw.Prompt) == "" {
 		errs.addf("scenario.prompt is required")
 	}
-	if raw.MaxOutputTokens < 0 {
-		errs.addf("scenario.max_output_tokens must be non-negative")
-	}
-	if raw.Temperature != nil && !finiteFloat(*raw.Temperature) {
-		errs.addf("scenario.temperature must be finite")
-	}
-	if raw.TopP != nil && !finiteFloat(*raw.TopP) {
-		errs.addf("scenario.top_p must be finite")
-	}
-	if !validReasoningEffort(raw.ReasoningEffort) {
-		errs.addf("scenario.reasoning_effort %q is invalid; expected none, minimal, low, medium, high, xhigh, or empty", raw.ReasoningEffort)
-	}
+	validateScenarioValues(scenario, "scenario.", errs)
 
-	return whatttft.Scenario{
-		Name:            strings.TrimSpace(raw.Name),
-		Prompt:          raw.Prompt,
-		SystemPrompt:    raw.SystemPrompt,
-		MaxOutputTokens: raw.MaxOutputTokens,
-		Temperature:     raw.Temperature,
-		TopP:            raw.TopP,
-		ReasoningEffort: strings.TrimSpace(raw.ReasoningEffort),
+	return scenario
+}
+
+// validateScenarioValues validates the numeric sampling and reasoning fields of a scenario using
+// the given field-name prefix (for example "scenario." or "targets[0].scenario.").
+func validateScenarioValues(scenario whatttft.Scenario, prefix string, errs *validationErrors) {
+	if scenario.MaxOutputTokens < 0 {
+		errs.addf("%smax_output_tokens must be non-negative", prefix)
+	}
+	finiteFields := []struct {
+		value *float64
+		name  string
+	}{
+		{scenario.Temperature, "temperature"},
+		{scenario.TopP, "top_p"},
+		{scenario.MinP, "min_p"},
+		{scenario.FrequencyPenalty, "frequency_penalty"},
+		{scenario.PresencePenalty, "presence_penalty"},
+		{scenario.RepetitionPenalty, "repetition_penalty"},
+	}
+	for _, field := range finiteFields {
+		if field.value != nil && !finiteFloat(*field.value) {
+			errs.addf("%s%s must be finite", prefix, field.name)
+		}
+	}
+	if scenario.TopK != nil && *scenario.TopK < 0 {
+		errs.addf("%stop_k must be non-negative", prefix)
+	}
+	if !validReasoningEffort(scenario.ReasoningEffort) {
+		errs.addf("%sreasoning_effort %q is invalid; expected none, minimal, low, medium, high, xhigh, or empty", prefix, scenario.ReasoningEffort)
 	}
 }
 
@@ -583,8 +650,31 @@ func applyScenarioOverride(base whatttft.Scenario, override *rawScenarioOverride
 		value := *override.TopP
 		result.TopP = &value
 	}
+	if override.TopK != nil {
+		value := *override.TopK
+		result.TopK = &value
+	}
+	if override.MinP != nil {
+		value := *override.MinP
+		result.MinP = &value
+	}
+	if override.FrequencyPenalty != nil {
+		value := *override.FrequencyPenalty
+		result.FrequencyPenalty = &value
+	}
+	if override.PresencePenalty != nil {
+		value := *override.PresencePenalty
+		result.PresencePenalty = &value
+	}
+	if override.RepetitionPenalty != nil {
+		value := *override.RepetitionPenalty
+		result.RepetitionPenalty = &value
+	}
 	if override.ReasoningEffort != nil {
 		result.ReasoningEffort = strings.TrimSpace(*override.ReasoningEffort)
+	}
+	if override.ChatTemplateKwargs != nil {
+		result.ChatTemplateKwargs = override.ChatTemplateKwargs
 	}
 
 	return result
@@ -595,18 +685,7 @@ func validateTargetScenario(scenario whatttft.Scenario, path string, errs *valid
 	if strings.TrimSpace(scenario.Prompt) == "" {
 		errs.addf("%s.scenario.prompt is required after inheritance", path)
 	}
-	if scenario.MaxOutputTokens < 0 {
-		errs.addf("%s.scenario.max_output_tokens must be non-negative", path)
-	}
-	if scenario.Temperature != nil && !finiteFloat(*scenario.Temperature) {
-		errs.addf("%s.scenario.temperature must be finite", path)
-	}
-	if scenario.TopP != nil && !finiteFloat(*scenario.TopP) {
-		errs.addf("%s.scenario.top_p must be finite", path)
-	}
-	if !validReasoningEffort(scenario.ReasoningEffort) {
-		errs.addf("%s.scenario.reasoning_effort %q is invalid; expected none, minimal, low, medium, high, xhigh, or empty", path, scenario.ReasoningEffort)
-	}
+	validateScenarioValues(scenario, path+".scenario.", errs)
 }
 
 func normalizeTargetID(rawID string, provider string, model string, index int) string {
@@ -695,7 +774,7 @@ func validConnectionMode(mode whatttft.ConnectionMode) bool {
 // validProvider reports whether provider is a supported benchmark provider.
 func validProvider(provider string) bool {
 	switch provider {
-	case providerOpenAI, providerCerebras, providerTogether:
+	case providerOpenAI, providerCerebras, providerTogether, providerHuggingFace:
 		return true
 	default:
 		return false
@@ -709,6 +788,8 @@ func defaultBaseURLForProvider(provider string) string {
 		return cerebras.DefaultBaseURL
 	case providerTogether:
 		return together.DefaultBaseURL
+	case providerHuggingFace:
+		return huggingface.DefaultBaseURL
 	default:
 		return openai.DefaultBaseURL
 	}
@@ -759,6 +840,10 @@ func validateProviderTargetOptions(provider string, api openai.API, serviceTier 
 	case providerTogether:
 		if serviceTier != "" {
 			errs.addf("%s.service_tier %q is not supported for the together provider", path, serviceTier)
+		}
+	case providerHuggingFace:
+		if serviceTier != "" {
+			errs.addf("%s.service_tier %q is not supported for the huggingface provider", path, serviceTier)
 		}
 	case providerOpenAI:
 		if !validOpenAIAPI(api) {

@@ -615,6 +615,91 @@ func TestBenchCommandTogetherTarget(t *testing.T) {
 	}
 }
 
+// TestBenchCommandHuggingFaceTarget verifies a huggingface target runs through the bench pipeline,
+// hits /chat/completions, and records provider=huggingface.
+func TestBenchCommandHuggingFaceTarget(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "hf_bench-key"
+	t.Setenv("WHAT_TTFT_HF_TOKEN", placeholderAPIKey)
+
+	var sawChatPath atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat/completions" {
+			sawChatPath.Store(true)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer is not a flusher")
+		}
+		writeChunk := func(data string) {
+			if _, err := w.Write([]byte("data: " + data + "\n\n")); err != nil {
+				t.Errorf("write chunk: %v", err)
+			}
+			flusher.Flush()
+		}
+		writeChunk(`{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
+		writeChunk(`{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`)
+		writeChunk("[DONE]")
+	}))
+	defer server.Close()
+
+	configPath := writeBenchConfig(t, huggingFaceBenchYAML(server.URL, "WHAT_TTFT_HF_TOKEN"))
+	outputDir := filepath.Join(t.TempDir(), "reports")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", outputDir}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !sawChatPath.Load() {
+		t.Fatal("huggingface bench did not hit /chat/completions")
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("token leaked\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "huggingface") {
+		t.Fatalf("summary missing huggingface provider column:\n%s", stdout.String())
+	}
+
+	var metadata report.RunMetadata
+	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
+	if metadata.Provider != "huggingface" {
+		t.Fatalf("metadata provider = %q, want huggingface", metadata.Provider)
+	}
+}
+
+func huggingFaceBenchYAML(baseURL string, apiKeyEnv string) string {
+	return `schema_version: 1
+name: huggingface-bench-test
+
+defaults:
+  provider: huggingface
+  base_url: ` + baseURL + `
+  api_key_env: ` + apiKeyEnv + `
+
+run:
+  samples: 1
+  warmup: 0
+  concurrency: 1
+  cache_mode: cache-reuse
+  connection_mode: warm
+  timeout: 10s
+  save_chunks: false
+
+scenario:
+  name: hf-short
+  prompt: Say hello.
+  max_output_tokens: 16
+
+targets:
+  - id: hf-gpt-oss
+    name: HF GPT-OSS
+    model: openai/gpt-oss-120b:cerebras
+`
+}
+
 func togetherBenchYAML(baseURL string, apiKeyEnv string) string {
 	return `schema_version: 1
 name: together-bench-test

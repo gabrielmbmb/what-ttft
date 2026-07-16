@@ -1,7 +1,7 @@
-package together
+package huggingface
 
 type chatCompletionRequest struct {
-	// Model is the Together model identifier requested for this chat completion.
+	// Model is the Hugging Face model identifier requested for this chat completion, optionally suffixed with a backend as owner/model:provider.
 	Model string `json:"model"`
 
 	// Messages is the ordered chat transcript sent to the provider.
@@ -19,10 +19,10 @@ type chatCompletionRequest struct {
 	// TopP is the optional nucleus sampling value; nil omits the field so the provider default applies.
 	TopP *float64 `json:"top_p,omitempty"`
 
-	// TopK is the optional top-k sampling cutoff; nil omits the field so the provider default applies.
+	// TopK is the optional top-k sampling cutoff forwarded to the routed backend; nil omits the field so the provider default applies.
 	TopK *int `json:"top_k,omitempty"`
 
-	// MinP is the optional minimum-probability sampling cutoff; nil omits the field so the provider default applies.
+	// MinP is the optional minimum-probability sampling cutoff forwarded to the routed backend; nil omits the field so the provider default applies.
 	MinP *float64 `json:"min_p,omitempty"`
 
 	// FrequencyPenalty is the optional frequency penalty; nil omits the field so the provider default applies.
@@ -31,7 +31,7 @@ type chatCompletionRequest struct {
 	// PresencePenalty is the optional presence penalty; nil omits the field so the provider default applies.
 	PresencePenalty *float64 `json:"presence_penalty,omitempty"`
 
-	// RepetitionPenalty is the optional repetition penalty; nil omits the field so the provider default applies.
+	// RepetitionPenalty is the optional repetition penalty forwarded to the routed backend; nil omits the field so the provider default applies.
 	RepetitionPenalty *float64 `json:"repetition_penalty,omitempty"`
 
 	// Stop is the optional list of stop sequences; nil or empty omits the field.
@@ -43,7 +43,7 @@ type chatCompletionRequest struct {
 	// ReasoningEffort is the optional reasoning effort for reasoning-capable models; empty omits the field, which is recommended for models that do not support it.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
-	// ChatTemplateKwargs is an optional map of chat-template arguments, such as {"enable_thinking": false}; nil or empty omits the field.
+	// ChatTemplateKwargs is an optional map of chat-template arguments forwarded to the routed backend, such as {"enable_thinking": false}; nil or empty omits the field.
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 
 	// MaxCompletionTokens is the maximum output token field; nil omits the field.
@@ -82,7 +82,7 @@ type chatCompletionChunk struct {
 	// Choices is the list of streamed choice deltas in this chunk; empty is valid for usage-only chunks.
 	Choices []choice `json:"choices"`
 
-	// Usage is the optional provider-reported token usage payload, usually sent in the terminal chunk.
+	// Usage is the optional provider-reported token usage payload, usually sent in the terminal chunk; the router sets it to null on non-terminal chunks.
 	Usage *usage `json:"usage"`
 }
 
@@ -104,7 +104,7 @@ type delta struct {
 	// Content is the streamed user-visible text delta; empty means no content delta was present.
 	Content string `json:"content"`
 
-	// Reasoning is the streamed hidden reasoning delta for reasoning models; empty means no reasoning delta was present and it is never counted as user-visible output.
+	// Reasoning is the optional hidden reasoning delta emitted by some routed backends; empty means no reasoning delta was present and it is never counted as user-visible output.
 	Reasoning string `json:"reasoning"`
 }
 

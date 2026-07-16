@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/internal/tui"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
 	"github.com/gabrielmbmb/what-ttft/pkg/whatttft"
@@ -373,6 +375,17 @@ func buildTargetProvider(target configfile.Target, apiKey string, client *http.C
 		})
 
 		return provider, togetherProviderAPI, nil
+	case providerHuggingFace:
+		provider := huggingface.New(huggingface.Config{
+			BaseURL:            target.Settings.BaseURL,
+			APIKey:             apiKey,
+			Model:              target.Settings.Model,
+			UseLegacyMaxTokens: target.Settings.LegacyMaxTokens,
+			IncludeUsage:       target.Settings.IncludeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, huggingFaceProviderAPI, nil
 	case providerOpenAI:
 		provider := openai.New(openai.Config{
 			API:                target.Settings.API,
@@ -524,8 +537,26 @@ func scenarioOverrides(base whatttft.Scenario, effective whatttft.Scenario) map[
 	if !equalFloatPtr(effective.TopP, base.TopP) {
 		overrides["top_p"] = effective.TopP
 	}
+	if !equalIntPtr(effective.TopK, base.TopK) {
+		overrides["top_k"] = effective.TopK
+	}
+	if !equalFloatPtr(effective.MinP, base.MinP) {
+		overrides["min_p"] = effective.MinP
+	}
+	if !equalFloatPtr(effective.FrequencyPenalty, base.FrequencyPenalty) {
+		overrides["frequency_penalty"] = effective.FrequencyPenalty
+	}
+	if !equalFloatPtr(effective.PresencePenalty, base.PresencePenalty) {
+		overrides["presence_penalty"] = effective.PresencePenalty
+	}
+	if !equalFloatPtr(effective.RepetitionPenalty, base.RepetitionPenalty) {
+		overrides["repetition_penalty"] = effective.RepetitionPenalty
+	}
 	if effective.ReasoningEffort != base.ReasoningEffort {
 		overrides["reasoning_effort"] = effective.ReasoningEffort
+	}
+	if !reflect.DeepEqual(effective.ChatTemplateKwargs, base.ChatTemplateKwargs) {
+		overrides["chat_template_kwargs"] = effective.ChatTemplateKwargs
 	}
 
 	return overrides
@@ -533,6 +564,15 @@ func scenarioOverrides(base whatttft.Scenario, effective whatttft.Scenario) map[
 
 // equalFloatPtr reports whether two optional float pointers represent the same value or are both unset.
 func equalFloatPtr(a *float64, b *float64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+
+	return *a == *b
+}
+
+// equalIntPtr reports whether two optional int pointers represent the same value or are both unset.
+func equalIntPtr(a *int, b *int) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
@@ -589,6 +629,8 @@ func targetProviderAPILabel(target configfile.Target) string {
 		return cerebrasProviderAPI
 	case providerTogether:
 		return togetherProviderAPI
+	case providerHuggingFace:
+		return huggingFaceProviderAPI
 	default:
 		return string(target.Settings.API)
 	}
