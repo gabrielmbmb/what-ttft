@@ -179,20 +179,28 @@ func TestInterleavedPerTargetEventsDoNotCarryGlobalCounts(t *testing.T) {
 		t.Fatalf("interleaved benchmark: %v", err)
 	}
 
+	finishedByTarget := map[string]int{}
 	for _, event := range rec.snapshot() {
 		if event.TargetID == "" {
 			continue
 		}
-		// Target lifecycle events legitimately report benchmark-wide progress; other target-scoped
-		// events (phase/request) must stay within the target's own totals.
-		if event.Kind == EventTargetStarted || event.Kind == EventTargetFinished || event.Kind == EventTargetFailed {
-			continue
+		if event.Kind == EventTargetFinished {
+			finishedByTarget[event.TargetID] = event.CompletedRequests
 		}
+		// Every target-scoped event must stay within the target's own totals; a target_finished
+		// event carrying the benchmark-wide total is exactly the double-count bug this guards.
 		if event.CompletedRequests > perTargetTotal {
 			t.Fatalf("event %s for %s reports completed=%d, exceeds per-target total %d (global counts leaked into a per-target event)", event.Kind, event.TargetID, event.CompletedRequests, perTargetTotal)
 		}
 		if event.SuccessfulRequests > perTargetTotal {
 			t.Fatalf("event %s for %s reports successful=%d, exceeds per-target total %d", event.Kind, event.TargetID, event.SuccessfulRequests, perTargetTotal)
+		}
+	}
+
+	// target_finished must carry each target's own completed count so the dashboard can reconcile.
+	for _, id := range []string{"t0", "t1"} {
+		if finishedByTarget[id] != perTargetTotal {
+			t.Fatalf("target_finished for %s reports completed=%d, want per-target total %d", id, finishedByTarget[id], perTargetTotal)
 		}
 	}
 }

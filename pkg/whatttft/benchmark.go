@@ -296,13 +296,38 @@ func benchmarkTargetEvent(kind RunEventKind, benchmarkName string, target normal
 		event.Model = target.provider.Model()
 	}
 	if result != nil {
-		event.CompletedRequests = len(result.Records)
-		event.SuccessfulRequests = result.Summary.SuccessfulRequests
-		event.ErrorRequests = result.Summary.ErrorRequests
+		// Report this target's own outcome counts (not the benchmark-wide totals): the dashboard
+		// keys per-target rows off these, and under interleaving one target's finished event would
+		// otherwise carry every target's records.
+		completed, successful, errors := perTargetOutcomeCounts(result.Records, target.config.TargetID)
+		event.CompletedRequests = completed
+		event.SuccessfulRequests = successful
+		event.ErrorRequests = errors
 		event.Summary = &result.Summary
 	}
 
 	return event
+}
+
+// perTargetOutcomeCounts counts a single target's records: total completed, and measured-only
+// successful and error counts (warmup requests are excluded from success/error like summaries).
+func perTargetOutcomeCounts(records []RequestRecord, targetID string) (completed int, successful int, errors int) {
+	for _, record := range records {
+		if record.TargetID != targetID {
+			continue
+		}
+		completed++
+		if record.Warmup {
+			continue
+		}
+		if record.Error != nil {
+			errors++
+		} else {
+			successful++
+		}
+	}
+
+	return completed, successful, errors
 }
 
 type normalizedBenchmarkTarget struct {

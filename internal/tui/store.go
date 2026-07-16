@@ -133,6 +133,14 @@ func (s *liveStore) applyEvent(event whatttft.RunEvent) {
 		summary := copyRunSummary(*event.Summary)
 		s.summary = &summary
 	}
+	// When the whole run reaches a terminal state, no request can still be in flight; clear the
+	// active set so a dropped request_finished event cannot leave a stuck non-zero active count.
+	switch event.Kind {
+	case whatttft.EventBenchmarkFinished, whatttft.EventRunFinished,
+		whatttft.EventBenchmarkCanceled, whatttft.EventRunCanceled,
+		whatttft.EventBenchmarkFailed, whatttft.EventRunFailed:
+		s.activeRequests = make(map[string]struct{})
+	}
 	if event.Kind == whatttft.EventBenchmarkCanceled {
 		s.markUnfinishedTargets(targetStatusCanceled)
 	}
@@ -195,7 +203,9 @@ func (s *liveStore) applyTargetEvent(event whatttft.RunEvent) {
 		state.Active--
 	}
 	state.applyEventPlanCounts(event)
-	if event.Kind != whatttft.EventTargetStarted && event.Kind != whatttft.EventTargetFinished {
+	// target_finished carries this target's authoritative outcome counts, so it may set them even
+	// though target_started (which has none yet) must not.
+	if event.Kind != whatttft.EventTargetStarted {
 		state.applyEventOutcomeCounts(event)
 	}
 
@@ -628,6 +638,8 @@ func (s liveStore) selectedTargetStore() liveStore {
 	return selected
 }
 
+// recordsForTarget returns one target's records in arrival order. Like completedRecords, the
+// records are shared and must be treated as read-only (single-goroutine, render-hot path).
 func (s liveStore) recordsForTarget(targetID string) []whatttft.RequestRecord {
 	records := make([]whatttft.RequestRecord, 0)
 	for _, requestID := range s.recordOrder {
@@ -635,7 +647,7 @@ func (s liveStore) recordsForTarget(targetID string) []whatttft.RequestRecord {
 		if !ok || record.TargetID != targetID {
 			continue
 		}
-		records = append(records, copyRequestRecord(record))
+		records = append(records, record)
 	}
 	return records
 }
@@ -728,6 +740,10 @@ func (s liveStore) summarySnapshot() whatttft.RunSummary {
 	return whatttft.RunSummary{}
 }
 
+// completedRecords returns the recorded requests in arrival order. The records are shared, not
+// deep-copied: the store is only accessed from the single Bubble Tea goroutine and every caller is
+// read-only, so copying every record on each call (this is invoked many times per render frame)
+// was pure overhead that made large multi-target runs fall behind and drop live events.
 func (s liveStore) completedRecords() []whatttft.RequestRecord {
 	records := make([]whatttft.RequestRecord, 0, len(s.records))
 	for _, requestID := range s.recordOrder {
@@ -735,7 +751,7 @@ func (s liveStore) completedRecords() []whatttft.RequestRecord {
 		if !ok {
 			continue
 		}
-		records = append(records, copyRequestRecord(record))
+		records = append(records, record)
 	}
 
 	return records

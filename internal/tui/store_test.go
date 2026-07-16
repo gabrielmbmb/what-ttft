@@ -150,6 +150,49 @@ func TestLiveStoreTargetOrderFromEvent(t *testing.T) {
 	}
 }
 
+// TestLiveStoreTargetFinishedReconcilesDroppedCounts verifies the dashboard reaches the correct
+// per-target done/ok counts from the (reliably delivered) target_finished event even when some
+// request_finished events were dropped, and that active clears when the benchmark finishes.
+func TestLiveStoreTargetFinishedReconcilesDroppedCounts(t *testing.T) {
+	store := newLiveStore()
+	store.applyEvent(whatttft.RunEvent{
+		Kind:          whatttft.EventBenchmarkStarted,
+		BenchmarkName: "bench",
+		TargetOrder:   whatttft.InterleavedTargetOrder,
+		Targets:       []whatttft.RunEventTarget{{TargetID: "t", TotalRequests: 5, MeasuredRequests: 5}},
+	})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventTargetStarted, TargetID: "t", TotalRequests: 5, MeasuredRequests: 5})
+
+	// Two requests scheduled whose finished events are "dropped" (never delivered) -> active leaks.
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestScheduled, TargetID: "t", RequestID: "t-x"})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestScheduled, TargetID: "t", RequestID: "t-y"})
+
+	// Only 3 of the 5 request_finished events arrive.
+	for i, rid := range []string{"t-1", "t-2", "t-3"} {
+		record := tuiTestRecord(rid, "t", float64(10+i), float64(100+i), nil)
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, TargetID: "t", RequestID: rid, Record: &record})
+	}
+
+	// target_finished (and benchmark_finished) carry authoritative counts.
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventTargetFinished, TargetID: "t", CompletedRequests: 5, SuccessfulRequests: 5})
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventBenchmarkFinished, CompletedRequests: 5, SuccessfulRequests: 5})
+
+	rows := store.TargetRows()
+	if len(rows) != 1 || rows[0].Completed != 5 {
+		t.Fatalf("target row completed = %d, want 5 (authoritative from target_finished despite dropped records)", rows[0].Completed)
+	}
+	if rows[0].Successful != 5 {
+		t.Fatalf("target row successful = %d, want 5", rows[0].Successful)
+	}
+	progress := store.Progress()
+	if progress.Completed != 5 {
+		t.Fatalf("progress completed = %d, want 5", progress.Completed)
+	}
+	if progress.Active != 0 {
+		t.Fatalf("progress active = %d, want 0 (cleared on benchmark finish)", progress.Active)
+	}
+}
+
 // TestLiveStoreMetricRows verifies core metric rows are calculated over successful measured records.
 func TestLiveStoreMetricRows(t *testing.T) {
 	store := newLiveStore()
