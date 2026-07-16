@@ -126,7 +126,10 @@ func (s *liveStore) applyEvent(event whatttft.RunEvent) {
 		s.status = "error"
 	}
 
-	if event.Summary != nil {
+	// Records are the authoritative source for the aggregate summary once any have arrived; a
+	// per-target event summary must not clobber the cross-target aggregate. Use the event summary
+	// only as a fallback before records exist.
+	if event.Summary != nil && len(s.records) == 0 {
 		summary := copyRunSummary(*event.Summary)
 		s.summary = &summary
 	}
@@ -157,7 +160,7 @@ func (s *liveStore) applyTargetEvent(event whatttft.RunEvent) {
 		s.benchmarkMode = true
 	}
 	if event.Kind == whatttft.EventBenchmarkStarted {
-		s.targetOrder = string(whatttft.SerialTargetOrder)
+		s.targetOrder = firstNonEmpty(string(event.TargetOrder), string(whatttft.SerialTargetOrder))
 	}
 	for _, eventTarget := range event.Targets {
 		state := s.ensureTarget(eventTarget.TargetID)
@@ -318,6 +321,22 @@ func (s *liveStore) addRecord(record whatttft.RequestRecord) {
 	if s.completedRequests == 0 || s.completedRequests < len(s.records) {
 		s.completedRequests = len(s.records)
 	}
+	s.recomputeSummary()
+}
+
+// recomputeSummary rebuilds the cached summary from the current records once, so per-frame
+// rendering can read it in O(1) instead of re-running Summarize over every record each frame.
+// Without this cache the render loop falls behind on large multi-target runs, which causes the
+// bounded event bus to drop request and terminal events and the dashboard to appear stuck.
+func (s *liveStore) recomputeSummary() {
+	records := make([]whatttft.RequestRecord, 0, len(s.recordOrder))
+	for _, requestID := range s.recordOrder {
+		if record, ok := s.records[requestID]; ok {
+			records = append(records, record)
+		}
+	}
+	summary := whatttft.Summarize(records)
+	s.summary = &summary
 }
 
 func (s *liveStore) applyRecordTargetContext(record whatttft.RequestRecord) {
@@ -592,7 +611,9 @@ func (s liveStore) selectedTargetStore() liveStore {
 		selected.records[requestID] = copyRequestRecord(record)
 		selected.recordOrder = append(selected.recordOrder, requestID)
 	}
-	selected.summary = nil
+	// Recompute the cached summary over just this target's records, since summarySnapshot now
+	// reads the cache rather than recomputing from records on demand.
+	(&selected).recomputeSummary()
 	selected.targetID = targetID
 	if state := s.targets[targetID]; state != nil {
 		selected.targetName = state.Name
@@ -699,10 +720,8 @@ func (s liveStore) StatusCounts() statusCounts {
 }
 
 func (s liveStore) summarySnapshot() whatttft.RunSummary {
-	records := s.completedRecords()
-	if len(records) > 0 {
-		return whatttft.Summarize(records)
-	}
+	// The summary is cached and refreshed on each record arrival (see recomputeSummary), so this
+	// stays O(number of groups) per call even when it is invoked several times per render frame.
 	if s.summary != nil {
 		return copyRunSummary(*s.summary)
 	}

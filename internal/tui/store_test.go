@@ -111,6 +111,45 @@ func TestLiveStoreGroupsMatchSummarize(t *testing.T) {
 	}
 }
 
+// TestLiveStoreAggregateSummaryNotClobberedByEventSummary verifies a per-target event summary does
+// not overwrite the cross-target aggregate the dashboard derives from all records. This guards the
+// interleaved-run case where request_finished events carry no summary and the store must keep every
+// target's group.
+func TestLiveStoreAggregateSummaryNotClobberedByEventSummary(t *testing.T) {
+	store := newLiveStore()
+	records := []whatttft.RequestRecord{
+		tuiTestRecord("req-1", "target-a", 20, 90, nil),
+		tuiTestRecord("req-2", "target-b", 30, 100, nil),
+	}
+	for _, record := range records {
+		store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventRequestFinished, RequestID: record.RequestID, Record: &record})
+	}
+
+	// A later event carrying only target-a's summary must not shrink the aggregate to one group.
+	singleTargetSummary := whatttft.Summarize(records[:1])
+	store.applyEvent(whatttft.RunEvent{Kind: whatttft.EventSummaryUpdated, Summary: &singleTargetSummary})
+
+	if got := len(store.Groups()); got != 2 {
+		t.Fatalf("groups = %d, want 2 (aggregate over all records, not the per-target event summary)", got)
+	}
+}
+
+// TestLiveStoreTargetOrderFromEvent verifies the dashboard reflects the benchmark's target order
+// (e.g. interleaved) from the started event instead of always showing serial.
+func TestLiveStoreTargetOrderFromEvent(t *testing.T) {
+	interleaved := newLiveStore()
+	interleaved.applyEvent(whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, BenchmarkName: "bench", TargetOrder: whatttft.InterleavedTargetOrder})
+	if interleaved.targetOrder != string(whatttft.InterleavedTargetOrder) {
+		t.Fatalf("target order = %q, want interleaved", interleaved.targetOrder)
+	}
+
+	defaulted := newLiveStore()
+	defaulted.applyEvent(whatttft.RunEvent{Kind: whatttft.EventBenchmarkStarted, BenchmarkName: "bench"})
+	if defaulted.targetOrder != string(whatttft.SerialTargetOrder) {
+		t.Fatalf("default target order = %q, want serial", defaulted.targetOrder)
+	}
+}
+
 // TestLiveStoreMetricRows verifies core metric rows are calculated over successful measured records.
 func TestLiveStoreMetricRows(t *testing.T) {
 	store := newLiveStore()

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/groq"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
@@ -36,6 +37,9 @@ const (
 
 	// providerHuggingFace is the config provider value selecting the Hugging Face Inference Providers router adapter.
 	providerHuggingFace = "huggingface"
+
+	// providerGroq is the config provider value selecting the Groq adapter.
+	providerGroq = "groq"
 )
 
 // Config is a validated, normalized YAML benchmark configuration.
@@ -66,6 +70,9 @@ type RunSettings struct {
 
 	// Concurrency is the fixed-concurrency worker count per target; units are workers and values less than one are normalized to one before validation.
 	Concurrency int `json:"concurrency"`
+
+	// TargetOrder selects how multi-target benchmarks schedule targets; empty defaults to serial, and interleaved runs all targets together under one shared concurrency budget.
+	TargetOrder whatttft.TargetOrder `json:"target_order"`
 
 	// CacheMode is the requested prompt/KV cache behavior shared by all targets; summaries must not mix different cache modes.
 	CacheMode whatttft.CacheMode `json:"cache_mode"`
@@ -323,6 +330,9 @@ type rawRunSettings struct {
 	// Concurrency is the fixed-concurrency worker count per target; zero means use the default of one worker.
 	Concurrency int `yaml:"concurrency" json:"concurrency"`
 
+	// TargetOrder selects the multi-target scheduling strategy; empty defaults to serial and interleaved shares one concurrency budget across targets.
+	TargetOrder string `yaml:"target_order,omitempty" json:"target_order,omitempty"`
+
 	// CacheMode is the requested prompt/KV cache behavior; empty defaults to cache-bust.
 	CacheMode string `yaml:"cache_mode" json:"cache_mode"`
 
@@ -479,6 +489,14 @@ func normalizeRun(raw rawRunSettings, errs *validationErrors) RunSettings {
 		errs.addf("run.connection_mode %q is invalid; expected warm or cold", raw.ConnectionMode)
 	}
 
+	targetOrder := whatttft.TargetOrder(strings.TrimSpace(raw.TargetOrder))
+	if targetOrder == "" {
+		targetOrder = whatttft.SerialTargetOrder
+	}
+	if !whatttft.ValidTargetOrder(targetOrder) {
+		errs.addf("run.target_order %q is invalid; expected serial or interleaved", raw.TargetOrder)
+	}
+
 	timeout := defaultBenchmarkTimeout
 	if raw.Timeout != nil {
 		timeout = raw.Timeout.value
@@ -491,6 +509,7 @@ func normalizeRun(raw rawRunSettings, errs *validationErrors) RunSettings {
 		Samples:        raw.Samples,
 		Warmup:         raw.Warmup,
 		Concurrency:    concurrency,
+		TargetOrder:    targetOrder,
 		CacheMode:      cacheMode,
 		ConnectionMode: connectionMode,
 		Timeout:        timeout,
@@ -774,7 +793,7 @@ func validConnectionMode(mode whatttft.ConnectionMode) bool {
 // validProvider reports whether provider is a supported benchmark provider.
 func validProvider(provider string) bool {
 	switch provider {
-	case providerOpenAI, providerCerebras, providerTogether, providerHuggingFace:
+	case providerOpenAI, providerCerebras, providerTogether, providerHuggingFace, providerGroq:
 		return true
 	default:
 		return false
@@ -790,6 +809,8 @@ func defaultBaseURLForProvider(provider string) string {
 		return together.DefaultBaseURL
 	case providerHuggingFace:
 		return huggingface.DefaultBaseURL
+	case providerGroq:
+		return groq.DefaultBaseURL
 	default:
 		return openai.DefaultBaseURL
 	}
@@ -799,7 +820,7 @@ func defaultBaseURLForProvider(provider string) string {
 // that expose a single API surface such as cerebras, and inherits defaults.api only when the
 // target keeps the default provider.
 func normalizeProviderAPI(provider string, inheritDefault bool, rawAPI string, defaultAPI string) openai.API {
-	if provider != providerOpenAI {
+	if provider != providerOpenAI && provider != providerGroq {
 		return ""
 	}
 
@@ -808,7 +829,13 @@ func normalizeProviderAPI(provider string, inheritDefault bool, rawAPI string, d
 		inherited = defaultAPI
 	}
 
-	return openai.API(firstNonEmptyTrimmed(rawAPI, inherited, string(openai.ResponsesAPI)))
+	// OpenAI defaults to the Responses API; Groq defaults to Chat Completions (its Responses API is beta).
+	fallback := string(openai.ResponsesAPI)
+	if provider == providerGroq {
+		fallback = string(openai.ChatCompletionsAPI)
+	}
+
+	return openai.API(firstNonEmptyTrimmed(rawAPI, inherited, fallback))
 }
 
 // inheritIfSameProvider returns the trimmed target value, falling back to the default only when
@@ -844,6 +871,13 @@ func validateProviderTargetOptions(provider string, api openai.API, serviceTier 
 	case providerHuggingFace:
 		if serviceTier != "" {
 			errs.addf("%s.service_tier %q is not supported for the huggingface provider", path, serviceTier)
+		}
+	case providerGroq:
+		if !groq.ValidAPI(groq.API(api)) {
+			errs.addf("%s.api %q is invalid after inheritance; expected chat-completions or responses", path, api)
+		}
+		if !groq.ValidServiceTier(groq.ServiceTier(serviceTier)) {
+			errs.addf("%s.service_tier %q is invalid after inheritance; expected on_demand, flex, auto, performance, or empty", path, serviceTier)
 		}
 	case providerOpenAI:
 		if !validOpenAIAPI(api) {

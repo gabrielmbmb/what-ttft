@@ -670,6 +670,100 @@ func TestBenchCommandHuggingFaceTarget(t *testing.T) {
 	}
 }
 
+// TestBenchCommandGroqTarget verifies a groq target runs through the bench pipeline,
+// hits /chat/completions, records provider=groq, and captures x_groq server timing.
+func TestBenchCommandGroqTarget(t *testing.T) {
+	//nolint:gosec // Test uses a non-secret placeholder to verify redaction.
+	const placeholderAPIKey = "gsk_bench-key"
+	t.Setenv("WHAT_TTFT_GROQ_KEY", placeholderAPIKey)
+
+	var sawChatPath atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat/completions" {
+			sawChatPath.Store(true)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer is not a flusher")
+		}
+		writeChunk := func(data string) {
+			if _, err := w.Write([]byte("data: " + data + "\n\n")); err != nil {
+				t.Errorf("write chunk: %v", err)
+			}
+			flusher.Flush()
+		}
+		writeChunk(`{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}`)
+		writeChunk(`{"choices":[],"x_groq":{"id":"r1","usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"queue_time":0.02,"total_time":0.09}}}`)
+		writeChunk("[DONE]")
+	}))
+	defer server.Close()
+
+	configPath := writeBenchConfig(t, groqBenchYAML(server.URL, "WHAT_TTFT_GROQ_KEY"))
+	outputDir := filepath.Join(t.TempDir(), "reports")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"bench", "--config", configPath, "--out", outputDir}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", exitCode, stdout.String(), stderr.String())
+	}
+	if !sawChatPath.Load() {
+		t.Fatal("groq bench did not hit /chat/completions")
+	}
+	if strings.Contains(stdout.String(), placeholderAPIKey) || strings.Contains(stderr.String(), placeholderAPIKey) {
+		t.Fatalf("API key leaked\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "groq") {
+		t.Fatalf("summary missing groq provider column:\n%s", stdout.String())
+	}
+
+	var metadata report.RunMetadata
+	readCLIJSONFile(t, filepath.Join(outputDir, "run.json"), &metadata)
+	if metadata.Provider != "groq" {
+		t.Fatalf("metadata provider = %q, want groq", metadata.Provider)
+	}
+
+	//nolint:gosec // Test-controlled output directory path.
+	requests, err := os.ReadFile(filepath.Join(outputDir, "requests.jsonl"))
+	if err != nil {
+		t.Fatalf("read requests.jsonl: %v", err)
+	}
+	if !strings.Contains(string(requests), "server_timing") || !strings.Contains(string(requests), "total_time_ms") {
+		t.Fatalf("requests.jsonl missing captured x_groq server timing:\n%s", requests)
+	}
+}
+
+func groqBenchYAML(baseURL string, apiKeyEnv string) string {
+	return `schema_version: 1
+name: groq-bench-test
+
+defaults:
+  provider: groq
+  base_url: ` + baseURL + `
+  api_key_env: ` + apiKeyEnv + `
+
+run:
+  samples: 1
+  warmup: 0
+  concurrency: 1
+  cache_mode: cache-reuse
+  connection_mode: warm
+  timeout: 10s
+  save_chunks: false
+
+scenario:
+  name: groq-short
+  prompt: Say hello.
+  max_output_tokens: 16
+
+targets:
+  - id: groq-llama
+    name: Groq Llama
+    model: llama-3.3-70b-versatile
+`
+}
+
 func huggingFaceBenchYAML(baseURL string, apiKeyEnv string) string {
 	return `schema_version: 1
 name: huggingface-bench-test

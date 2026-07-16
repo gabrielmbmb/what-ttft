@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/groq"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
@@ -667,6 +668,141 @@ targets:
 	}
 	if kwargs["enable_thinking"] != false {
 		t.Fatalf("chat_template_kwargs = %v, want enable_thinking=false", kwargs)
+	}
+}
+
+// TestLoadAcceptsGroqTargetDefaultsToChatCompletions verifies groq targets default to Chat Completions and the Groq base URL.
+func TestLoadAcceptsGroqTargetDefaultsToChatCompletions(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: groq
+    api_key_env: GROQ_API_KEY
+    model: llama-3.3-70b-versatile
+    service_tier: flex
+`))
+	if err != nil {
+		t.Fatalf("load groq config: %v", err)
+	}
+	target := cfg.Targets[0]
+	if target.Provider != "groq" {
+		t.Fatalf("provider = %q, want groq", target.Provider)
+	}
+	if target.Settings.BaseURL != groq.DefaultBaseURL {
+		t.Fatalf("base URL = %q, want groq default %q", target.Settings.BaseURL, groq.DefaultBaseURL)
+	}
+	if target.Settings.API != openai.ChatCompletionsAPI {
+		t.Fatalf("api = %q, want chat-completions default for groq", target.Settings.API)
+	}
+	if string(target.Settings.ServiceTier) != string(groq.ServiceTierFlex) {
+		t.Fatalf("service tier = %q, want flex", target.Settings.ServiceTier)
+	}
+}
+
+// TestLoadGroqAcceptsResponsesAPIAndRejectsBadTier verifies the responses api parses and bad service tiers are rejected.
+func TestLoadGroqAcceptsResponsesAPIAndRejectsBadTier(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: groq
+    api: responses
+    api_key_env: GROQ_API_KEY
+    model: openai/gpt-oss-120b
+`))
+	if err != nil {
+		t.Fatalf("load groq responses config: %v", err)
+	}
+	if cfg.Targets[0].Settings.API != openai.ResponsesAPI {
+		t.Fatalf("api = %q, want responses", cfg.Targets[0].Settings.API)
+	}
+
+	_, err = Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: groq
+    api_key_env: GROQ_API_KEY
+    model: m
+    service_tier: priority
+`))
+	if err == nil || !strings.Contains(err.Error(), "service_tier \"priority\" is invalid") {
+		t.Fatalf("error = %v, want groq service tier rejection", err)
+	}
+}
+
+// TestLoadTargetOrder verifies run.target_order parses, defaults to serial, and rejects bad values.
+func TestLoadTargetOrder(t *testing.T) {
+	cfg, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+  target_order: interleaved
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: openai
+    api: chat-completions
+    api_key_env: OPENAI_API_KEY
+    model: m
+`))
+	if err != nil {
+		t.Fatalf("load interleaved config: %v", err)
+	}
+	if cfg.Run.TargetOrder != whatttft.InterleavedTargetOrder {
+		t.Fatalf("target order = %q, want interleaved", cfg.Run.TargetOrder)
+	}
+
+	defaulted, err := Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: openai
+    api: chat-completions
+    api_key_env: OPENAI_API_KEY
+    model: m
+`))
+	if err != nil {
+		t.Fatalf("load default config: %v", err)
+	}
+	if defaulted.Run.TargetOrder != whatttft.SerialTargetOrder {
+		t.Fatalf("default target order = %q, want serial", defaulted.Run.TargetOrder)
+	}
+
+	_, err = Load(strings.NewReader(`
+schema_version: 1
+run:
+  samples: 1
+  target_order: bogus
+scenario:
+  prompt: hello
+  max_output_tokens: 16
+targets:
+  - provider: openai
+    api: chat-completions
+    api_key_env: OPENAI_API_KEY
+    model: m
+`))
+	if err == nil || !strings.Contains(err.Error(), "run.target_order \"bogus\" is invalid") {
+		t.Fatalf("error = %v, want target_order rejection", err)
 	}
 }
 

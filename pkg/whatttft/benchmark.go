@@ -13,7 +13,20 @@ type TargetOrder string
 const (
 	// SerialTargetOrder records that targets were executed one after another in the configured order, so time-of-day and provider-load drift can affect comparisons.
 	SerialTargetOrder TargetOrder = "serial"
+
+	// InterleavedTargetOrder records that all targets were executed together under one shared concurrency budget, interleaving requests round-robin across targets so every target runs in the same time window; a target's effective concurrency is not fixed because idle capacity is shared with targets that still have pending requests.
+	InterleavedTargetOrder TargetOrder = "interleaved"
 )
+
+// ValidTargetOrder reports whether order is a supported target scheduling strategy or empty (which defaults to serial).
+func ValidTargetOrder(order TargetOrder) bool {
+	switch order {
+	case "", SerialTargetOrder, InterleavedTargetOrder:
+		return true
+	default:
+		return false
+	}
+}
 
 // BenchmarkConfig configures a multi-target benchmark run.
 type BenchmarkConfig struct {
@@ -22,6 +35,9 @@ type BenchmarkConfig struct {
 
 	// Targets is the ordered list of providers/models to benchmark; it must contain at least one target and the order is preserved for serial execution.
 	Targets []BenchmarkTarget
+
+	// TargetOrder selects how targets are scheduled; empty defaults to SerialTargetOrder, and InterleavedTargetOrder runs all targets together under one shared concurrency budget.
+	TargetOrder TargetOrder
 }
 
 // BenchmarkTarget configures one target in a multi-target benchmark.
@@ -115,19 +131,53 @@ func (r *BenchmarkRunner) run(ctx context.Context) (*BenchmarkResult, error) {
 		ctx = context.Background()
 	}
 
+	order := r.cfg.TargetOrder
+	if order == "" {
+		order = SerialTargetOrder
+	}
+	if !ValidTargetOrder(order) {
+		err := fmt.Errorf("unsupported target order %q", r.cfg.TargetOrder)
+		r.emitBenchmarkError(ctx, EventBenchmarkFailed, err, nil)
+		return nil, err
+	}
+
 	targets, err := normalizeBenchmarkConfig(r.cfg)
 	if err != nil {
 		r.emitBenchmarkError(ctx, EventBenchmarkFailed, err, nil)
 		return nil, err
 	}
 
-	result := &BenchmarkResult{TargetOrder: SerialTargetOrder}
+	result := &BenchmarkResult{TargetOrder: order}
 	r.emit(ctx, r.baseBenchmarkEvent(EventBenchmarkStarted, targets, result))
+
+	var runErr error
+	if order == InterleavedTargetOrder {
+		runErr = r.runInterleaved(ctx, targets, result)
+	} else {
+		runErr = r.runSerial(ctx, targets, result)
+	}
+
+	result.Summary = Summarize(result.Records)
+	if runErr != nil {
+		kind := EventBenchmarkFailed
+		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+			kind = EventBenchmarkCanceled
+		}
+		r.emitBenchmarkError(ctx, kind, runErr, result)
+		return result, runErr
+	}
+
+	finished := r.baseBenchmarkEvent(EventBenchmarkFinished, targets, result)
+	finished.Summary = &result.Summary
+	r.emit(ctx, finished)
+	return result, nil
+}
+
+// runSerial executes targets one after another, each with its own runner and concurrency.
+func (r *BenchmarkRunner) runSerial(ctx context.Context, targets []normalizedBenchmarkTarget, result *BenchmarkResult) error {
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
-			result.Summary = Summarize(result.Records)
-			r.emitBenchmarkError(ctx, EventBenchmarkCanceled, err, result)
-			return result, err
+			return err
 		}
 
 		r.emit(ctx, benchmarkTargetEvent(EventTargetStarted, r.cfg.Name, target, result))
@@ -141,21 +191,12 @@ func (r *BenchmarkRunner) run(ctx context.Context) (*BenchmarkResult, error) {
 			targetFailed := benchmarkTargetEvent(EventTargetFailed, r.cfg.Name, target, result)
 			targetFailed.Error = runEventErrorFromError(runErr)
 			r.emit(ctx, targetFailed)
-			kind := EventBenchmarkFailed
-			if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
-				kind = EventBenchmarkCanceled
-			}
-			r.emitBenchmarkError(ctx, kind, runErr, result)
-			return result, runErr
+			return runErr
 		}
 		r.emit(ctx, benchmarkTargetEvent(EventTargetFinished, r.cfg.Name, target, result))
 	}
 
-	result.Summary = Summarize(result.Records)
-	finished := r.baseBenchmarkEvent(EventBenchmarkFinished, targets, result)
-	finished.Summary = &result.Summary
-	r.emit(ctx, finished)
-	return result, nil
+	return nil
 }
 
 func (r *BenchmarkRunner) emit(ctx context.Context, event RunEvent) {
@@ -199,6 +240,7 @@ func (r *BenchmarkRunner) baseBenchmarkEvent(kind RunEventKind, targets []normal
 		MeasuredRequests: totalMeasured,
 	}
 	if result != nil {
+		event.TargetOrder = result.TargetOrder
 		event.CompletedRequests = len(result.Records)
 		event.SuccessfulRequests = result.Summary.SuccessfulRequests
 		event.ErrorRequests = result.Summary.ErrorRequests

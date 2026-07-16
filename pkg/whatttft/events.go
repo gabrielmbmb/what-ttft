@@ -150,6 +150,9 @@ type RunEvent struct {
 	// BenchmarkName is the optional multi-target benchmark label; empty means no benchmark label was supplied and it must not contain secrets.
 	BenchmarkName string `json:"benchmark_name,omitempty"`
 
+	// TargetOrder is the multi-target scheduling strategy for the benchmark, such as serial or interleaved; empty means unavailable or a single-target run.
+	TargetOrder TargetOrder `json:"target_order,omitempty"`
+
 	// TargetID is the stable sanitized benchmark target identifier associated with the event; empty means no target dimension applies and it must not contain secrets.
 	TargetID string `json:"target_id,omitempty"`
 

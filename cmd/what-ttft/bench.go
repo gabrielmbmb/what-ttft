@@ -19,6 +19,7 @@ import (
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/internal/tui"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/groq"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
@@ -345,7 +346,7 @@ func buildBenchmarkConfig(plan *configfile.Config) (whatttft.BenchmarkConfig, er
 		})
 	}
 
-	return whatttft.BenchmarkConfig{Name: plan.Name, Targets: targets}, nil
+	return whatttft.BenchmarkConfig{Name: plan.Name, Targets: targets, TargetOrder: plan.Run.TargetOrder}, nil
 }
 
 // buildTargetProvider constructs the benchmark provider for one target based on its provider name,
@@ -386,6 +387,19 @@ func buildTargetProvider(target configfile.Target, apiKey string, client *http.C
 		})
 
 		return provider, huggingFaceProviderAPI, nil
+	case providerGroq:
+		provider := groq.New(groq.Config{
+			API:                groq.API(target.Settings.API),
+			BaseURL:            target.Settings.BaseURL,
+			APIKey:             apiKey,
+			Model:              target.Settings.Model,
+			ServiceTier:        groq.ServiceTier(target.Settings.ServiceTier),
+			UseLegacyMaxTokens: target.Settings.LegacyMaxTokens,
+			IncludeUsage:       target.Settings.IncludeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, string(target.Settings.API), nil
 	case providerOpenAI:
 		provider := openai.New(openai.Config{
 			API:                target.Settings.API,
@@ -464,7 +478,7 @@ func benchOutputMetadata(plan *configfile.Config, cliCfg benchCLIConfig, args []
 		BenchmarkName:        plan.Name,
 		ConfigPath:           cliCfg.configPath,
 		ConfigSHA256:         benchConfigSHA256(cliCfg.configPath),
-		TargetOrder:          string(whatttft.SerialTargetOrder),
+		TargetOrder:          benchTargetOrderLabel(plan),
 		Targets:              benchTargetMetadata(plan),
 		Provider:             commonTargetProvider(plan),
 		Model:                commonTargetModel(plan),
@@ -491,6 +505,15 @@ func benchConfigSHA256(path string) string {
 	}
 
 	return configfile.SHA256Hex(data)
+}
+
+// benchTargetOrderLabel returns the configured target scheduling label, defaulting to serial.
+func benchTargetOrderLabel(plan *configfile.Config) string {
+	if plan.Run.TargetOrder == "" {
+		return string(whatttft.SerialTargetOrder)
+	}
+
+	return string(plan.Run.TargetOrder)
 }
 
 func benchTargetMetadata(plan *configfile.Config) []report.RunTargetMetadata {

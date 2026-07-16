@@ -225,9 +225,9 @@ func dashboardContextLabels(store liveStore) []string {
 	if store.requestedServiceTier != "" {
 		parts = append(parts, "tier="+safeInline(store.requestedServiceTier))
 	}
-	if store.CurrentTarget() != "-" {
-		parts = append(parts, "target="+safeInline(store.CurrentTarget()))
-	}
+	// The per-target detail lives in the MODEL METRICS table. A single "current target" header
+	// field just reflects the most recent event's target, which churns constantly under
+	// interleaved execution, so it is intentionally omitted.
 	if len(parts) == 0 {
 		parts = append(parts, "waiting for benchmark events")
 	}

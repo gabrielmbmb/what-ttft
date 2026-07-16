@@ -19,6 +19,7 @@ import (
 	"github.com/gabrielmbmb/what-ttft/internal/report"
 	"github.com/gabrielmbmb/what-ttft/internal/tui"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/cerebras"
+	"github.com/gabrielmbmb/what-ttft/pkg/provider/groq"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/huggingface"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/openai"
 	"github.com/gabrielmbmb/what-ttft/pkg/provider/together"
@@ -40,6 +41,9 @@ const (
 
 	// providerHuggingFace is the --provider value selecting the Hugging Face Inference Providers router adapter.
 	providerHuggingFace = "huggingface"
+
+	// providerGroq is the --provider value selecting the Groq adapter.
+	providerGroq = "groq"
 
 	// cerebrasProviderAPI is the provider API label recorded for Cerebras runs; Cerebras only exposes Chat Completions.
 	cerebrasProviderAPI = "chat-completions"
@@ -240,7 +244,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runCLIConfig, *flag.FlagSet
 	flagSet := newFlagSet("what-ttft run", stderr)
 	flagSet.Usage = func() { printRunUsage(flagSet.Output()) }
 
-	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark: openai|cerebras|together|huggingface")
+	flagSet.StringVar(&cfg.provider, "provider", "openai", "provider to benchmark: openai|cerebras|together|huggingface|groq")
 	flagSet.StringVar(&cfg.openAIAPI, "openai-api", string(openai.ResponsesAPI), "OpenAI API surface: responses|chat-completions (ignored for cerebras)")
 	flagSet.StringVar(&cfg.baseURL, "base-url", "", "provider API base URL; empty uses the selected provider default")
 	flagSet.StringVar(&cfg.apiKeyEnv, "api-key-env", "OPENAI_API_KEY", "environment variable containing the API key")
@@ -285,7 +289,7 @@ func printRunUsage(output io.Writer) {
   what-ttft run [flags]
 
 Required flags:
-  --provider openai|cerebras|together|huggingface
+  --provider openai|cerebras|together|huggingface|groq
   --model MODEL
   --prompt PROMPT
 
@@ -424,6 +428,23 @@ func buildRunProvider(cfg runCLIConfig, apiKey string, client *http.Client) (wha
 		})
 
 		return provider, baseURL, huggingFaceProviderAPI
+	case providerGroq:
+		baseURL := cfg.baseURL
+		if baseURL == "" {
+			baseURL = groq.DefaultBaseURL
+		}
+		provider := groq.New(groq.Config{
+			API:                groq.API(cfg.openAIAPI),
+			BaseURL:            baseURL,
+			APIKey:             apiKey,
+			Model:              cfg.model,
+			ServiceTier:        groq.ServiceTier(cfg.serviceTier),
+			UseLegacyMaxTokens: cfg.legacyMaxTokens,
+			IncludeUsage:       cfg.includeUsage,
+			HTTPClient:         client,
+		})
+
+		return provider, baseURL, cfg.openAIAPI
 	default:
 		baseURL := cfg.baseURL
 		if baseURL == "" {
@@ -674,7 +695,7 @@ type runCLIConfig struct {
 }
 
 func (c runCLIConfig) validate() error {
-	if c.provider != providerOpenAI && c.provider != providerCerebras && c.provider != providerTogether && c.provider != providerHuggingFace {
+	if c.provider != providerOpenAI && c.provider != providerCerebras && c.provider != providerTogether && c.provider != providerHuggingFace && c.provider != providerGroq {
 		return fmt.Errorf("unsupported provider %q", c.provider)
 	}
 	if c.model == "" {
@@ -746,6 +767,16 @@ func (c runCLIConfig) validateProviderOptions() error {
 	if c.provider == providerTogether || c.provider == providerHuggingFace {
 		if c.serviceTier != "" {
 			return fmt.Errorf("service tier %q is not supported for the %s provider", c.serviceTier, c.provider)
+		}
+
+		return nil
+	}
+	if c.provider == providerGroq {
+		if !groq.ValidAPI(groq.API(c.openAIAPI)) {
+			return fmt.Errorf("unsupported groq API %q; expected chat-completions or responses", c.openAIAPI)
+		}
+		if !groq.ValidServiceTier(groq.ServiceTier(c.serviceTier)) {
+			return fmt.Errorf("unsupported groq service tier %q; expected on_demand, flex, auto, performance, or empty", c.serviceTier)
 		}
 
 		return nil
